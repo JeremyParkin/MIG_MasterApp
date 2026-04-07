@@ -1,0 +1,15 @@
+[theme]
+base="dark"
+primaryColor="#AB26EF"
+
+
+[runner]
+enforceSerializableSessionState = true
+
+[server]
+address='127.0.0.1'
+
+maxUploadSize = 290
+
+[browser]
+gatherUsageStats = false
