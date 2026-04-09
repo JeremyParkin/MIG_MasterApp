@@ -24,6 +24,59 @@ DEFAULT_CONF_THRESH = 75
 
 DEFAULT_SECOND_OPINION_MODEL = "gpt-5.4-mini"
 MAX_RETRIES = 2
+DEFAULT_REVIEW_CONFIDENCE_THRESHOLD = 90
+
+
+def _allowed_sentiment_labels(sentiment_type: str) -> list[str]:
+    if sentiment_type == "3-way":
+        return ["POSITIVE", "NEUTRAL", "NEGATIVE", "NOT RELEVANT"]
+    return ["VERY POSITIVE", "SOMEWHAT POSITIVE", "NEUTRAL", "SOMEWHAT NEGATIVE", "VERY NEGATIVE", "NOT RELEVANT"]
+
+
+def _extract_json_payload(text: str) -> dict[str, Any] | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        pass
+
+    m = re.search(r"\{.*\}", raw, flags=re.S)
+    if not m:
+        return None
+
+    try:
+        parsed = json.loads(m.group(0))
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
+def _validate_structured_result(result: dict[str, Any], sentiment_type: str) -> tuple[dict[str, Any], str | None]:
+    labels = _allowed_sentiment_labels(sentiment_type)
+
+    sentiment = str(result.get("sentiment", "")).strip().upper()
+    if sentiment not in labels:
+        return {}, f"Invalid sentiment label: {sentiment or 'missing'}"
+
+    conf_val = pd.to_numeric(pd.Series([result.get("confidence")]), errors="coerce").iloc[0]
+    if pd.isna(conf_val):
+        return {}, "Missing confidence value"
+    confidence = int(max(0, min(100, float(conf_val))))
+
+    explanation = str(result.get("explanation", "")).strip()
+    if not explanation:
+        return {}, "Missing explanation value"
+
+    return {
+        "named_entity": result.get("named_entity"),
+        "sentiment": sentiment,
+        "confidence": confidence,
+        "explanation": explanation,
+    }, None
 
 
 def _allowed_sentiment_labels(sentiment_type: str) -> list[str]:
@@ -91,6 +144,7 @@ def init_spot_check_state(session_state) -> None:
         "spot_idx": 0,
         "spot_lock_gid": None,
         "spot_ai_model_override": None,
+        "spotcheck_low_conf_threshold": DEFAULT_REVIEW_CONFIDENCE_THRESHOLD,
     }
     for key, value in defaults.items():
         if key not in session_state:
