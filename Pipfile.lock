@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "809d4c64b0054d6f73a5a21cbd5a0264c7336bdb5a500fdb6796891b5979874a"
+            "sha256": "054dc3d644bb5a67473b5b7b42bfb69c8ff919ffb131ce89481cf4c3f306f38c"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -19,12 +19,12 @@
     "default": {
         "altair": {
             "hashes": [
-                "sha256:91a310b926508d560fe0148d02a194f38b824122641ef528113d029fcd129f8c",
-                "sha256:d960ebe6178c56de3855a68c47b516be38640b73fb3b5111c2a9ca90546dd73d"
+                "sha256:09ae95b53d5fe5b16987dccc785a7af8588f2dca50de1e7a156efa8a461515f8",
+                "sha256:614bf5ecbe2337347b590afb111929aa9c16c9527c4887d96c9bc7f6640756b4"
             ],
             "index": "pypi",
             "markers": "python_version >= '3.9'",
-            "version": "==5.5.0"
+            "version": "==6.0.0"
         },
         "annotated-types": {
             "hashes": [
@@ -545,11 +545,11 @@
         },
         "narwhals": {
             "hashes": [
-                "sha256:652a1fcc9d432bbf114846688884c215f17eb118aa640b7419295d2f910d2a8b",
-                "sha256:a0a8bb80205323851338888ba3a12b4f65d352362c8a94be591244faf36504ad"
+                "sha256:14fd7040b5ff211d415a82e4827b9d04c354e213e72a6d0730205ffd72e3b7ff",
+                "sha256:1f8dfa4a33a6dbff878c3e9be4c3b455dfcaf2a9322f1357db00e4e92e95b84b"
             ],
             "markers": "python_version >= '3.9'",
-            "version": "==2.18.1"
+            "version": "==2.19.0"
         },
         "numpy": {
             "hashes": [
