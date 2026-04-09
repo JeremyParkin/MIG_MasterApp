@@ -1,3 +1,5 @@
+# top_stories.py
+
 from __future__ import annotations
 
 import re
@@ -47,65 +49,11 @@ def normalize_top_stories_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def pick_best_story_row(group: pd.DataFrame) -> pd.Series | None:
-    """Pick the best example row for a grouped story."""
-    if group.empty:
-        return None
-
-    working = group.copy()
-    working["Outlet"] = working["Outlet"].fillna("").astype(str)
-    working["Type"] = working["Type"].fillna("").astype(str)
-    working["Snippet"] = working["Snippet"].fillna("").astype(str)
-    working["URL"] = working["URL"].fillna("").astype(str)
-    working["Headline"] = working["Headline"].fillna("").astype(str)
-    working["Impressions"] = pd.to_numeric(working["Impressions"], errors="coerce").fillna(0)
-
-    preferred_wire_pattern = r"Reuters|Associated Press|Canadian Press"
-    preferred_wire_group = working[
-        working["Outlet"].str.contains(preferred_wire_pattern, case=False, na=False, regex=True)
-    ]
-
-    if not preferred_wire_group.empty:
-        return preferred_wire_group.loc[preferred_wire_group["Impressions"].idxmax()]
-
-    is_broadcast = working["Type"].isin(["TV", "RADIO", "PODCAST"]).any()
-
-    middle_tier_keywords = [
-        "MarketWatch", "Seeking Alpha", "News Break", "Dispatchist",
-        "MarketScreener", "StreetInsider", "Head Topics"
-    ]
-    bottom_tier_keywords = [
-        "Yahoo", "MSN", "AOL", "Newswire", "Saltwire", "Market Wire",
-        "Business Wire", "TD Ameritrade", "PR Wire", "Chinese Wire",
-        "News Wire", "Presswire"
-    ]
-
-    middle_pattern = "|".join(re.escape(x) for x in middle_tier_keywords)
-    bottom_pattern = "|".join(re.escape(x) for x in bottom_tier_keywords)
-    combined_pattern = "|".join(re.escape(x) for x in (middle_tier_keywords + bottom_tier_keywords))
-
-    if is_broadcast:
-        return working.loc[working["Impressions"].idxmax()]
-
-    top_tier_group = working[
-        ~working["Outlet"].str.contains(combined_pattern, case=False, na=False, regex=True)
-    ]
-    middle_tier_group = working[
-        working["Outlet"].str.contains(middle_pattern, case=False, na=False, regex=True)
-        & ~working["Outlet"].str.contains(bottom_pattern, case=False, na=False, regex=True)
-    ]
-
-    if not top_tier_group.empty:
-        return top_tier_group.loc[top_tier_group["Impressions"].idxmax()]
-    if not middle_tier_group.empty:
-        return middle_tier_group.loc[middle_tier_group["Impressions"].idxmax()]
-
-    return working.loc[working["Impressions"].idxmax()]
-
 
 def build_grouped_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Group filtered row-level stories by Group ID and attach exemplar row details.
+    Group filtered row-level stories by Group ID and use the canonical Prime Example row
+    as the representative row.
     """
     df = normalize_top_stories_df(df)
 
@@ -122,15 +70,23 @@ def build_grouped_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
             "Example Snippet",
         ])
 
+    if "Prime Example" not in df.columns:
+        raise ValueError(
+            "Prime Example column is missing. Please rerun Basic Cleaning so grouped stories have a canonical exemplar."
+        )
+
     rows: list[dict[str, Any]] = []
 
     for group_id, group in df.groupby("Group ID", dropna=False):
         mentions = pd.to_numeric(group["Mentions"], errors="coerce").fillna(0).sum()
         impressions = pd.to_numeric(group["Impressions"], errors="coerce").fillna(0).sum()
 
-        best_row = pick_best_story_row(group)
-        if best_row is None:
+        prime_group = group[group["Prime Example"] == 1].copy()
+        if prime_group.empty:
             continue
+
+        # Just in case, keep one canonical representative
+        best_row = prime_group.iloc[0]
 
         rows.append({
             "Group ID": group_id,
@@ -366,25 +322,6 @@ def save_selected_rows(
         new_added_df.reset_index(drop=True, inplace=True)
 
     return new_added_df
-#
-# def save_selected_rows(
-#     updated_data: pd.DataFrame,
-#     added_df: pd.DataFrame,
-# ) -> pd.DataFrame:
-#     """Return updated saved top stories dataset."""
-#     if "Top Story" not in updated_data.columns:
-#         return added_df
-#
-#     selected_rows = updated_data.loc[updated_data["Top Story"] == True].copy()
-#     selected_rows.drop(columns=["Top Story"], inplace=True, errors="ignore")
-#
-#     new_added_df = pd.concat([added_df, selected_rows], ignore_index=True)
-#
-#     if not new_added_df.empty and "Group ID" in new_added_df.columns:
-#         new_added_df.drop_duplicates(subset=["Group ID"], keep="last", inplace=True)
-#         new_added_df.reset_index(drop=True, inplace=True)
-#
-#     return new_added_df
 
 
 def remove_saved_candidates_from_display(

@@ -1,3 +1,5 @@
+# tagging_config.py
+
 from __future__ import annotations
 
 import math
@@ -6,7 +8,8 @@ from typing import Literal
 import pandas as pd
 
 
-SampleMode = Literal["full", "representative", "custom"]
+SampleMode = Literal["full", "representative", "custom","Reuse other sample"]
+
 
 
 DEFAULT_MAX_FULL_ROWS = 2000
@@ -106,70 +109,43 @@ def sample_tagging_rows(
 
     return df_rows.copy().reset_index(drop=True), population_size
 
-
 def build_unique_story_table_from_existing_groups(df_rows: pd.DataFrame) -> pd.DataFrame:
     """
-    Build one-row-per-group table from sampled rows using the EXISTING canonical Group ID.
-    This does not recluster.
+    Build one-row-per-group table using the Prime Example row.
     """
     if df_rows is None or df_rows.empty:
         return pd.DataFrame()
 
     if "Group ID" not in df_rows.columns:
-        raise ValueError("Group ID not found. Basic Cleaning must assign canonical groups before tagging.")
+        raise ValueError("Group ID missing.")
+
+    if "Prime Example" not in df_rows.columns:
+        raise ValueError("Prime Example missing.")
 
     working = df_rows.copy()
 
-    agg_dict = {}
+    # Aggregate metrics
+    metrics = working.groupby("Group ID").agg({
+        col: "sum" for col in ["Mentions", "Impressions", "Effective Reach"]
+        if col in working.columns
+    }).reset_index()
 
-    # First non-null / first row style fields
-    first_pref_cols = [
-        "Headline",
-        "Date",
-        "Outlet",
-        "Example Outlet",
-        "URL",
-        "Example URL",
-        "Snippet",
-        "Example Snippet",
-        "Type",
-        "Language",
-        "Country",
-        "Prov/State",
-    ]
-    for col in first_pref_cols:
-        if col in working.columns:
-            agg_dict[col] = "first"
+    group_counts = working.groupby("Group ID").size().reset_index(name="Group Count")
+    metrics = metrics.merge(group_counts, on="Group ID", how="left")
 
-    # Sum metrics
-    if "Mentions" in working.columns:
-        agg_dict["Mentions"] = "sum"
-    if "Impressions" in working.columns:
-        agg_dict["Impressions"] = "sum"
-    if "Effective Reach" in working.columns:
-        agg_dict["Effective Reach"] = "sum"
+    # Get prime rows
+    prime_rows = working[working["Prime Example"] == 1].copy()
+    prime_rows = prime_rows.drop_duplicates(subset=["Group ID"], keep="first")
 
-    unique_rows = (
-        working.groupby("Group ID", as_index=False)
-        .agg(agg_dict)
-        .copy()
+    # Remove metrics so aggregated ones win
+    prime_rows = prime_rows.drop(
+        columns=["Mentions", "Impressions", "Effective Reach", "Group Count"],
+        errors="ignore",
     )
 
-    # Ensure exemplar fields exist
-    if "Example Outlet" not in unique_rows.columns and "Outlet" in unique_rows.columns:
-        unique_rows["Example Outlet"] = unique_rows["Outlet"]
+    unique = prime_rows.merge(metrics, on="Group ID", how="left")
 
-    if "Example URL" not in unique_rows.columns and "URL" in unique_rows.columns:
-        unique_rows["Example URL"] = unique_rows["URL"]
-
-    if "Example Snippet" not in unique_rows.columns and "Snippet" in unique_rows.columns:
-        unique_rows["Example Snippet"] = unique_rows["Snippet"]
-
-    if "Group Count" not in unique_rows.columns:
-        group_counts = working.groupby("Group ID").size().reset_index(name="Group Count")
-        unique_rows = unique_rows.merge(group_counts, on="Group ID", how="left")
-
-    return unique_rows.reset_index(drop=True)
+    return unique.reset_index(drop=True)
 
 
 def prepare_tagging_datasets(
@@ -179,6 +155,7 @@ def prepare_tagging_datasets(
     max_full_rows: int = DEFAULT_MAX_FULL_ROWS,
     full_override: bool = False,
     random_state: int = 1,
+    reused_rows: pd.DataFrame | None = None,
 ) -> dict:
     """
     Build tagging-specific datasets:
@@ -187,14 +164,24 @@ def prepare_tagging_datasets(
     - df_tagging_unique: one row per original Group ID represented in the sample
     """
     source_rows = get_tagging_source_rows(df_traditional)
-    sampled_rows, effective_sample_size = sample_tagging_rows(
-        source_rows,
-        sample_mode=sample_mode,
-        custom_sample_size=custom_sample_size,
-        max_full_rows=max_full_rows,
-        full_override=full_override,
-        random_state=random_state,
-    )
+
+    if sample_mode == "reuse_other_sample":
+        if reused_rows is None or reused_rows.empty:
+            raise ValueError("No reusable sentiment sample found.")
+
+        sampled_rows = reused_rows.copy().reset_index(drop=True)
+        effective_sample_size = len(sampled_rows)
+
+    else:
+        sampled_rows, effective_sample_size = sample_tagging_rows(
+            source_rows,
+            sample_mode=sample_mode,
+            custom_sample_size=custom_sample_size,
+            max_full_rows=max_full_rows,
+            full_override=full_override,
+            random_state=random_state,
+        )
+        sampled_rows = ensure_prime_rows_in_sample(sampled_rows)
 
     if not sampled_rows.empty and "Group ID" not in sampled_rows.columns:
         raise ValueError("Sampled tagging rows do not contain Group ID. Standard Cleaning must run first.")
@@ -228,3 +215,50 @@ def reset_tagging_config_state(session_state) -> None:
     session_state.df_tagging_grouped_rows = pd.DataFrame()
     session_state.df_tagging_unique = pd.DataFrame()
     session_state.tagging_elapsed_time = 0.0
+
+
+def ensure_prime_rows_in_sample(df_rows: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ensure that for every Group ID represented in the sample,
+    the Prime Example row is present. If not, swap it in.
+    """
+    if df_rows.empty or "Group ID" not in df_rows.columns:
+        return df_rows
+
+    if "Prime Example" not in df_rows.columns:
+        raise ValueError("Prime Example column missing. Run Basic Cleaning first.")
+
+    working = df_rows.copy()
+
+    # Get all group IDs in sample
+    group_ids = working["Group ID"].dropna().unique()
+
+    rows_to_replace = []
+
+    for gid in group_ids:
+        group = working[working["Group ID"] == gid]
+
+        # If prime already present, continue
+        if (group["Prime Example"] == 1).any():
+            continue
+
+        # Find prime row from full dataset (assumes df_rows came from df_traditional)
+        full_group = df_rows[df_rows["Group ID"] == gid]
+
+        prime_row = full_group[full_group["Prime Example"] == 1]
+
+        if prime_row.empty:
+            continue
+
+        # Replace first non-prime row
+        idx_to_replace = group.index[0]
+        working.loc[idx_to_replace] = prime_row.iloc[0]
+
+    return working.reset_index(drop=True)
+
+
+def get_reusable_sentiment_sample(session_state) -> pd.DataFrame:
+    df = session_state.get("df_sentiment_rows", pd.DataFrame())
+    if isinstance(df, pd.DataFrame) and not df.empty:
+        return df.copy()
+    return pd.DataFrame()

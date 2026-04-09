@@ -1,5 +1,7 @@
-from __future__ import annotations
+# 8-Tagging.py
 
+from __future__ import annotations
+import pandas as pd
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -52,16 +54,7 @@ if not st.session_state.tags_text.strip():
 _last = st.session_state.get("__last_tagging_batch_summary__")
 if _last:
     st.success(f"Completed AI tagging for {_last['done']} grouped storie(s) in {_last['elapsed']:.1f}s.")
-    # st.text(
-    #     f"Token usage this batch: input={_last['in_tok']:,} • "
-    #     f"output={_last['out_tok']:,} • "
-    #     f"est. cost=${_last['batch_cost']:.4f} • "
-    #     f"session total=${_last['session_cost']:.4f}"
-    # )
-    # st.caption(
-    #     f"Token usage this batch: input={_last['in_tok']:,} • output={_last['out_tok']:,} • "
-    #     f"est. cost=${_last['batch_cost']:.4f} • session total=${_last['session_cost']:.4f}"
-    # )
+
     if _last["errors"]:
         with st.expander(f"Completed with {len(_last['errors'])} error(s)", expanded=False):
             for err in _last["errors"]:
@@ -81,22 +74,49 @@ if not st.session_state.tagging_config_step:
     st.subheader("Step 1: Prepare Tagging Dataset")
     st.caption("Sampling happens at the row level first, then the sampled rows are regrouped into unique stories.")
 
+    reusable_sentiment_sample = st.session_state.get("df_sentiment_rows", None)
+    has_reusable = isinstance(reusable_sentiment_sample, pd.DataFrame) and not reusable_sentiment_sample.empty
+
+    options = [
+        "Use full eligible dataset",
+        "Use representative sample",
+        "Set custom sample size",
+    ]
+
+    if has_reusable:
+        options.insert(0, "Reuse sentiment sample")
+
     mode_label = st.radio(
         "Tagging dataset mode",
-        options=[
-            "Use full eligible dataset",
-            "Use representative sample",
-            "Set custom sample size",
-        ],
+        options=options,
         index=1 if population_size > DEFAULT_MAX_FULL_ROWS else 0,
     )
 
-    if mode_label == "Use full eligible dataset":
+    if mode_label == "Reuse sentiment sample":
+        sample_mode = "reuse_other_sample"
+    elif mode_label == "Use full eligible dataset":
         sample_mode = "full"
     elif mode_label == "Use representative sample":
         sample_mode = "representative"
     else:
         sample_mode = "custom"
+
+    # mode_label = st.radio(
+    #     "Tagging dataset mode",
+    #     options=[
+    #         "Use full eligible dataset",
+    #         "Use representative sample",
+    #         "Set custom sample size",
+    #     ],
+    #     index=1 if population_size > DEFAULT_MAX_FULL_ROWS else 0,
+    # )
+
+    # if mode_label == "Use full eligible dataset":
+    #     sample_mode = "full"
+    # elif mode_label == "Use representative sample":
+    #     sample_mode = "representative"
+    # else:
+    #     sample_mode = "custom"
 
     custom_sample_size = None
     if sample_mode == "custom":
@@ -117,14 +137,24 @@ if not st.session_state.tagging_config_step:
             f"I understand the risk and want to allow full tagging over {DEFAULT_MAX_FULL_ROWS:,} mentions",
             value=False,
         )
-
-    preview_rows = None
-    if sample_mode == "full":
-        preview_rows = population_size if (population_size <= DEFAULT_MAX_FULL_ROWS or full_override) else DEFAULT_MAX_FULL_ROWS
+    preview_rows = 0
+    if sample_mode == "reuse_other_sample":
+        preview_rows = len(reusable_sentiment_sample) if has_reusable else 0
+    elif sample_mode == "full":
+        preview_rows = population_size if (
+                    population_size <= DEFAULT_MAX_FULL_ROWS or full_override) else DEFAULT_MAX_FULL_ROWS
     elif sample_mode == "representative":
         preview_rows = recommended_sample
     else:
         preview_rows = int(custom_sample_size or 0)
+
+    # preview_rows = None
+    # if sample_mode == "full":
+    #     preview_rows = population_size if (population_size <= DEFAULT_MAX_FULL_ROWS or full_override) else DEFAULT_MAX_FULL_ROWS
+    # elif sample_mode == "representative":
+    #     preview_rows = recommended_sample
+    # else:
+    #     preview_rows = int(custom_sample_size or 0)
 
     col1, col2 = st.columns(2)
     with col1:
@@ -135,8 +165,15 @@ if not st.session_state.tagging_config_step:
     if sample_mode == "representative":
         st.caption(f"Representative sample size estimate: {recommended_sample:,}")
 
+    if sample_mode == "reuse_other_sample" and has_reusable:
+        st.caption(f"Using existing sentiment sample: {len(reusable_sentiment_sample):,} rows")
+    # if sample_mode == "reuse_other_sample":
+    #     st.caption(f"Using existing sentiment sample: {len(reused_rows):,} rows")
+
     if st.button("Prepare Tagging Dataset", type="primary"):
         start = time.time()
+
+        reused_rows = reusable_sentiment_sample if sample_mode == "reuse_other_sample" else None
 
         results = prepare_tagging_datasets(
             df_traditional=st.session_state.df_traditional,
@@ -144,7 +181,16 @@ if not st.session_state.tagging_config_step:
             custom_sample_size=custom_sample_size,
             max_full_rows=DEFAULT_MAX_FULL_ROWS,
             full_override=full_override,
+            reused_rows=reused_rows,
         )
+
+        # results = prepare_tagging_datasets(
+        #     df_traditional=st.session_state.df_traditional,
+        #     sample_mode=sample_mode,
+        #     custom_sample_size=custom_sample_size,
+        #     max_full_rows=DEFAULT_MAX_FULL_ROWS,
+        #     full_override=full_override,
+        # )
 
         st.session_state.df_tagging_rows = results["df_tagging_rows"]
         st.session_state.df_tagging_grouped_rows = results["df_tagging_grouped_rows"]

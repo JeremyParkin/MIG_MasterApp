@@ -1,3 +1,5 @@
+# sentiment_config.py
+
 from __future__ import annotations
 
 import math
@@ -8,7 +10,8 @@ from typing import Literal
 import pandas as pd
 
 
-SampleMode = Literal["full", "representative", "custom"]
+SampleMode = Literal["full", "representative", "custom","Reuse other sample"]
+
 
 # DEFAULT_SENTIMENT_SIMILARITY_THRESHOLD = 0.935
 # DEFAULT_SENTIMENT_MAX_BATCH_SIZE = 1800
@@ -107,66 +110,44 @@ def sample_sentiment_rows(
         return sampled, effective_n
 
     return df_rows.copy().reset_index(drop=True), population_size
-
 def build_unique_story_table_from_existing_groups(df_rows: pd.DataFrame) -> pd.DataFrame:
     """
-    Build one-row-per-group table from sampled rows using the EXISTING canonical Group ID.
-    This does not recluster.
+    Build one-row-per-group table using the Prime Example row.
     """
     if df_rows is None or df_rows.empty:
         return pd.DataFrame()
 
     if "Group ID" not in df_rows.columns:
-        raise ValueError("Group ID not found. Basic Cleaning must assign canonical groups before sentiment analysis.")
+        raise ValueError("Group ID missing.")
+
+    if "Prime Example" not in df_rows.columns:
+        raise ValueError("Prime Example missing.")
 
     working = df_rows.copy()
 
-    agg_dict = {}
-
-    first_pref_cols = [
-        "Headline",
-        "Date",
-        "Outlet",
-        "Example Outlet",
-        "URL",
-        "Example URL",
-        "Snippet",
-        "Example Snippet",
-        "Type",
-        "Language",
-        "Country",
-        "Prov/State",
-    ]
-    for col in first_pref_cols:
-        if col in working.columns:
-            agg_dict[col] = "first"
-
-    if "Mentions" in working.columns:
-        agg_dict["Mentions"] = "sum"
-    if "Impressions" in working.columns:
-        agg_dict["Impressions"] = "sum"
-    if "Effective Reach" in working.columns:
-        agg_dict["Effective Reach"] = "sum"
-
-    unique_rows = (
-        working.groupby("Group ID", as_index=False)
-        .agg(agg_dict)
-        .copy()
-    )
-
-    if "Example Outlet" not in unique_rows.columns and "Outlet" in unique_rows.columns:
-        unique_rows["Example Outlet"] = unique_rows["Outlet"]
-
-    if "Example URL" not in unique_rows.columns and "URL" in unique_rows.columns:
-        unique_rows["Example URL"] = unique_rows["URL"]
-
-    if "Example Snippet" not in unique_rows.columns and "Snippet" in unique_rows.columns:
-        unique_rows["Example Snippet"] = unique_rows["Snippet"]
+    # Aggregate metrics
+    metrics = working.groupby("Group ID").agg({
+        col: "sum" for col in ["Mentions", "Impressions", "Effective Reach"]
+        if col in working.columns
+    }).reset_index()
 
     group_counts = working.groupby("Group ID").size().reset_index(name="Group Count")
-    unique_rows = unique_rows.merge(group_counts, on="Group ID", how="left")
+    metrics = metrics.merge(group_counts, on="Group ID", how="left")
 
-    return unique_rows.reset_index(drop=True)
+    # Get prime rows
+    prime_rows = working[working["Prime Example"] == 1].copy()
+    prime_rows = prime_rows.drop_duplicates(subset=["Group ID"], keep="first")
+
+    # Remove metrics so aggregated ones win
+    prime_rows = prime_rows.drop(
+        columns=["Mentions", "Impressions", "Effective Reach", "Group Count"],
+        errors="ignore",
+    )
+
+    unique = prime_rows.merge(metrics, on="Group ID", how="left")
+
+    return unique.reset_index(drop=True)
+
 
 def prepare_sentiment_datasets(
     df_traditional: pd.DataFrame,
@@ -175,22 +156,48 @@ def prepare_sentiment_datasets(
     max_full_rows: int = DEFAULT_MAX_FULL_ROWS,
     full_override: bool = False,
     random_state: int = 1,
+    reused_rows: pd.DataFrame | None = None,
 ) -> dict:
     source_rows = get_sentiment_source_rows(df_traditional)
-    sampled_rows, effective_sample_size = sample_sentiment_rows(
-        source_rows,
-        sample_mode=sample_mode,
-        custom_sample_size=custom_sample_size,
-        max_full_rows=max_full_rows,
-        full_override=full_override,
-        random_state=random_state,
-    )
+
+    if sample_mode == "reuse_other_sample":
+        if reused_rows is None or reused_rows.empty:
+            raise ValueError("No reusable tagging sample found.")
+        sampled_rows = reused_rows.copy().reset_index(drop=True)
+        effective_sample_size = len(sampled_rows)
+    else:
+        sampled_rows, effective_sample_size = sample_sentiment_rows(
+            source_rows,
+            sample_mode=sample_mode,
+            custom_sample_size=custom_sample_size,
+            max_full_rows=max_full_rows,
+            full_override=full_override,
+            random_state=random_state,
+        )
+
+    sampled_rows = ensure_prime_rows_in_sample(sampled_rows)
 
     if not sampled_rows.empty and "Group ID" not in sampled_rows.columns:
         raise ValueError("Sampled sentiment rows do not contain Group ID. Standard Cleaning must run first.")
 
     grouped_rows = sampled_rows.copy()
     unique_rows = build_unique_story_table_from_existing_groups(grouped_rows)
+    # source_rows = get_sentiment_source_rows(df_traditional)
+    # sampled_rows, effective_sample_size = sample_sentiment_rows(
+    #     source_rows,
+    #     sample_mode=sample_mode,
+    #     custom_sample_size=custom_sample_size,
+    #     max_full_rows=max_full_rows,
+    #     full_override=full_override,
+    #     random_state=random_state,
+    # )
+    # sampled_rows = ensure_prime_rows_in_sample(sampled_rows)
+    #
+    # if not sampled_rows.empty and "Group ID" not in sampled_rows.columns:
+    #     raise ValueError("Sampled sentiment rows do not contain Group ID. Standard Cleaning must run first.")
+    #
+    # grouped_rows = sampled_rows.copy()
+    # unique_rows = build_unique_story_table_from_existing_groups(grouped_rows)
 
     for df_name in [grouped_rows, unique_rows]:
         for col in ["Assigned Sentiment", "AI Sentiment", "AI Sentiment Confidence", "AI Sentiment Rationale"]:
@@ -205,47 +212,6 @@ def prepare_sentiment_datasets(
         "sample_size_used": effective_sample_size,
         "unique_story_count": len(unique_rows),
     }
-
-# def prepare_sentiment_datasets(
-#     df_traditional: pd.DataFrame,
-#     sample_mode: SampleMode,
-#     custom_sample_size: int | None = None,
-#     max_full_rows: int = DEFAULT_MAX_FULL_ROWS,
-#     full_override: bool = False,
-#     similarity_threshold: float = DEFAULT_SENTIMENT_SIMILARITY_THRESHOLD,
-#     max_batch_size: int = DEFAULT_SENTIMENT_MAX_BATCH_SIZE,
-#     random_state: int = 1,
-# ) -> dict:
-#     source_rows = get_sentiment_source_rows(df_traditional)
-#     sampled_rows, effective_sample_size = sample_sentiment_rows(
-#         source_rows,
-#         sample_mode=sample_mode,
-#         custom_sample_size=custom_sample_size,
-#         max_full_rows=max_full_rows,
-#         full_override=full_override,
-#         random_state=random_state,
-#     )
-#
-#     grouped_rows = cluster_by_media_type(
-#         sampled_rows.copy(),
-#         similarity_threshold=similarity_threshold,
-#         max_batch_size=max_batch_size,
-#     )
-#     unique_rows = build_unique_story_table(grouped_rows)
-#
-#     for df_name in [grouped_rows, unique_rows]:
-#         for col in ["Assigned Sentiment", "AI Sentiment", "AI Sentiment Confidence", "AI Sentiment Rationale"]:
-#             if col not in df_name.columns:
-#                 df_name[col] = pd.NA
-#
-#     return {
-#         "df_sentiment_rows": sampled_rows.reset_index(drop=True),
-#         "df_sentiment_grouped_rows": grouped_rows.reset_index(drop=True),
-#         "df_sentiment_unique": unique_rows.reset_index(drop=True),
-#         "population_size": len(source_rows),
-#         "sample_size_used": effective_sample_size,
-#         "unique_story_count": len(unique_rows),
-#     }
 
 
 def _clean_list(lst: list[str]) -> list[str]:
@@ -555,3 +521,39 @@ def reset_sentiment_config_state(session_state) -> None:
 
     session_state.toning_config_step = False
     session_state.last_saved = None
+
+
+def ensure_prime_rows_in_sample(df_rows: pd.DataFrame) -> pd.DataFrame:
+    if df_rows.empty or "Group ID" not in df_rows.columns:
+        return df_rows
+
+    if "Prime Example" not in df_rows.columns:
+        raise ValueError("Prime Example column missing.")
+
+    working = df_rows.copy()
+
+    group_ids = working["Group ID"].dropna().unique()
+
+    for gid in group_ids:
+        group = working[working["Group ID"] == gid]
+
+        if (group["Prime Example"] == 1).any():
+            continue
+
+        full_group = df_rows[df_rows["Group ID"] == gid]
+        prime_row = full_group[full_group["Prime Example"] == 1]
+
+        if prime_row.empty:
+            continue
+
+        idx_to_replace = group.index[0]
+        working.loc[idx_to_replace] = prime_row.iloc[0]
+
+    return working.reset_index(drop=True)
+
+
+def get_reusable_tagging_sample(session_state) -> pd.DataFrame:
+    df = session_state.get("df_tagging_rows", pd.DataFrame())
+    if isinstance(df, pd.DataFrame) and not df.empty:
+        return df.copy()
+    return pd.DataFrame()

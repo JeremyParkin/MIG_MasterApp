@@ -1,3 +1,5 @@
+# 2-Basic_Cleaning.py
+
 from __future__ import annotations
 
 import time
@@ -10,10 +12,13 @@ from processing.effective_reach import (
     apply_effective_reach_traditional,
     apply_effective_reach_social,
 )
+
 from processing.story_grouping import (
     cluster_by_media_type,
     build_unique_story_table,
+    mark_prime_examples,
 )
+
 from utils.formatting import format_number, NUMERIC_FORMAT_DICT
 
 warnings.filterwarnings("ignore")
@@ -221,6 +226,19 @@ if st.session_state.standard_step:
         unique_mentions=None,
     )
 
+    # st.write(
+    #     st.session_state.df_ai_unique[["Group ID", "Prime Example", "Headline", "Outlet", "Group Count"]].head(20)
+    # )
+    #
+    # prime_check = (
+    #     st.session_state.df_traditional.groupby("Group ID")["Prime Example"].sum().value_counts()
+    # )
+    # st.write(prime_check)
+    #
+    # st.write(
+    #     st.session_state.df_ai_unique[["Group ID", "Prime Example", "Headline", "Outlet", "Group Count"]].head(20)
+    # )
+
 
 else:
     with st.form("basic_cleaning_form"):
@@ -261,6 +279,7 @@ else:
                 similarity_threshold=0.935,
                 max_batch_size=1800,
             )
+            df_ai_grouped = mark_prime_examples(df_ai_grouped)
             df_ai_unique = build_unique_story_table(df_ai_grouped)
 
             # Canonical grouped traditional dataset

@@ -1,3 +1,5 @@
+# 10-Spot_Checks.py
+
 from __future__ import annotations
 
 import warnings
@@ -32,7 +34,7 @@ from utils.api_meter import (
 
 warnings.filterwarnings("ignore")
 
-st.markdown("<style>.block-container{padding-top:2rem !important;}</style>", unsafe_allow_html=True)
+st.markdown("<style>.block-container{padding-top:2.75rem !important;}</style>", unsafe_allow_html=True)
 
 if not st.session_state.get("sentiment_config_step", False):
     st.error("Please complete AI Sentiment setup before trying this step.")
@@ -127,14 +129,6 @@ def auto_accept_high_confidence_matches(
             & review_conf.ge(confidence_threshold)
     )
 
-    # mask = (
-    #     (assigned == "")
-    #     & (unique["AI Agreement"].fillna("") == "Match")
-    #     & (ai_label != "")
-    #     & (ai_label == review_label)
-    #     & ai_conf.ge(confidence_threshold)
-    #     & review_conf.ge(confidence_threshold)
-    # )
 
     accepted_count = int(mask.sum())
     if accepted_count == 0:
@@ -198,12 +192,6 @@ needs_review_count = int(
     (reviewed_candidates.get("Needs Human Review", pd.Series(dtype="object")) == "Yes").sum()
 ) if not reviewed_candidates.empty else 0
 
-# safe_match_count = int(
-#     (
-#         (reviewed_candidates.get("AI Agreement", pd.Series(dtype="object")) == "Match")
-#         & (reviewed_candidates.get("Needs Human Review", pd.Series(dtype="object")) != "Yes")
-#     ).sum()
-# ) if not reviewed_candidates.empty else 0
 
 last_batch = st.session_state.get("__last_spot_check_ai_summary__")
 if last_batch:
@@ -294,23 +282,6 @@ with st.expander("Advanced review options", expanded=False):
 
     with action2:
         st.caption("High-confidence matching opinions are auto-assigned during AI pre-review.")
-
-    # with action2:
-    #     auto_accept_disabled = safe_match_count == 0
-    #     if st.button(
-    #         "Auto-accept remaining matches",
-    #         type="secondary",
-    #         disabled=auto_accept_disabled,
-    #             help="Automatically assigns sentiment where both AI opinions match and the review AI confidence is above the cutoff."
-    #     ):
-    #         unique2, grouped2, accepted_count = auto_accept_high_confidence_matches(
-    #             st.session_state.df_sentiment_unique,
-    #             st.session_state.df_sentiment_grouped_rows,
-    #             confidence_threshold=int(low_conf_threshold),
-    #         )
-    #         sync_sentiment_state(unique2, grouped2)
-    #         st.success(f"Auto-accepted {accepted_count} matching group(s).")
-    #         st.rerun()
 
 review_mode = st.radio(
     "View",
@@ -596,14 +567,7 @@ with right:
             st.session_state.spot_ai_model_override = DEFAULT_SECOND_OPINION_MODEL
             st.session_state.spot_lock_gid = current_group_id
             st.rerun()
-    # if review_label:
-    #     if st.button("Re-run review AI", use_container_width=True):
-    #         st.session_state.pop("__last_spot_check_ai_summary__", None)
-    #         st.session_state.spot_ai_loading = True
-    #         st.session_state.spot_ai_refresh_requested = True
-    #         st.session_state.spot_ai_model_override = DEFAULT_SECOND_OPINION_MODEL
-    #         st.session_state.spot_lock_gid = current_group_id
-    #         st.rerun()
+
 
     has_ai_rsn = not pd.isna(ai_rsn) and str(ai_rsn).strip()
     has_review_rsn = not pd.isna(review_rsn) and str(review_rsn).strip()
@@ -617,14 +581,6 @@ with right:
                 st.write("**2nd AI rationale**")
                 st.write(str(review_rsn))
 
-    # if ai_rsn or review_rsn:
-    #     with st.expander("AI opinion reasoning", expanded=False):
-    #         if ai_rsn:
-    #             st.write("**1st AI rationale**")
-    #             st.write(str(ai_rsn))
-    #         if review_rsn:
-    #             st.write("**2nd AI rationale**")
-    #             st.write(str(review_rsn))
 
     st.divider()
 

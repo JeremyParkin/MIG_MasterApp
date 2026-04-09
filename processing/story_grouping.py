@@ -1,3 +1,6 @@
+# story_grouping.py
+
+
 from __future__ import annotations
 
 import math
@@ -10,6 +13,8 @@ from scipy import sparse
 from scipy.sparse import csgraph
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.neighbors import NearestNeighbors
+
+from processing.story_examples import pick_best_story_row
 
 
 def normalize_text(text: str) -> str:
@@ -158,13 +163,99 @@ def cluster_by_media_type(
 
     return pd.concat(clustered_frames, ignore_index=True)
 
+def mark_prime_examples(grouped_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Mark exactly one row per Group ID as Prime Example = 1, all others 0.
+    """
+    if grouped_df.empty or "Group ID" not in grouped_df.columns:
+        out = grouped_df.copy()
+        if "Prime Example" not in out.columns:
+            out["Prime Example"] = 0
+        return out
 
-def build_unique_story_table(grouped_df: pd.DataFrame) -> pd.DataFrame:
+    out = grouped_df.copy()
+    out["Prime Example"] = 0
+
+    for group_id, group in out.groupby("Group ID", dropna=False):
+        best_row = pick_best_story_row(group)
+        if best_row is None:
+            continue
+        out.loc[best_row.name, "Prime Example"] = 1
+
+    return out
+
+
+def build_unique_story_table_from_prime(grouped_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Build one-row-per-group table using the Prime Example row as the representative row,
+    while summing group-level metrics like mentions and impressions.
+    """
     if grouped_df.empty or "Group ID" not in grouped_df.columns:
         return pd.DataFrame()
 
-    group_counts = grouped_df.groupby("Group ID").size().reset_index(name="Group Count")
-    unique_stories = grouped_df.groupby("Group ID").agg(lambda x: x.iloc[0]).reset_index()
-    unique_stories = unique_stories.merge(group_counts, on="Group ID")
-    unique_stories = unique_stories.sort_values(by="Group Count", ascending=False).reset_index(drop=True)
-    return unique_stories
+    working = grouped_df.copy()
+
+    if "Prime Example" not in working.columns:
+        working = mark_prime_examples(working)
+
+    group_counts = working.groupby("Group ID").size().reset_index(name="Group Count")
+
+    metric_frames = [group_counts]
+
+    if "Mentions" in working.columns:
+        mentions = (
+            pd.to_numeric(working["Mentions"], errors="coerce")
+            .fillna(0)
+            .groupby(working["Group ID"])
+            .sum()
+            .reset_index(name="Mentions")
+        )
+        metric_frames.append(mentions)
+
+    if "Impressions" in working.columns:
+        impressions = (
+            pd.to_numeric(working["Impressions"], errors="coerce")
+            .fillna(0)
+            .groupby(working["Group ID"])
+            .sum()
+            .reset_index(name="Impressions")
+        )
+        metric_frames.append(impressions)
+
+    if "Effective Reach" in working.columns:
+        er = (
+            pd.to_numeric(working["Effective Reach"], errors="coerce")
+            .fillna(0)
+            .groupby(working["Group ID"])
+            .sum()
+            .reset_index(name="Effective Reach")
+        )
+        metric_frames.append(er)
+
+    metrics = metric_frames[0]
+    for frame in metric_frames[1:]:
+        metrics = metrics.merge(frame, on="Group ID", how="left")
+
+    prime_rows = working.loc[working["Prime Example"] == 1].copy()
+
+    # Keep one prime row per group just in case
+    prime_rows = prime_rows.drop_duplicates(subset=["Group ID"], keep="first")
+
+    # Drop metric columns from representative rows so the summed versions win
+    prime_rows = prime_rows.drop(
+        columns=["Mentions", "Impressions", "Effective Reach", "Group Count"],
+        errors="ignore",
+    )
+
+    unique_stories = prime_rows.merge(metrics, on="Group ID", how="left")
+
+    # Sort most important groups first
+    sort_cols = [c for c in ["Group Count", "Impressions", "Effective Reach", "Mentions"] if c in unique_stories.columns]
+    if sort_cols:
+        unique_stories = unique_stories.sort_values(by=sort_cols, ascending=False)
+
+    return unique_stories.reset_index(drop=True)
+
+
+def build_unique_story_table(grouped_df: pd.DataFrame) -> pd.DataFrame:
+    return build_unique_story_table_from_prime(grouped_df)

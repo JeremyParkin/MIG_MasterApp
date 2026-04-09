@@ -108,6 +108,7 @@ columns_to_keep = [
     "Snippet",
     "Tags",
     "Coverage Flags",
+    "Prime Example"
 ]
 
 extra_filter_columns = [

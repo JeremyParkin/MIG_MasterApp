@@ -1,3 +1,5 @@
+# basic_cleaning_pipeline.py
+
 from __future__ import annotations
 
 import pandas as pd
@@ -6,8 +8,13 @@ from processing.effective_reach import (
     apply_effective_reach_social,
     apply_effective_reach_traditional,
 )
+
+from processing.story_grouping import (
+    cluster_by_media_type,
+    build_unique_story_table,
+    mark_prime_examples,
+)
 from processing.standard_cleaning import run_standard_cleaning
-from processing.story_grouping import cluster_by_media_type, build_unique_story_table
 
 
 def run_basic_cleaning_pipeline(
@@ -29,11 +36,13 @@ def run_basic_cleaning_pipeline(
     df_social = apply_effective_reach_social(cleaning_results["df_social"])
     df_dupes = cleaning_results["df_dupes"]
 
+
     df_ai_grouped = cluster_by_media_type(
         df_traditional.copy(),
         similarity_threshold=similarity_threshold,
         max_batch_size=max_batch_size,
     )
+    df_ai_grouped = mark_prime_examples(df_ai_grouped)
     df_ai_unique = build_unique_story_table(df_ai_grouped)
 
     return {

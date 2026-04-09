@@ -1,5 +1,7 @@
-from __future__ import annotations
+# 9-AI_Sentiment
 
+from __future__ import annotations
+import pandas as pd
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -78,22 +80,49 @@ if not st.session_state.sentiment_config_step:
     st.subheader("Step 1: Prepare Sentiment Dataset & Configuration")
     st.caption("Sampling happens at the row level first, then the sampled rows are regrouped into unique stories.")
 
+    reusable_tagging_sample = st.session_state.get("df_tagging_rows", None)
+    has_reusable = isinstance(reusable_tagging_sample, pd.DataFrame) and not reusable_tagging_sample.empty
+
+    options = [
+        "Use full eligible dataset",
+        "Use representative sample",
+        "Set custom sample size",
+    ]
+
+    if has_reusable:
+        options.insert(0, "Reuse tagging sample")
+
     mode_label = st.radio(
         "Sentiment dataset mode",
-        options=[
-            "Use full eligible dataset",
-            "Use representative sample",
-            "Set custom sample size",
-        ],
+        options=options,
         index=1 if population_size > DEFAULT_MAX_FULL_ROWS else 0,
     )
 
-    if mode_label == "Use full eligible dataset":
+    if mode_label == "Reuse tagging sample":
+        sample_mode = "reuse_other_sample"
+    elif mode_label == "Use full eligible dataset":
         sample_mode = "full"
     elif mode_label == "Use representative sample":
         sample_mode = "representative"
     else:
         sample_mode = "custom"
+
+    # mode_label = st.radio(
+    #     "Sentiment dataset mode",
+    #     options=[
+    #         "Use full eligible dataset",
+    #         "Use representative sample",
+    #         "Set custom sample size",
+    #     ],
+    #     index=1 if population_size > DEFAULT_MAX_FULL_ROWS else 0,
+    # )
+    #
+    # if mode_label == "Use full eligible dataset":
+    #     sample_mode = "full"
+    # elif mode_label == "Use representative sample":
+    #     sample_mode = "representative"
+    # else:
+    #     sample_mode = "custom"
 
     custom_sample_size = None
     if sample_mode == "custom":
@@ -114,14 +143,24 @@ if not st.session_state.sentiment_config_step:
             f"I understand the risk and want to allow full sentiment analysis over {DEFAULT_MAX_FULL_ROWS:,} mentions",
             value=False,
         )
-
-    preview_rows = None
-    if sample_mode == "full":
-        preview_rows = population_size if (population_size <= DEFAULT_MAX_FULL_ROWS or full_override) else DEFAULT_MAX_FULL_ROWS
+    preview_rows = 0
+    if sample_mode == "reuse_other_sample":
+        preview_rows = len(reusable_tagging_sample) if has_reusable else 0
+    elif sample_mode == "full":
+        preview_rows = population_size if (
+                    population_size <= DEFAULT_MAX_FULL_ROWS or full_override) else DEFAULT_MAX_FULL_ROWS
     elif sample_mode == "representative":
         preview_rows = recommended_sample
     else:
         preview_rows = int(custom_sample_size or 0)
+
+    # preview_rows = None
+    # if sample_mode == "full":
+    #     preview_rows = population_size if (population_size <= DEFAULT_MAX_FULL_ROWS or full_override) else DEFAULT_MAX_FULL_ROWS
+    # elif sample_mode == "representative":
+    #     preview_rows = recommended_sample
+    # else:
+    #     preview_rows = int(custom_sample_size or 0)
 
     top_col1, top_col2 = st.columns(2)
     with top_col1:
@@ -131,6 +170,14 @@ if not st.session_state.sentiment_config_step:
 
     if sample_mode == "representative":
         st.caption(f"Representative sample size estimate: {recommended_sample:,}")
+
+    # if sample_mode == "reuse_other_sample" and has_reusable:
+    #     st.caption(f"Using existing tagging sample: {len(reusable_sentiment_sample):,} rows")
+    if sample_mode == "reuse_other_sample" and has_reusable:
+        st.caption(f"Using existing tagging sample: {len(reusable_tagging_sample):,} rows")
+
+    # if sample_mode == "reuse_other_sample":
+    #     st.caption(f"Using existing tagging sample: {len(reused_rows):,} rows")
 
     st.divider()
     st.write("**Sentiment configuration**")
@@ -151,42 +198,7 @@ if not st.session_state.sentiment_config_step:
         )
     model = DEFAULT_SENTIMENT_MODEL
     primary_names = [primary_name.strip()] if primary_name.strip() else []
-    # primary_names = st_tags(
-    #     label="**Primary Name**",
-    #     text="Press enter to add more",
-    #     maxtags=1,
-    #     value=st.session_state.ui_primary_names,
-    #     key="sentiment_primary_names_tags",
-    # )
 
-    # col1, col2, col3 = st.columns(3, gap="medium")
-    # with col1:
-    #     sentiment_type = st.selectbox(
-    #         "**Sentiment Type**",
-    #         ["3-way", "5-way"],
-    #         index=0 if st.session_state.ui_sentiment_type == "3-way" else 1,
-    #         help="3-way is standard (Positive/Neutral/Negative). 5-way adds more gradations.",
-    #         key="sentiment_type_select_ai_page",
-    #     )
-    # with col2:
-    #     model = st.selectbox(
-    #         "Select Model",
-    #         ["gpt-5.4-nano", "gpt-5-mini", "gpt-4.1-mini"],
-    #         index=["gpt-5.4-nano", "gpt-5-mini", "gpt-4.1-mini"].index(
-    #             st.session_state.get("model_choice", "gpt-5.4-nano")
-    #             if st.session_state.get("model_choice", "gpt-5.4-nano") in ["gpt-5.4-nano", "gpt-5-mini", "gpt-4.1-mini"]
-    #             else "gpt-5.4-nano"
-    #         ),
-    #         help="gpt-5.4-nano is recommended for most tasks.",
-    #         key="sentiment_model_choice_select_ai_page",
-    #     )
-    # with col3:
-    #     st.markdown("<small>Model notes:</small>", unsafe_allow_html=True)
-    #     st.caption(
-    #         "* gpt-5.4-nano: best balance of quality and speed.\n"
-    #         "* gpt-5-mini: older fallback option.\n"
-    #         "* gpt-4.1-mini: legacy fast option"
-    #     )
 
     st.divider()
 
@@ -226,6 +238,16 @@ if not st.session_state.sentiment_config_step:
             st.stop()
 
         start = time.time()
+        #
+        # results = prepare_sentiment_datasets(
+        #     df_traditional=st.session_state.df_traditional,
+        #     sample_mode=sample_mode,
+        #     custom_sample_size=custom_sample_size,
+        #     max_full_rows=DEFAULT_MAX_FULL_ROWS,
+        #     full_override=full_override,
+        # )
+
+        reused_rows = reusable_tagging_sample if sample_mode == "reuse_other_sample" else None
 
         results = prepare_sentiment_datasets(
             df_traditional=st.session_state.df_traditional,
@@ -233,6 +255,7 @@ if not st.session_state.sentiment_config_step:
             custom_sample_size=custom_sample_size,
             max_full_rows=DEFAULT_MAX_FULL_ROWS,
             full_override=full_override,
+            reused_rows=reused_rows,
         )
 
         st.session_state.df_sentiment_rows = results["df_sentiment_rows"]
