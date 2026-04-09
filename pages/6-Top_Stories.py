@@ -1,9 +1,9 @@
 # 6-Top_Stories.py
 from __future__ import annotations
 
+import importlib
 import warnings
 
-import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -69,32 +69,39 @@ with chart_col:
                 date_span = summary_stats["Date"].max() - summary_stats["Date"].min()
                 show_time = date_span <= pd.Timedelta(days=1)
 
-                x_axis = alt.Axis(
-                    title=None,
-                    labelAngle=0,
-                    format="%b %d, %-I %p" if show_time else "%b %d",
-                )
+                try:
+                    alt = importlib.import_module("altair")
+                except Exception:
+                    st.info("Top stories trend chart unavailable in this environment.")
+                    alt = None
 
-                line = alt.Chart(summary_stats).mark_line(size=2).encode(
-                    x=alt.X("Date:T", axis=x_axis),
-                    y=alt.Y("Mentions:Q", axis=None),
-                )
+                if alt is not None:
+                    x_axis = alt.Axis(
+                        title=None,
+                        labelAngle=0,
+                        format="%b %d, %-I %p" if show_time else "%b %d",
+                    )
 
-                points = alt.Chart(summary_stats).mark_circle(size=55, opacity=0).encode(
-                    x="Date:T",
-                    y="Mentions:Q",
-                    tooltip=[
-                        alt.Tooltip(
-                            "Date:T",
-                            title="Date",
-                            format="%b %d, %Y" if not show_time else "%b %d, %Y %-I:%M %p",
-                        ),
-                        alt.Tooltip("Mentions:Q", title="Mentions", format=","),
-                    ],
-                )
+                    line = alt.Chart(summary_stats).mark_line(size=2).encode(
+                        x=alt.X("Date:T", axis=x_axis),
+                        y=alt.Y("Mentions:Q", axis=None),
+                    )
 
-                chart = (line + points).properties(height=130)
-                st.altair_chart(chart, use_container_width=True)
+                    points = alt.Chart(summary_stats).mark_circle(size=55, opacity=0).encode(
+                        x="Date:T",
+                        y="Mentions:Q",
+                        tooltip=[
+                            alt.Tooltip(
+                                "Date:T",
+                                title="Date",
+                                format="%b %d, %Y" if not show_time else "%b %d, %Y %-I:%M %p",
+                            ),
+                            alt.Tooltip("Mentions:Q", title="Mentions", format=","),
+                        ],
+                    )
+
+                    chart = (line + points).properties(height=130)
+                    st.altair_chart(chart, use_container_width=True)
 
 all_columns = list(source_df.columns)
 columns_to_keep = [
