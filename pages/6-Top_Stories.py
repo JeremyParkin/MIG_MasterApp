@@ -172,6 +172,7 @@ with st.form(key="top_stories_filter_form"):
                 "Market Report Spam?",
                 "Stocks / Financials?",
                 "Advertorial?",
+                "User-Generated",
             ] if f in available_flags
         ]
 

@@ -1,3 +1,5 @@
+# missing_authors.py
+
 from __future__ import annotations
 
 import numpy as np
@@ -57,6 +59,7 @@ def get_available_visible_flags(df: pd.DataFrame) -> tuple[list[str], list[str]]
             "Market Report Spam?",
             "Stocks / Financials?",
             "Advertorial?",
+            "User-Generated",
         ]
         if f in available_flags
     ]

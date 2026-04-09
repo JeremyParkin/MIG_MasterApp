@@ -176,7 +176,6 @@ def analyze_story_worker(
 
     return idx, {}, last_error, 0, 0
 
-
 def apply_tagging_result_to_unique_df(
     df_tagging_unique: pd.DataFrame,
     original_index: int,
@@ -188,27 +187,47 @@ def apply_tagging_result_to_unique_df(
 
     df.loc[original_index, "Tag_Processed"] = True
 
-    if tagging_mode == "Single best tag":
-        tag = result.get("tag", "")
-        rationale = result.get("explanation", "")
+    if "AI Tag" not in df.columns:
+        df["AI Tag"] = ""
+    if "AI Tag Rationale" not in df.columns:
+        df["AI Tag Rationale"] = ""
 
-        if isinstance(tag, str) and "," in tag:
+    if tagging_mode == "Single best tag":
+        tag = str(result.get("tag", "") or "").strip()
+        rationale = str(result.get("explanation", "") or "").strip()
+
+        if "," in tag:
             rationale = "**NOTE: Multiple tags returned in single-tag mode.** " + rationale
 
         df.loc[original_index, "AI Tag"] = tag
         df.loc[original_index, "AI Tag Rationale"] = rationale
+
+        for tag_name in tag_definitions.keys():
+            col = f"AI Tag: {tag_name}"
+            if col not in df.columns:
+                df[col] = 0
+            df.loc[original_index, col] = 1 if tag == tag_name else 0
+
     else:
         tags = result.get("tags", [])
         explanations = result.get("explanations", [])
 
-        df.loc[original_index, "AI Tags"] = ", ".join(tags)
+        if not isinstance(tags, list):
+            tags = [str(tags)] if tags else []
+        if not isinstance(explanations, list):
+            explanations = [str(explanations)] if explanations else []
+
+        tags = [str(tag).strip() for tag in tags if str(tag).strip()]
+        explanations = [str(exp).strip() for exp in explanations if str(exp).strip()]
+
+        df.loc[original_index, "AI Tag"] = ", ".join(tags)
         df.loc[original_index, "AI Tag Rationale"] = " | ".join(explanations)
 
-        for tag in tag_definitions.keys():
-            col = f"AI Tag: {tag}"
+        for tag_name in tag_definitions.keys():
+            col = f"AI Tag: {tag_name}"
             if col not in df.columns:
                 df[col] = 0
-            df.loc[original_index, col] = 1 if tag in tags else 0
+            df.loc[original_index, col] = 1 if tag_name in tags else 0
 
     return df
 

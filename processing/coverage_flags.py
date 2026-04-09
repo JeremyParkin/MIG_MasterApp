@@ -1,3 +1,5 @@
+# coverage_flags.py
+
 import pandas as pd
 import re
 
@@ -28,6 +30,12 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
         "Yahoo", "MSN", "News Break", "Google News", "Apple News", "Flipboard",
         "Pocket", "Feedly", "SmartNews", "StumbleUpon", "Ground News", "DNyuz",
         "Mirage News", "Newstex Blogs", "Trading View", "AOL", "Legacy.com", "World Atlas"
+    ]
+
+    user_generated_domains = [
+        "medium.com",
+        "substack.com",
+        "slideshare.net",
     ]
 
     outlet_names = [
@@ -85,8 +93,14 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
 
     for col in [
         "Newswire Flag", "Market Report Flag", "Stock Moves Flag",
-        "Advertorial Flag", "Good Outlet Flag", "Aggregator Flag", "Coverage Flags"
+        "Advertorial Flag", "Good Outlet Flag", "Aggregator Flag",
+        "User-Generated Flag", "Coverage Flags"
     ]:
+
+    # for col in [
+    #     "Newswire Flag", "Market Report Flag", "Stock Moves Flag",
+    #     "Advertorial Flag", "Good Outlet Flag", "Aggregator Flag", "Coverage Flags"
+    # ]:
         df[col] = ""
 
     if "Snippet" not in df.columns:
@@ -155,11 +169,19 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
         regex=True,
     )
 
+    user_generated_mask = df["URL"].str.contains(
+        "|".join(re.escape(domain) for domain in user_generated_domains),
+        case=False,
+        na=False,
+        regex=True,
+    )
+
     df.loc[newswire_mask, "Newswire Flag"] = "Newswire?"
     df.loc[~newswire_mask & market_report_mask, "Market Report Flag"] = "Market Report Spam?"
     df.loc[~newswire_mask & ~market_report_mask & stock_moves_mask, "Stock Moves Flag"] = "Stocks / Financials?"
     df.loc[~newswire_mask & advertorial_mask, "Advertorial Flag"] = "Advertorial?"
     df.loc[aggregator_mask, "Aggregator Flag"] = "Aggregator"
+    df.loc[user_generated_mask, "User-Generated Flag"] = "User-Generated"
 
     df.loc[
         ~newswire_mask & ~advertorial_mask & ~market_report_mask & ~stock_moves_mask & reputable_outlet_mask,
@@ -175,6 +197,8 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
             return row["Good Outlet Flag"]
         elif row.get("Aggregator Flag"):
             return row["Aggregator Flag"]
+        elif row.get("User-Generated Flag"):
+            return row["User-Generated Flag"]
         elif row.get("Market Report Flag"):
             return row["Market Report Flag"]
         elif row.get("Stock Moves Flag"):
@@ -183,9 +207,11 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
 
     df["Coverage Flags"] = df.apply(combine_flags, axis=1)
 
+
     flag_columns = [
         "Newswire Flag", "Advertorial Flag", "Good Outlet Flag",
-        "Market Report Flag", "Stock Moves Flag", "Aggregator Flag"
+        "Market Report Flag", "Stock Moves Flag", "Aggregator Flag",
+        "User-Generated Flag"
     ]
     df.drop(columns=[c for c in flag_columns if c in df.columns], inplace=True)
 
