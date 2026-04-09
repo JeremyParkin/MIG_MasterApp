@@ -17,6 +17,57 @@ DEFAULT_SENTIMENT_MAX_WORKERS = 8
 MAX_RETRIES = 2
 
 
+def _allowed_sentiment_labels(sentiment_type: str) -> list[str]:
+    if sentiment_type == "3-way":
+        return ["POSITIVE", "NEUTRAL", "NEGATIVE", "NOT RELEVANT"]
+    return ["VERY POSITIVE", "SOMEWHAT POSITIVE", "NEUTRAL", "SOMEWHAT NEGATIVE", "VERY NEGATIVE", "NOT RELEVANT"]
+
+
+def _extract_json_payload(text: str) -> dict[str, Any] | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        pass
+
+    m = re.search(r"\{.*\}", raw, flags=re.S)
+    if not m:
+        return None
+
+    try:
+        parsed = json.loads(m.group(0))
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
+def _validate_structured_result(result: dict[str, Any], sentiment_type: str) -> tuple[dict[str, Any], str | None]:
+    labels = _allowed_sentiment_labels(sentiment_type)
+
+    sentiment = str(result.get("sentiment", "")).strip().upper()
+    if sentiment not in labels:
+        return {}, f"Invalid sentiment label: {sentiment or 'missing'}"
+
+    conf_val = pd.to_numeric(pd.Series([result.get("confidence")]), errors="coerce").iloc[0]
+    if pd.isna(conf_val):
+        return {}, "Missing confidence value"
+    confidence = int(max(0, min(100, float(conf_val))))
+
+    explanation = str(result.get("explanation", "")).strip()
+    if not explanation:
+        return {}, "Missing explanation value"
+
+    return {
+        "sentiment": sentiment,
+        "confidence": confidence,
+        "explanation": explanation,
+    }, None
+
+
 def init_ai_sentiment_state(session_state) -> None:
     session_state.setdefault("sentiment_type", "3-way")
     session_state.setdefault("ui_sentiment_type", "3-way")
@@ -96,11 +147,9 @@ def call_ai_sentiment(
                 fc = choice.message.function_call
                 if fc and fc.name == "analyze_sentiment":
                     args = json.loads(fc.arguments or "{}")
-                    return {
-                        "sentiment": args.get("sentiment"),
-                        "confidence": args.get("confidence"),
-                        "explanation": args.get("explanation"),
-                    }, in_tok, out_tok
+                    parsed, err = _validate_structured_result(args, sentiment_type)
+                    if not err:
+                        return parsed, in_tok, out_tok
         except Exception:
             pass
 
@@ -108,17 +157,28 @@ def call_ai_sentiment(
         model=model_id,
         messages=[
             {"role": "system", "content": "You are a highly knowledgeable media analysis AI."},
-            {"role": "user", "content": story_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"{story_prompt}\n\n"
+                    "Return only JSON with keys: sentiment, confidence, explanation. "
+                    "Use an allowed sentiment label exactly, confidence must be 0-100."
+                ),
+            },
         ],
     )
-    txt = resp.choices[0].message.content.strip()
+    txt = (resp.choices[0].message.content or "").strip()
     in_tok, out_tok = extract_usage_tokens(resp)
-    sentiment, confidence, explanation = parse_plain_text_response(txt, sentiment_type)
-    return {
-        "sentiment": sentiment,
-        "confidence": confidence,
-        "explanation": explanation,
-    }, in_tok, out_tok
+
+    payload = _extract_json_payload(txt)
+    if payload is None:
+        raise ValueError("Structured output missing JSON payload.")
+
+    parsed, err = _validate_structured_result(payload, sentiment_type)
+    if err:
+        raise ValueError(f"Structured output validation failed: {err}")
+
+    return parsed, in_tok, out_tok
 
 
 def get_remaining_sentiment_rows(
