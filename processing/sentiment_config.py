@@ -13,6 +13,13 @@ import pandas as pd
 SampleMode = Literal["full", "representative", "custom", "reuse_other_sample"]
 
 DEFAULT_MAX_FULL_ROWS = 2000
+DEFAULT_EXCLUDED_COVERAGE_FLAGS = [
+    "Newswire?",
+    "Market Report Spam?",
+    "Stocks / Financials?",
+    "Advertorial?",
+    "User-Generated",
+]
 
 
 def init_sentiment_config_state(session_state) -> None:
@@ -34,6 +41,7 @@ def init_sentiment_config_state(session_state) -> None:
         "model_choice": "gpt-5.4-nano",
         "toning_config_step": False,
         "last_saved": None,
+        "sentiment_excluded_flags": [],
     }
 
     for key, value in defaults.items():
@@ -72,6 +80,35 @@ def get_sentiment_source_rows(df_traditional: pd.DataFrame) -> pd.DataFrame:
         ].copy()
 
     return df.reset_index(drop=True)
+
+
+def get_available_coverage_flags(df_rows: pd.DataFrame) -> tuple[list[str], list[str]]:
+    if df_rows is None or df_rows.empty or "Coverage Flags" not in df_rows.columns:
+        return [], []
+
+    available_flags = sorted(
+        [
+            f
+            for f in df_rows["Coverage Flags"].fillna("").astype(str).unique().tolist()
+            if f.strip()
+        ]
+    )
+    default_flags = [f for f in DEFAULT_EXCLUDED_COVERAGE_FLAGS if f in available_flags]
+    return available_flags, default_flags
+
+
+def apply_coverage_flag_exclusions(
+    df_rows: pd.DataFrame,
+    excluded_flags: list[str] | None = None,
+) -> pd.DataFrame:
+    if df_rows is None or df_rows.empty:
+        return pd.DataFrame()
+
+    excluded_flags = excluded_flags or []
+    if not excluded_flags or "Coverage Flags" not in df_rows.columns:
+        return df_rows.copy().reset_index(drop=True)
+
+    return df_rows[~df_rows["Coverage Flags"].fillna("").isin(excluded_flags)].copy().reset_index(drop=True)
 
 
 def sample_sentiment_rows(
@@ -186,6 +223,7 @@ def ensure_prime_rows_in_sample(
 def prepare_sentiment_datasets(
     df_traditional: pd.DataFrame,
     sample_mode: SampleMode,
+    excluded_flags: list[str] | None = None,
     custom_sample_size: int | None = None,
     max_full_rows: int = DEFAULT_MAX_FULL_ROWS,
     full_override: bool = False,
@@ -193,6 +231,7 @@ def prepare_sentiment_datasets(
     reused_rows: pd.DataFrame | None = None,
 ) -> dict:
     source_rows = get_sentiment_source_rows(df_traditional)
+    source_rows = apply_coverage_flag_exclusions(source_rows, excluded_flags)
 
     if sample_mode == "reuse_other_sample":
         if reused_rows is None or reused_rows.empty:
@@ -528,6 +567,7 @@ def reset_sentiment_config_state(session_state) -> None:
     session_state.ui_products = []
     session_state.ui_toning_rationale = ""
     session_state.ui_sentiment_type = "3-way"
+    session_state.sentiment_excluded_flags = []
 
     for k in [
         "sentiment_type", "model_choice",

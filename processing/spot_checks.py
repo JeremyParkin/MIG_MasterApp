@@ -1,3 +1,4 @@
+# spot_checks.py
 from __future__ import annotations
 
 import json
@@ -23,6 +24,58 @@ DEFAULT_CONF_THRESH = 75
 
 DEFAULT_SECOND_OPINION_MODEL = "gpt-5.4-mini"
 MAX_RETRIES = 2
+
+
+def _allowed_sentiment_labels(sentiment_type: str) -> list[str]:
+    if sentiment_type == "3-way":
+        return ["POSITIVE", "NEUTRAL", "NEGATIVE", "NOT RELEVANT"]
+    return ["VERY POSITIVE", "SOMEWHAT POSITIVE", "NEUTRAL", "SOMEWHAT NEGATIVE", "VERY NEGATIVE", "NOT RELEVANT"]
+
+
+def _extract_json_payload(text: str) -> dict[str, Any] | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        pass
+
+    m = re.search(r"\{.*\}", raw, flags=re.S)
+    if not m:
+        return None
+
+    try:
+        parsed = json.loads(m.group(0))
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
+def _validate_structured_result(result: dict[str, Any], sentiment_type: str) -> tuple[dict[str, Any], str | None]:
+    labels = _allowed_sentiment_labels(sentiment_type)
+
+    sentiment = str(result.get("sentiment", "")).strip().upper()
+    if sentiment not in labels:
+        return {}, f"Invalid sentiment label: {sentiment or 'missing'}"
+
+    conf_val = pd.to_numeric(pd.Series([result.get("confidence")]), errors="coerce").iloc[0]
+    if pd.isna(conf_val):
+        return {}, "Missing confidence value"
+    confidence = int(max(0, min(100, float(conf_val))))
+
+    explanation = str(result.get("explanation", "")).strip()
+    if not explanation:
+        return {}, "Missing explanation value"
+
+    return {
+        "named_entity": result.get("named_entity"),
+        "sentiment": sentiment,
+        "confidence": confidence,
+        "explanation": explanation,
+    }, None
 
 
 # ====================
@@ -289,42 +342,44 @@ def call_ai_sentiment(
                 fc = choice.message.function_call
                 if fc and fc.name == "analyze_sentiment":
                     args = json.loads(fc.arguments or "{}")
-                    return {
-                        "named_entity": args.get("named_entity"),
-                        "sentiment": args.get("sentiment"),
-                        "confidence": args.get("confidence"),
-                        "explanation": args.get("explanation"),
-                    }, in_tok, out_tok, ""
+                    parsed, err = _validate_structured_result(args, sentiment_type)
+                    if not err:
+                        return parsed, in_tok, out_tok, ""
+                    fallback_note = f"Function output invalid: {err}"
+                else:
+                    fallback_note = "Function output missing expected tool call."
+            else:
+                fallback_note = "Function output missing tool payload."
     except Exception as e:
         fallback_note = f"Function-calling fallback used due to: {e}"
-    else:
-        fallback_note = ""
 
     try:
         resp = client.chat.completions.create(
             model=model_to_use,
             messages=[
                 {"role": "system", "content": "You are a highly knowledgeable media analysis AI."},
-                {"role": "user", "content": story_prompt},
+                {
+                    "role": "user",
+                    "content": (
+                        f"{story_prompt}\n\n"
+                        "Return only JSON with keys: sentiment, confidence, explanation. "
+                        "Use an allowed sentiment label exactly, confidence must be 0-100."
+                    ),
+                },
             ],
         )
         in_tok, out_tok = extract_usage_tokens(resp)
-        txt = resp.choices[0].message.content.strip()
+        txt = (resp.choices[0].message.content or "").strip()
 
-        cand3 = ["POSITIVE", "NEUTRAL", "NEGATIVE", "NOT RELEVANT"]
-        cand5 = ["VERY POSITIVE", "SOMEWHAT POSITIVE", "NEUTRAL", "SOMEWHAT NEGATIVE", "VERY NEGATIVE", "NOT RELEVANT"]
-        cand = cand3 if sentiment_type == "3-way" else cand5
+        payload = _extract_json_payload(txt)
+        if payload is None:
+            return None, in_tok, out_tok, "Structured output missing JSON payload."
 
-        sent = next((c for c in cand if re.search(rf"\b{re.escape(c)}\b", txt)), None)
-        m = re.search(r"confidence[^0-9]{0,10}(\d{1,3})", txt, flags=re.I)
-        conf = max(0, min(100, int(m.group(1)))) if m else None
+        parsed, err = _validate_structured_result(payload, sentiment_type)
+        if err:
+            return None, in_tok, out_tok, f"Structured output validation failed: {err}"
 
-        return {
-            "named_entity": None,
-            "sentiment": sent,
-            "confidence": conf,
-            "explanation": txt,
-        }, in_tok, out_tok, fallback_note
+        return parsed, in_tok, out_tok, fallback_note
     except Exception as e:
         return None, 0, 0, f"AI sentiment failed: {e}"
 
