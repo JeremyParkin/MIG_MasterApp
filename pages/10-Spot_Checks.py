@@ -11,6 +11,7 @@ from streamlit_extras.stylable_container import stylable_container
 from processing.spot_checks import (
     DEFAULT_CONF_THRESH,
     DEFAULT_SECOND_OPINION_MODEL,
+    DEFAULT_REVIEW_CONFIDENCE_THRESHOLD,
     init_spot_check_state,
     escape_markdown,
     highlight_with_tolerant_regex,
@@ -235,7 +236,7 @@ with st.expander("Advanced review options", expanded=False):
             "Review confidence cutoff",
             min_value=1,
             max_value=100,
-            value=90,
+            value=int(st.session_state.get("spotcheck_low_conf_threshold", DEFAULT_REVIEW_CONFIDENCE_THRESHOLD)),
             step=1,
             key="spotcheck_low_conf_threshold",
         )
@@ -290,7 +291,9 @@ review_mode = st.radio(
     label_visibility="collapsed",
 )
 
-low_conf_threshold = int(st.session_state.get("spotcheck_low_conf_threshold", 60))
+low_conf_threshold = int(
+    st.session_state.get("spotcheck_low_conf_threshold", DEFAULT_REVIEW_CONFIDENCE_THRESHOLD)
+)
 candidates = filter_candidates_for_review_mode(
     base_candidates,
     review_mode=review_mode,

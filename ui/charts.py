@@ -1,6 +1,9 @@
+# charts.py
 from __future__ import annotations
 
-import altair as alt
+import importlib
+from typing import Any
+
 import pandas as pd
 
 
@@ -18,11 +21,16 @@ def build_time_series_area_chart(
     y_col: str,
     title: str = "",
     height: int = 250,
-) -> alt.Chart:
+) -> Any | None:
     """
     Build an Altair area chart with adaptive y-axis labels like:
     12 K, 3.4 M, 20 B.
     """
+    try:
+        alt = importlib.import_module("altair")
+    except Exception:
+        return None
+
     return (
         alt.Chart(df)
         .mark_area()

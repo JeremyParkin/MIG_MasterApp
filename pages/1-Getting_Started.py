@@ -172,7 +172,10 @@ if st.session_state.upload_step:
                 title="",
                 height=250,
             )
-            st.altair_chart(mention_chart, use_container_width=True)
+            if mention_chart is not None:
+                st.altair_chart(mention_chart, use_container_width=True)
+            else:
+                st.info("Trend chart unavailable in this environment.")
 
         with trend_col2:
             st.subheader("Impressions Trend")
@@ -184,7 +187,10 @@ if st.session_state.upload_step:
                     title="",
                     height=250,
                 )
-                st.altair_chart(impressions_chart, use_container_width=True)
+                if impressions_chart is not None:
+                    st.altair_chart(impressions_chart, use_container_width=True)
+                else:
+                    st.info("Impressions chart unavailable in this environment.")
 
 
     else:

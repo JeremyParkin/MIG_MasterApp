@@ -1,3 +1,4 @@
+# 9-AI_Sentiment.py
 # 9-AI_Sentiment
 
 from __future__ import annotations
@@ -15,6 +16,9 @@ from processing.sentiment_config import (
     prepare_sentiment_datasets,
     build_sentiment_configuration,
     reset_sentiment_config_state,
+    get_sentiment_source_rows,
+    get_available_coverage_flags,
+    apply_coverage_flag_exclusions,
     DEFAULT_MAX_FULL_ROWS,
 )
 from processing.ai_sentiment import (
@@ -69,9 +73,8 @@ meter = st.session_state.api_meter
 # with usage_col3:
 #     st.metric("Session API cost", f"${meter['cost_usd']:.4f}")
 
-source_rows = st.session_state.df_traditional.copy()
+source_rows = get_sentiment_source_rows(st.session_state.df_traditional)
 population_size = len(source_rows)
-recommended_sample = calculate_representative_sample_size(population_size) if population_size > 0 else 0
 
 # =========================
 # STEP 1: DATASET PREP + CONFIG
@@ -106,6 +109,25 @@ if not st.session_state.sentiment_config_step:
         sample_mode = "representative"
     else:
         sample_mode = "custom"
+
+    excluded_flags: list[str] = []
+    working_source_rows = source_rows
+    if sample_mode != "reuse_other_sample":
+        available_flags, default_excluded_flags = get_available_coverage_flags(source_rows)
+        stored_excluded_flags = st.session_state.get("sentiment_excluded_flags", default_excluded_flags)
+        fallback_defaults = [f for f in default_excluded_flags if f in available_flags]
+        preselected_flags = [f for f in stored_excluded_flags if f in available_flags] or fallback_defaults
+
+        excluded_flags = st.multiselect(
+            "Exclude coverage flags",
+            options=available_flags,
+            default=preselected_flags,
+            help="Exclude selected flagged coverage from sentiment sampling.",
+        )
+        working_source_rows = apply_coverage_flag_exclusions(source_rows, excluded_flags)
+
+    population_size = len(working_source_rows)
+    recommended_sample = calculate_representative_sample_size(population_size) if population_size > 0 else 0
 
     # mode_label = st.radio(
     #     "Sentiment dataset mode",
@@ -252,6 +274,7 @@ if not st.session_state.sentiment_config_step:
         results = prepare_sentiment_datasets(
             df_traditional=st.session_state.df_traditional,
             sample_mode=sample_mode,
+            excluded_flags=excluded_flags if sample_mode != "reuse_other_sample" else [],
             custom_sample_size=custom_sample_size,
             max_full_rows=DEFAULT_MAX_FULL_ROWS,
             full_override=full_override,
@@ -264,6 +287,7 @@ if not st.session_state.sentiment_config_step:
         st.session_state.sentiment_sample_mode = sample_mode
         st.session_state.sentiment_sample_size = results["sample_size_used"]
         st.session_state.sentiment_full_override = full_override
+        st.session_state.sentiment_excluded_flags = excluded_flags if sample_mode != "reuse_other_sample" else []
         st.session_state.sentiment_config_step = True
         st.session_state.sentiment_elapsed_time = time.time() - start
 
@@ -470,4 +494,3 @@ remaining_now = get_remaining_sentiment_rows(
     st.session_state.df_sentiment_grouped_rows,
 )
 st.caption(f"Groups remaining (no human label & no AI): {len(remaining_now):,}")
-
