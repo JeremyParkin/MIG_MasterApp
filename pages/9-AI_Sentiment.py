@@ -467,6 +467,8 @@ if run_clicked:
 
     st.rerun()
 
+st.caption(f"Groups remaining (no human label & no AI): {len(remaining_now):,}")
+
 with st.expander("Prompt configuration preview", expanded=False):
     if st.session_state.get("last_saved"):
         st.caption(f"Last saved: {st.session_state.last_saved}")
@@ -495,7 +497,7 @@ remaining_now = get_remaining_sentiment_rows(
     st.session_state.df_sentiment_unique,
     st.session_state.df_sentiment_grouped_rows,
 )
-st.caption(f"Groups remaining (no human label & no AI): {len(remaining_now):,}")
+
 
 sentiment_type = st.session_state.get("sentiment_type")
 sentiment_dist = build_sentiment_distribution(st.session_state.df_sentiment_unique, sentiment_type)
