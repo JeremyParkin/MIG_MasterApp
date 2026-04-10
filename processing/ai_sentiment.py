@@ -291,3 +291,37 @@ def reset_ai_sentiment_results(
                 df[col] = pd.NA
 
     return unique, grouped
+
+def build_sentiment_distribution(df_unique: pd.DataFrame, sentiment_type: str) -> pd.DataFrame:
+    if sentiment_type == "5-way":
+        order = [
+            "VERY POSITIVE",
+            "SOMEWHAT POSITIVE",
+            "NEUTRAL",
+            "SOMEWHAT NEGATIVE",
+            "VERY NEGATIVE",
+            "NOT RELEVANT",
+            # "UNASSIGNED",
+        ]
+    else:
+        order = [
+            "POSITIVE",
+            "NEUTRAL",
+            "NEGATIVE",
+            "NOT RELEVANT",
+            # "UNASSIGNED",
+        ]
+
+    assigned = df_unique.get("Assigned Sentiment", pd.Series(index=df_unique.index, dtype="object")).fillna("").astype(str).str.strip()
+    ai = df_unique.get("AI Sentiment", pd.Series(index=df_unique.index, dtype="object")).fillna("").astype(str).str.strip()
+
+    final = assigned.where(assigned != "", ai)
+    final = final.where(final != "", "UNASSIGNED").str.upper()
+
+    sentiment_counts = final.value_counts().rename_axis("Sentiment").reset_index(name="Count")
+    base = pd.DataFrame({"Sentiment": order})
+    out = base.merge(sentiment_counts, on="Sentiment", how="left")
+    out["Count"] = out["Count"].fillna(0).astype(int)
+    total = int(out["Count"].sum())
+    out["Share"] = out["Count"] / total if total > 0 else 0
+    return out

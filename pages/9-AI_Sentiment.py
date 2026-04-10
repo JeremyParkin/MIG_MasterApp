@@ -32,6 +32,8 @@ from processing.ai_sentiment import (
     DEFAULT_SENTIMENT_BATCH_SIZE,
     DEFAULT_SENTIMENT_MAX_WORKERS,
     DEFAULT_SENTIMENT_MODEL,
+    build_sentiment_distribution,
+
 )
 from utils.api_meter import (
     init_api_meter,
@@ -494,4 +496,14 @@ remaining_now = get_remaining_sentiment_rows(
     st.session_state.df_sentiment_grouped_rows,
 )
 st.caption(f"Groups remaining (no human label & no AI): {len(remaining_now):,}")
+
+sentiment_type = st.session_state.get("sentiment_type")
+sentiment_dist = build_sentiment_distribution(st.session_state.df_sentiment_unique, sentiment_type)
+
+with st.expander("Current sentiment distribution", expanded=False):
+    # sentiment_chart = sentiment_dist.set_index("Sentiment")[["Count"]]
+    # st.bar_chart(sentiment_chart, height=260)
+    sentiment_table = sentiment_dist.copy()
+    sentiment_table["Share"] = (sentiment_table["Share"] * 100).map(lambda x: f"{x:.1f}%")
+    st.dataframe(sentiment_table, hide_index=True, use_container_width=True)
 
