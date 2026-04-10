@@ -301,7 +301,6 @@ def build_sentiment_distribution(df_unique: pd.DataFrame, sentiment_type: str) -
             "SOMEWHAT NEGATIVE",
             "VERY NEGATIVE",
             "NOT RELEVANT",
-            # "UNASSIGNED",
         ]
     else:
         order = [
@@ -309,7 +308,6 @@ def build_sentiment_distribution(df_unique: pd.DataFrame, sentiment_type: str) -
             "NEUTRAL",
             "NEGATIVE",
             "NOT RELEVANT",
-            # "UNASSIGNED",
         ]
 
     assigned = df_unique.get("Assigned Sentiment", pd.Series(index=df_unique.index, dtype="object")).fillna("").astype(str).str.strip()
