@@ -76,6 +76,30 @@ def _format_sample_mode(mode: str) -> str:
     }.get(mode, str(mode))
 
 
+def build_tag_distribution(df_tagging_unique: pd.DataFrame) -> pd.DataFrame:
+    tag_col = "AI Tag" if "AI Tag" in df_tagging_unique.columns else ("AI Tags" if "AI Tags" in df_tagging_unique.columns else None)
+    if tag_col is None:
+        return pd.DataFrame(columns=["Tag", "Count", "Share"])
+
+    tags = (
+        df_tagging_unique[tag_col]
+        .fillna("")
+        .astype(str)
+        .str.split(",")
+        .explode()
+        .astype(str)
+        .str.strip()
+    )
+    tags = tags[tags != ""]
+
+    if tags.empty:
+        return pd.DataFrame(columns=["Tag", "Count", "Share"])
+
+    out = tags.value_counts().rename_axis("Tag").reset_index(name="Count")
+    out["Share"] = out["Count"] / int(out["Count"].sum())
+    return out
+
+
 # =========================
 # STEP 1: DATASET PREP + CONFIG
 # =========================
@@ -264,8 +288,6 @@ with config_col1:
 with config_col2:
     st.caption(f"Tagging mode: {st.session_state.get('tagging_mode', 'Single best tag')}")
 
-with st.expander("Tag definitions", expanded=False):
-    st.code(st.session_state.get("tags_text", ""))
 
 remaining_df = get_remaining_tagging_rows(st.session_state.df_tagging_unique)
 remaining_count = len(remaining_df)
@@ -396,3 +418,16 @@ with st.expander("Grouped tagging dataset preview", expanded=False):
         use_container_width=True,
         hide_index=True,
     )
+
+tag_dist = build_tag_distribution(st.session_state.df_tagging_unique)
+with st.expander("Current AI tag distribution", expanded=False):
+    if tag_dist.empty:
+        st.caption("No AI tags have been assigned yet.")
+    else:
+        # tag_chart = tag_dist.head(12).set_index("Tag")[["Count"]]
+        # st.bar_chart(tag_chart, height=280)
+        tag_table = tag_dist.copy()
+        tag_table["Share"] = (tag_table["Share"] * 100).map(lambda x: f"{x:.1f}%")
+        st.dataframe(tag_table, use_container_width=True, hide_index=True)
+with st.expander("Tag definitions", expanded=False):
+    st.code(st.session_state.get("tags_text", ""))

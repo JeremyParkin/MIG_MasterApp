@@ -94,6 +94,41 @@ def filter_candidates_for_review_mode(
     return out
 
 
+def build_sentiment_distribution(df_unique: pd.DataFrame, sentiment_type: str) -> pd.DataFrame:
+    if sentiment_type == "5-way":
+        order = [
+            "VERY POSITIVE",
+            "SOMEWHAT POSITIVE",
+            "NEUTRAL",
+            "SOMEWHAT NEGATIVE",
+            "VERY NEGATIVE",
+            "NOT RELEVANT",
+            # "UNASSIGNED",
+        ]
+    else:
+        order = [
+            "POSITIVE",
+            "NEUTRAL",
+            "NEGATIVE",
+            "NOT RELEVANT",
+            # "UNASSIGNED",
+        ]
+
+    assigned = df_unique.get("Assigned Sentiment", pd.Series(index=df_unique.index, dtype="object")).fillna("").astype(str).str.strip()
+    ai = df_unique.get("AI Sentiment", pd.Series(index=df_unique.index, dtype="object")).fillna("").astype(str).str.strip()
+
+    final = assigned.where(assigned != "", ai)
+    final = final.where(final != "", "UNASSIGNED").str.upper()
+
+    sentiment_counts = final.value_counts().rename_axis("Sentiment").reset_index(name="Count")
+    base = pd.DataFrame({"Sentiment": order})
+    out = base.merge(sentiment_counts, on="Sentiment", how="left")
+    out["Count"] = out["Count"].fillna(0).astype(int)
+    total = int(out["Count"].sum())
+    out["Share"] = out["Count"] / total if total > 0 else 0
+    return out
+
+
 def auto_accept_high_confidence_matches(
     unique_df: pd.DataFrame,
     grouped_df: pd.DataFrame,
@@ -219,6 +254,7 @@ else:
         top_message += f" {disagreement_count:,} disagreement{'s' if disagreement_count != 1 else ''} found."
 
 st.markdown(f"### {top_message}")
+
 
 with st.expander("Advanced review options", expanded=False):
     adv1, adv2 = st.columns(2)
@@ -604,3 +640,12 @@ with right:
 st.caption(
 "Stories where both AI opinions match at high review confidence are auto-assigned. The remaining stories need your judgment."
 )
+
+sentiment_dist = build_sentiment_distribution(st.session_state.df_sentiment_unique, sentiment_type)
+
+with st.expander("Current sentiment distribution", expanded=False):
+    # sentiment_chart = sentiment_dist.set_index("Sentiment")[["Count"]]
+    # st.bar_chart(sentiment_chart, height=260)
+    sentiment_table = sentiment_dist.copy()
+    sentiment_table["Share"] = (sentiment_table["Share"] * 100).map(lambda x: f"{x:.1f}%")
+    st.dataframe(sentiment_table, hide_index=True, use_container_width=True)
