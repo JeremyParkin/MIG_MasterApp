@@ -7,7 +7,7 @@ import warnings
 import pandas as pd
 import streamlit as st
 from streamlit_extras.stylable_container import stylable_container
-from processesing.ai_sentiment import build_sentiment_distribution
+from processing.ai_sentiment import build_sentiment_distribution
 from processing.spot_checks import (
     DEFAULT_CONF_THRESH,
     DEFAULT_SECOND_OPINION_MODEL,

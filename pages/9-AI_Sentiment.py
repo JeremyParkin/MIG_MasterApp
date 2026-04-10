@@ -467,6 +467,10 @@ if run_clicked:
 
     st.rerun()
 
+remaining_now = get_remaining_sentiment_rows(
+    st.session_state.df_sentiment_unique,
+    st.session_state.df_sentiment_grouped_rows,
+)
 st.caption(f"Groups remaining (no human label & no AI): {len(remaining_now):,}")
 
 with st.expander("Prompt configuration preview", expanded=False):
@@ -493,10 +497,7 @@ with st.expander("Grouped sentiment dataset preview", expanded=False):
         hide_index=True,
     )
 
-remaining_now = get_remaining_sentiment_rows(
-    st.session_state.df_sentiment_unique,
-    st.session_state.df_sentiment_grouped_rows,
-)
+
 
 
 sentiment_type = st.session_state.get("sentiment_type")
