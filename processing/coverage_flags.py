@@ -39,7 +39,7 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
     ]
 
     outlet_names = [
-        "National Post", "The Canadian Press", "The Globe and Mail", "Toronto Star",
+        "Associated Press", "National Post", "The Canadian Press", "The Globe and Mail", "Toronto Star",
         "Calgary Herald", "Edmonton Journal", "Montreal Gazette", "Ottawa Citizen",
         "The Chronicle Herald", "The Telegram", "Vancouver Sun", "Winnipeg Free Press",
         "The Globe", "Toronto Life", "BlogTO", "CBC News", "CBC ", "CityNews", "City ",
@@ -88,7 +88,7 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
         "HuffPost UK", "Metro", "The Register", "PinkNews", "Al Jazeera English (UK)",
         "The National (Scotland)", "The Courier (Dundee)", "Cambridge News",
         "Eastern Daily Press", "Oxford Mail", "Swindon Advertiser", "The Argus (Brighton)",
-        "Kent Online", "Lincolnshire Echo", "Gloucestershire Live",
+        "Kent Online", "Lincolnshire Echo", "Gloucestershire Live", "The Waterloo Region Record",
     ]
 
     for col in [

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import urllib.parse
+import re
 
 import numpy as np
 import pandas as pd
@@ -15,6 +16,7 @@ FORMAT_DICT = {
     "Audience Reach": "{:,.0f}",
     "Impressions": "{:,.0f}",
     "Mentions": "{:,.0f}",
+    "Effective Reach": "{:,.0f}",
 }
 
 
@@ -55,6 +57,14 @@ def undo_last_outlet_assignment(session_state) -> None:
 
 def reset_outlet_skips(session_state) -> None:
     session_state.auth_outlet_skipped = 0
+
+
+def init_author_outlet_prefetch_state(session_state) -> None:
+    session_state.setdefault("author_outlet_api_cache", {})
+    session_state.setdefault("author_outlet_auto_assign_enabled", False)
+    session_state.setdefault("author_outlet_prefetch_limit", 20)
+    session_state.setdefault("author_outlet_prefetch_summary", {})
+    session_state.setdefault("author_outlet_auto_assigned_rows", [])
 
 
 def fetch_outlet(author_name: str, secrets) -> tuple[dict | None, dict]:
@@ -114,6 +124,10 @@ def prepare_traditional_for_author_outlets(df: pd.DataFrame) -> pd.DataFrame:
 
     if "Mentions" in df.columns:
         df["Mentions"] = pd.to_numeric(df["Mentions"], errors="coerce").fillna(0).astype(int)
+    if "Impressions" in df.columns:
+        df["Impressions"] = pd.to_numeric(df["Impressions"], errors="coerce").fillna(0).astype(int)
+    if "Effective Reach" in df.columns:
+        df["Effective Reach"] = pd.to_numeric(df["Effective Reach"], errors="coerce").fillna(0).astype(int)
 
     return df
 
@@ -127,23 +141,25 @@ def build_auth_outlet_table(
     Rebuild the author-outlet summary table from df_traditional and preserve
     any existing outlet assignments where possible.
     """
-    required_cols = ["Author", "Mentions", "Impressions"]
+    required_cols = ["Author", "Mentions", "Impressions", "Effective Reach"]
     existing_cols = [c for c in required_cols if c in df.columns]
     working = df[existing_cols].copy()
 
     if "Author" not in working.columns:
-        return pd.DataFrame(columns=["Author", "Outlet", "Mentions", "Impressions"])
+        return pd.DataFrame(columns=["Author", "Outlet", "Mentions", "Impressions", "Effective Reach"])
 
     if "Mentions" not in working.columns:
         working["Mentions"] = 1
     if "Impressions" not in working.columns:
         working["Impressions"] = 0
+    if "Effective Reach" not in working.columns:
+        working["Effective Reach"] = 0
 
     working["Author"] = working["Author"].fillna("").astype(str).str.strip()
     working = working[working["Author"] != ""].copy()
 
     rebuilt = (
-        working.groupby("Author", as_index=False)[["Mentions", "Impressions"]]
+        working.groupby("Author", as_index=False)[["Mentions", "Impressions", "Effective Reach"]]
         .sum()
     )
 
@@ -174,11 +190,13 @@ def build_auth_outlet_table(
         rebuilt.insert(loc=1, column="Outlet", value="")
 
     if top_auths_by == "Mentions":
-        rebuilt = rebuilt.sort_values(["Mentions", "Impressions"], ascending=False).reset_index(drop=True)
+        rebuilt = rebuilt.sort_values(["Mentions", "Impressions", "Effective Reach"], ascending=False).reset_index(drop=True)
+    elif top_auths_by == "Impressions":
+        rebuilt = rebuilt.sort_values(["Impressions", "Mentions", "Effective Reach"], ascending=False).reset_index(drop=True)
     else:
-        rebuilt = rebuilt.sort_values(["Impressions", "Mentions"], ascending=False).reset_index(drop=True)
+        rebuilt = rebuilt.sort_values(["Effective Reach", "Impressions", "Mentions"], ascending=False).reset_index(drop=True)
 
-    desired_order = ["Author", "Outlet", "Mentions", "Impressions"]
+    desired_order = ["Author", "Outlet", "Mentions", "Impressions", "Effective Reach"]
     rebuilt = rebuilt[[c for c in desired_order if c in rebuilt.columns]].copy()
 
     return rebuilt
@@ -352,3 +370,70 @@ def get_author_search_urls(author_name: str) -> tuple[str, str]:
 
 def get_search_author_name(author_name: str) -> str:
     return unidecode(str(author_name or "").strip())
+
+
+def make_author_cache_key(author_name: str) -> str:
+    return get_search_author_name(author_name).lower()
+
+
+def normalize_outlet_name(outlet: str) -> str:
+    outlet = unidecode(str(outlet or "").strip()).lower()
+    outlet = re.sub(r"\s+", " ", outlet)
+    outlet = re.sub(r"[^a-z0-9 ]+", "", outlet)
+    return outlet.strip()
+
+
+def build_author_outlet_cache_entry(
+    author_name: str,
+    df_traditional: pd.DataFrame,
+    secrets,
+) -> dict:
+    search_author_name = get_search_author_name(author_name)
+    search_results, api_debug = fetch_outlet(search_author_name, secrets)
+    outlets_in_coverage = get_outlets_in_coverage(df_traditional, author_name)
+    outlets_in_coverage_list = pd.Index(outlets_in_coverage["Outlet"].tolist()).insert(0, "Freelance")
+    matched_authors, db_outlets, possibles = get_matched_authors_df(
+        search_results=search_results,
+        outlets_in_coverage_list=outlets_in_coverage_list,
+    )
+
+    return {
+        "author_name": author_name,
+        "search_author_name": search_author_name,
+        "search_results": search_results,
+        "api_debug": api_debug,
+        "outlets_in_coverage": outlets_in_coverage,
+        "outlets_in_coverage_list": outlets_in_coverage_list,
+        "matched_authors": matched_authors,
+        "db_outlets": db_outlets,
+        "possibles": possibles,
+    }
+
+
+def find_strict_auto_assign_outlet(cache_entry: dict) -> str | None:
+    outlets_in_coverage = cache_entry.get("outlets_in_coverage", pd.DataFrame())
+    matched_authors = cache_entry.get("matched_authors", pd.DataFrame())
+
+    if outlets_in_coverage is None or len(outlets_in_coverage) == 0:
+        return None
+    if matched_authors is None or len(matched_authors) == 0 or "Outlet" not in matched_authors.columns:
+        return None
+
+    coverage_map = {
+        normalize_outlet_name(outlet): outlet
+        for outlet in outlets_in_coverage["Outlet"].dropna().astype(str).tolist()
+        if str(outlet).strip()
+    }
+    db_map = {
+        normalize_outlet_name(outlet): outlet
+        for outlet in matched_authors["Outlet"].dropna().astype(str).tolist()
+        if str(outlet).strip()
+    }
+
+    overlap_keys = [key for key in coverage_map.keys() if key in db_map]
+    overlap_keys = list(dict.fromkeys([key for key in overlap_keys if key]))
+
+    if len(overlap_keys) != 1:
+        return None
+
+    return coverage_map[overlap_keys[0]]
