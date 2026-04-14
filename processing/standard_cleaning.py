@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import time
 from difflib import SequenceMatcher
 
 import numpy as np
@@ -13,7 +12,6 @@ from processing.coverage_flags import add_coverage_flags
 
 SOCIAL_TYPES = ["FACEBOOK", "TWITTER", "X", "INSTAGRAM", "REDDIT", "YOUTUBE", "TIKTOK", "LINKEDIN", "BLUESKY"]
 BROADCAST_TYPES = ["RADIO", "TV"]
-SOURCE_ROW_COL = "__source_row__"
 
 
 def lengths_are_similar_enough(len_a: int, len_b: int, min_length_ratio: float = 0.70) -> bool:
@@ -498,17 +496,11 @@ def _cluster_time_proximate_indices(sorted_group: pd.DataFrame, time_col: str) -
     return clusters
 
 
-def dedupe_broadcast(
-    broadcast_df: pd.DataFrame,
-    return_mapping: bool = False,
-) -> tuple[pd.DataFrame, pd.DataFrame] | tuple[pd.DataFrame, pd.DataFrame, list[tuple[int, int]]]:
+def dedupe_broadcast(broadcast_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     broadcast_df = broadcast_df.copy()
 
     if broadcast_df.empty:
-        empty_result: tuple[pd.DataFrame, pd.DataFrame] = (broadcast_df.copy(), pd.DataFrame())
-        if return_mapping:
-            return empty_result[0], empty_result[1], []
-        return empty_result
+        return broadcast_df.copy(), pd.DataFrame()
 
     working = broadcast_df.reset_index(drop=True).copy()
     working["_original_order"] = np.arange(len(working))
@@ -531,13 +523,9 @@ def dedupe_broadcast(
 
     group_cols = [c for c in ["Outlet", "Type", "_date_only"] if c in working.columns]
     if not group_cols:
-        empty_result = (broadcast_df.copy(), pd.DataFrame())
-        if return_mapping:
-            return empty_result[0], empty_result[1], []
-        return empty_result
+        return broadcast_df.copy(), pd.DataFrame()
 
     duplicate_indexes = set()
-    duplicate_to_keep_pairs: list[tuple[int, int]] = []
 
     for _, group in working.groupby(group_cols, dropna=False):
         valid_group = group[group["_date_time"].notna()].sort_values(["_date_time", "_original_order"])
@@ -561,11 +549,6 @@ def dedupe_broadcast(
                 keep_index = component_rows.index[0]
                 dropped = set(cluster) - {keep_index}
                 exact_duplicate_indexes.update(dropped)
-                if return_mapping and SOURCE_ROW_COL in remaining_group.columns:
-                    keep_source = int(remaining_group.loc[keep_index, SOURCE_ROW_COL])
-                    duplicate_to_keep_pairs.extend(
-                        (int(remaining_group.loc[idx, SOURCE_ROW_COL]), keep_source) for idx in dropped
-                    )
 
         if exact_duplicate_indexes:
             duplicate_indexes.update(exact_duplicate_indexes)
@@ -627,11 +610,6 @@ def dedupe_broadcast(
             keep_index = component_rows.index[0]
             dropped = set(component) - {keep_index}
             duplicate_indexes.update(dropped)
-            if return_mapping and SOURCE_ROW_COL in remaining_group.columns:
-                keep_source = int(remaining_group.loc[keep_index, SOURCE_ROW_COL])
-                duplicate_to_keep_pairs.extend(
-                    (int(remaining_group.loc[idx, SOURCE_ROW_COL]), keep_source) for idx in dropped
-                )
 
     if duplicate_indexes:
         broadcast_dupes = working.loc[list(duplicate_indexes)].copy()
@@ -651,75 +629,22 @@ def dedupe_broadcast(
     cleaned_broadcast.drop(columns=helper_cols, inplace=True, errors="ignore")
     broadcast_dupes.drop(columns=helper_cols, inplace=True, errors="ignore")
 
-    if return_mapping:
-        return cleaned_broadcast, broadcast_dupes, duplicate_to_keep_pairs
     return cleaned_broadcast, broadcast_dupes
 
 
-def dedupe_traditional(df: pd.DataFrame, validate: bool = False) -> tuple[pd.DataFrame, pd.DataFrame, list[dict[str, float | str]], dict[str, object]]:
-    validation: dict[str, object] = {"Enabled": validate}
+def dedupe_traditional(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     df = df.copy()
-    timings: list[dict[str, float | str]] = []
-
-    def record_timing(step_name: str, start_time: float) -> None:
-        timings.append({
-            "Step": step_name,
-            "Seconds": round(time.perf_counter() - start_time, 4),
-        })
-
-    step_start = time.perf_counter()
     non_broadcast_df, broadcast_df = split_broadcast(df)
-    record_timing("Split broadcast", step_start)
 
-    step_start = time.perf_counter()
     deduped_non_broadcast, dupe_urls = dedupe_by_url(non_broadcast_df)
-    record_timing("URL dedupe", step_start)
 
-    step_start = time.perf_counter()
     deduped_non_broadcast, dupe_cols = dedupe_non_broadcast_by_fields(deduped_non_broadcast)
-    record_timing("Field/snippet dedupe", step_start)
 
-    step_start = time.perf_counter()
-    step_start = time.perf_counter()
-    if validate:
-        cleaned_broadcast, broadcast_dupes, broadcast_duplicate_pairs = dedupe_broadcast(
-            broadcast_df,
-            return_mapping=True,
-        )
-    else:
-        cleaned_broadcast, broadcast_dupes = dedupe_broadcast(
-            broadcast_df,
-            return_mapping=False,
-        )
-        broadcast_duplicate_pairs = []
-    record_timing("Broadcast dedupe", step_start)
+    cleaned_broadcast, broadcast_dupes = dedupe_broadcast(broadcast_df)
 
-    if validate:
-        legacy_start = time.perf_counter()
-        legacy_cleaned_broadcast, legacy_broadcast_dupes = dedupe_broadcast_legacy(broadcast_df)
-        validation["Broadcast Legacy Seconds"] = round(time.perf_counter() - legacy_start, 4)
-
-        def _frame_signature(df_in: pd.DataFrame) -> set[tuple]:
-            if df_in is None or df_in.empty:
-                return set()
-            cols = [c for c in ["Outlet", "Type", "Date", "Headline", "Snippet", "URL"] if c in df_in.columns]
-            return set(map(tuple, df_in[cols].fillna("").astype(str).itertuples(index=False, name=None)))
-
-        validation["Broadcast Matches Legacy"] = (
-            _frame_signature(cleaned_broadcast) == _frame_signature(legacy_cleaned_broadcast)
-            and _frame_signature(broadcast_dupes) == _frame_signature(legacy_broadcast_dupes)
-        )
-        validation["Broadcast Duplicate Pairs"] = broadcast_duplicate_pairs
-        validation["Pre-Dedupe Broadcast Rows"] = broadcast_df.copy()
-    else:
-        validation["Broadcast Matches Legacy"] = None
-
-    step_start = time.perf_counter()
     cleaned_df = pd.concat([deduped_non_broadcast, cleaned_broadcast], ignore_index=True).reset_index(drop=True)
     dupes_df = pd.concat([dupe_urls, dupe_cols, broadcast_dupes], ignore_index=True)
-    record_timing("Recombine deduped sets", step_start)
-
-    return cleaned_df, dupes_df, timings, validation
+    return cleaned_df, dupes_df
 
 
 def extract_relevant_text(snippet: str) -> str:
@@ -737,73 +662,28 @@ def run_standard_cleaning(
     merge_online: bool = True,
     drop_dupes: bool = True,
     add_flags: bool = True,
-    validate_optimizations: bool = False,
 ) -> dict:
-    timings: list[dict[str, float | str]] = []
-
-    def record_timing(step_name: str, start_time: float) -> None:
-        timings.append({
-            "Step": step_name,
-            "Seconds": round(time.perf_counter() - start_time, 4),
-        })
-
     df = df.copy()
-    if SOURCE_ROW_COL not in df.columns:
-        df[SOURCE_ROW_COL] = range(len(df))
-
-    step_start = time.perf_counter()
     df = prepare_text_columns(df)
-    record_timing("Prepare text columns", step_start)
-
-    step_start = time.perf_counter()
     df = standardize_media_types(df, merge_online=merge_online)
-    record_timing("Standardize media types", step_start)
-
-    step_start = time.perf_counter()
     df = reorder_key_columns(df)
-    record_timing("Reorder key columns", step_start)
-
-    step_start = time.perf_counter()
     df = clean_text_fields(df)
-    record_timing("Clean text fields", step_start)
-
-    step_start = time.perf_counter()
     df_traditional, df_social = split_social(df)
-    record_timing("Split social", step_start)
 
     if drop_dupes:
-        step_start = time.perf_counter()
-        df_traditional, df_dupes, dedupe_timings, dedupe_validation = dedupe_traditional(
-            df_traditional,
-            validate=validate_optimizations,
-        )
-        record_timing("Deduplicate traditional", step_start)
-        for row in dedupe_timings:
-            timings.append({
-                "Step": f"  - {row.get('Step', '')}",
-                "Seconds": row.get("Seconds", 0.0),
-            })
+        df_traditional, df_dupes = dedupe_traditional(df_traditional)
     else:
         df_dupes = pd.DataFrame()
-        dedupe_validation = {"Enabled": validate_optimizations}
 
-    step_start = time.perf_counter()
     df_traditional = df_traditional.reset_index(drop=True)
     df_social = df_social.reset_index(drop=True)
     df_dupes = df_dupes.reset_index(drop=True)
-    record_timing("Reset indexes", step_start)
 
     if add_flags:
-        step_start = time.perf_counter()
         df_traditional = add_coverage_flags(df_traditional)
-        record_timing("Add coverage flags", step_start)
 
     return {
         "df_traditional": df_traditional,
         "df_social": df_social,
         "df_dupes": df_dupes,
-        "timings": timings,
-        "validation": {
-            "dedupe": dedupe_validation,
-        },
     }

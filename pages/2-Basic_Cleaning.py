@@ -8,17 +8,15 @@ import pandas as pd
 import streamlit as st
 
 from processing.standard_cleaning import run_standard_cleaning
-from processing.standard_cleaning import SOURCE_ROW_COL
 from processing.effective_reach import (
     apply_effective_reach_traditional,
     apply_effective_reach_social,
 )
 
 from processing.story_grouping import (
-    cluster_by_media_type_with_timings,
     cluster_by_media_type,
     build_unique_story_table,
-    mark_prime_examples_with_timings,
+    mark_prime_examples,
 )
 
 from utils.formatting import format_number, NUMERIC_FORMAT_DICT
@@ -43,10 +41,6 @@ def ensure_basic_cleaning_state() -> None:
 
     if "standard_step" not in st.session_state:
         st.session_state.standard_step = False
-    if "basic_cleaning_timings" not in st.session_state:
-        st.session_state.basic_cleaning_timings = pd.DataFrame()
-    if "basic_cleaning_validation" not in st.session_state:
-        st.session_state.basic_cleaning_validation = {}
 
 
 def reset_basic_cleaning() -> None:
@@ -61,8 +55,6 @@ def reset_basic_cleaning() -> None:
     st.session_state.df_ai_grouped = pd.DataFrame()
     st.session_state.df_ai_unique = pd.DataFrame()
     st.session_state.standard_step = False
-    st.session_state.basic_cleaning_timings = pd.DataFrame()
-    st.session_state.basic_cleaning_validation = {}
 
 
 def render_preview_dataframe(df: pd.DataFrame, preview_rows: int = 1000) -> None:
@@ -210,54 +202,6 @@ if st.session_state.standard_step:
             reset_basic_cleaning()
             st.rerun()
 
-    timings_df = st.session_state.get("basic_cleaning_timings", pd.DataFrame())
-    if isinstance(timings_df, pd.DataFrame) and not timings_df.empty:
-        with st.expander("Temporary performance timings", expanded=False):
-            display_timings = timings_df.copy()
-            display_timings["Seconds"] = pd.to_numeric(display_timings["Seconds"], errors="coerce").fillna(0.0)
-            display_timings["Share"] = (
-                display_timings["Seconds"] / display_timings["Seconds"].sum()
-            ).fillna(0.0).map(lambda x: f"{x:.1%}")
-            display_timings["Seconds"] = display_timings["Seconds"].map(lambda x: f"{x:.2f}")
-            st.dataframe(display_timings, use_container_width=True, hide_index=True)
-
-    validation = st.session_state.get("basic_cleaning_validation", {})
-    if validation:
-        with st.expander("Temporary optimization validation", expanded=False):
-            rows = []
-            dedupe_validation = validation.get("dedupe", {})
-            if dedupe_validation.get("Enabled"):
-                rows.append({
-                    "Check": "Broadcast dedupe matches legacy",
-                    "Result": "Yes" if dedupe_validation.get("Broadcast Matches Legacy") else "No",
-                    "Legacy Seconds": dedupe_validation.get("Broadcast Legacy Seconds", ""),
-                })
-            prime_validation = validation.get("prime_examples", {})
-            if prime_validation.get("Enabled"):
-                rows.append({
-                    "Check": "Prime example selection matches legacy",
-                    "Result": "Yes" if prime_validation.get("Matches Legacy") else "No",
-                    "Legacy Seconds": prime_validation.get("Legacy Seconds", ""),
-                })
-            cluster_validation = validation.get("clustering", {})
-            if cluster_validation.get("Enabled"):
-                rows.append({
-                    "Check": "Story clustering matches legacy",
-                    "Result": "Yes" if cluster_validation.get("Matches Legacy") else "No",
-                    "Legacy Seconds": cluster_validation.get("Legacy Seconds", ""),
-                })
-            broadcast_cluster = validation.get("broadcast_cluster_experiment", {})
-            if broadcast_cluster.get("Enabled"):
-                rows.append({
-                    "Check": "Broadcast duplicate pairs share later story cluster",
-                    "Result": f"{broadcast_cluster.get('Match Rate', 0.0):.1%}",
-                    "Legacy Seconds": "",
-                })
-            if rows:
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-            else:
-                st.caption("No validation checks were run on the last cleaning pass.")
-
     traditional_unique_mentions = None
     if not st.session_state.df_ai_unique.empty and "Group Count" in st.session_state.df_ai_unique.columns:
         traditional_unique_mentions = len(st.session_state.df_ai_unique)
@@ -282,21 +226,6 @@ if st.session_state.standard_step:
         preview_rows=200,
         unique_mentions=None,
     )
-
-    # st.write(
-    #     st.session_state.df_ai_unique[["Group ID", "Prime Example", "Headline", "Outlet", "Group Count"]].head(20)
-    # )
-    #
-    # prime_check = (
-    #     st.session_state.df_traditional.groupby("Group ID")["Prime Example"].sum().value_counts()
-    # )
-    # st.write(prime_check)
-    #
-    # st.write(
-    #     st.session_state.df_ai_unique[["Group ID", "Prime Example", "Headline", "Outlet", "Group Count"]].head(20)
-    # )
-
-
 else:
     with st.form("basic_cleaning_form"):
         st.subheader("Cleaning Options")
@@ -313,119 +242,32 @@ else:
             help="Remove likely duplicates after cleaning and media-type splitting.",
         )
 
-        validate_optimizations = st.checkbox(
-            "Temporarily validate optimized dedupe/grouping against legacy logic",
-            value=False,
-            help="Slower, but compares the new broadcast dedupe and prime example logic against the legacy implementations.",
-        )
-
         submitted = st.form_submit_button("Run Basic Cleaning", type="primary")
 
     if submitted:
         with st.spinner("Running cleaning, Effective Reach, and story grouping..."):
             start_time = time.time()
             source_df = st.session_state.df_traditional_pre_standard.copy()
-            performance_rows: list[dict[str, float | str]] = []
-
-            def add_perf_row(step_name: str, started_at: float) -> None:
-                performance_rows.append({
-                    "Step": step_name,
-                    "Seconds": round(time.perf_counter() - started_at, 4),
-                })
-
-            overall_perf_start = time.perf_counter()
-            perf_start = time.perf_counter()
             cleaning_results = run_standard_cleaning(
                 df=source_df,
                 merge_online=merge_online,
                 drop_dupes=drop_dupes,
                 add_flags=True,
-                validate_optimizations=validate_optimizations,
             )
-            add_perf_row("Standard cleaning total", perf_start)
-            for row in cleaning_results.get("timings", []):
-                performance_rows.append({
-                    "Step": f"  - {row.get('Step', '')}",
-                    "Seconds": row.get("Seconds", 0.0),
-                })
-
-            perf_start = time.perf_counter()
             df_traditional = apply_effective_reach_traditional(cleaning_results["df_traditional"])
-            add_perf_row("Traditional effective reach", perf_start)
-
-            perf_start = time.perf_counter()
             df_social = apply_effective_reach_social(cleaning_results["df_social"])
-            add_perf_row("Social effective reach", perf_start)
             df_dupes = cleaning_results["df_dupes"]
 
-            perf_start = time.perf_counter()
-            df_ai_grouped, clustering_timings, clustering_validation = cluster_by_media_type_with_timings(
+            df_ai_grouped = cluster_by_media_type(
                 df=df_traditional.copy(),
                 similarity_threshold=0.935,
                 max_batch_size=1800,
-                validate=validate_optimizations,
             )
-            add_perf_row("Cluster by media type", perf_start)
-            for row in clustering_timings:
-                performance_rows.append({
-                    "Step": f"  - {row.get('Step', '')}",
-                    "Seconds": row.get("Seconds", 0.0),
-                })
-
-            perf_start = time.perf_counter()
-            df_ai_grouped, prime_timings, prime_validation = mark_prime_examples_with_timings(
-                df_ai_grouped,
-                validate=validate_optimizations,
-            )
-            add_perf_row("Mark prime examples", perf_start)
-            for row in prime_timings:
-                performance_rows.append({
-                    "Step": f"  - {row.get('Step', '')}",
-                    "Seconds": row.get("Seconds", 0.0),
-                })
-
-            perf_start = time.perf_counter()
+            df_ai_grouped = mark_prime_examples(df_ai_grouped)
             df_ai_unique = build_unique_story_table(df_ai_grouped)
-            add_perf_row("Build unique story table", perf_start)
-
-            broadcast_cluster_validation = {"Enabled": validate_optimizations}
-            if validate_optimizations:
-                experiment = cleaning_results.get("validation", {}).get("dedupe", {})
-                pair_list = experiment.get("Broadcast Duplicate Pairs", [])
-                pre_dedupe_broadcast = experiment.get("Pre-Dedupe Broadcast Rows")
-                if isinstance(pre_dedupe_broadcast, pd.DataFrame) and not pre_dedupe_broadcast.empty and pair_list:
-                    experiment_clustered = cluster_by_media_type(
-                        pre_dedupe_broadcast.copy(),
-                        similarity_threshold=0.935,
-                        max_batch_size=1800,
-                    )
-                    source_to_group = dict(
-                        zip(
-                            experiment_clustered.get(SOURCE_ROW_COL, pd.Series(dtype="int64")),
-                            experiment_clustered.get("Group ID", pd.Series(dtype="int64")),
-                        )
-                    )
-                    comparable = [
-                        (dup_id, keep_id)
-                        for dup_id, keep_id in pair_list
-                        if dup_id in source_to_group and keep_id in source_to_group
-                    ]
-                    if comparable:
-                        matches = sum(1 for dup_id, keep_id in comparable if source_to_group[dup_id] == source_to_group[keep_id])
-                        broadcast_cluster_validation["Compared Pairs"] = len(comparable)
-                        broadcast_cluster_validation["Matches"] = matches
-                        broadcast_cluster_validation["Match Rate"] = matches / len(comparable)
-                    else:
-                        broadcast_cluster_validation["Compared Pairs"] = 0
-                        broadcast_cluster_validation["Matches"] = 0
-                        broadcast_cluster_validation["Match Rate"] = 0.0
 
             # Canonical grouped traditional dataset
             df_traditional = df_ai_grouped.copy()
-
-            for frame in [df_traditional, df_social, df_dupes, df_ai_grouped, df_ai_unique]:
-                if isinstance(frame, pd.DataFrame) and SOURCE_ROW_COL in frame.columns:
-                    frame.drop(columns=[SOURCE_ROW_COL], inplace=True, errors="ignore")
 
             st.session_state.df_traditional = df_traditional
             st.session_state.df_social = df_social
@@ -436,13 +278,5 @@ else:
 
             elapsed = time.time() - start_time
             st.session_state.basic_cleaning_elapsed = elapsed
-            add_perf_row("Overall basic cleaning", overall_perf_start)
-            st.session_state.basic_cleaning_timings = pd.DataFrame(performance_rows)
-            st.session_state.basic_cleaning_validation = {
-                "dedupe": cleaning_results.get("validation", {}).get("dedupe", {}),
-                "clustering": clustering_validation,
-                "prime_examples": prime_validation,
-                "broadcast_cluster_experiment": broadcast_cluster_validation,
-            }
 
             st.rerun()
