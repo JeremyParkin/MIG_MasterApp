@@ -360,13 +360,12 @@ def render_selection_section() -> None:
         st.subheader("Candidate Outlets")
         st.caption('Check the "Keep" box for outlets you want on the final shortlist, then click "Save Selected".')
         candidate_editor = st.data_editor(
-            candidate_df[["Outlet", "Mention_Total", "Unique_Mentions", "Impressions", "Effective_Reach", "Keep"]],
+            candidate_df[["Outlet", "Mention_Total", "Impressions", "Effective_Reach", "Keep"]],
             use_container_width=True,
             hide_index=True,
             key="outlet_candidate_editor",
             column_config={
                 "Mention_Total": st.column_config.NumberColumn("Mentions", width="small", format="%d"),
-                "Unique_Mentions": st.column_config.NumberColumn("Unique Mentions", width="small", format="%d"),
                 "Impressions": st.column_config.NumberColumn("Impressions", width="small", format="%,d"),
                 "Effective_Reach": st.column_config.NumberColumn("Effective Reach", width="small", format="%,d"),
                 "Keep": st.column_config.CheckboxColumn("Keep", width="small"),

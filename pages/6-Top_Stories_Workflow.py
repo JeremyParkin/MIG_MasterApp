@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
-import runpy
-
 import streamlit as st
+from ui.top_stories_selection_view import render_top_stories_selection
+from ui.top_story_summaries_view import render_top_story_summaries
 
 
 st.title("Top Stories")
@@ -51,10 +50,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-legacy_pages_dir = Path(__file__).resolve().parent.parent / "legacy_pages"
-
 if st.session_state.get("top_stories_section") == "Summaries":
-    runpy.run_path(str(legacy_pages_dir / "7-Summaries.py"), run_name="__main__")
+    render_top_story_summaries()
 else:
     st.session_state.top_stories_section = "Selection"
-    runpy.run_path(str(legacy_pages_dir / "6-Top_Stories.py"), run_name="__main__")
+    render_top_stories_selection()

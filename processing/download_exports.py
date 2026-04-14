@@ -8,6 +8,9 @@ from typing import Any
 
 import pandas as pd
 
+from processing.author_insights import build_author_metrics
+from processing.outlet_insights import build_outlet_metrics
+
 
 # ---------- Core helpers ----------
 
@@ -91,6 +94,94 @@ def build_authors_export_table(
     return rebuilt[["Author", "Outlet", "Mentions", "Impressions"]].copy()
 
 
+def build_author_insights_export_table(session_state) -> pd.DataFrame:
+    df_traditional = session_state.get("df_traditional", pd.DataFrame()).copy()
+    auth_outlet_table = session_state.get("auth_outlet_table", pd.DataFrame()).copy()
+    auth_outlet_table = auth_outlet_table if isinstance(auth_outlet_table, pd.DataFrame) and not auth_outlet_table.empty else None
+
+    summary, _story_level = build_author_metrics(df_traditional, auth_outlet_table=auth_outlet_table)
+    if summary.empty:
+        return pd.DataFrame(columns=["Author", "Assigned Outlet", "Mentions", "Unique Mentions", "Impressions", "Effective Reach", "Good Outlet Rate", "Coverage Themes"])
+
+    selected_authors = [
+        str(author).strip()
+        for author in session_state.get("author_insights_selected_authors", [])
+        if str(author).strip()
+    ]
+    summaries = dict(session_state.get("author_insights_summaries", {}))
+
+    if selected_authors:
+        export_df = summary[summary["Author"].isin(selected_authors)].copy()
+        export_df["SortOrder"] = export_df["Author"].map({name: idx for idx, name in enumerate(selected_authors)})
+        export_df = export_df.sort_values("SortOrder").drop(columns=["SortOrder"])
+    else:
+        export_df = summary.sort_values(["Mention_Total", "Impressions", "Unique_Stories"], ascending=False).copy()
+
+    export_df["Coverage Themes"] = export_df["Author"].map(lambda author: summaries.get(author, ""))
+    export_df["Good Outlet Rate"] = (
+        export_df["Good_Outlet_Stories"] / export_df["Unique_Stories"].replace(0, pd.NA)
+    ).fillna(0.0) * 100
+
+    return export_df[[
+        "Author",
+        "Assigned Outlet",
+        "Mention_Total",
+        "Unique_Stories",
+        "Impressions",
+        "Effective_Reach",
+        "Good Outlet Rate",
+        "Coverage Themes",
+    ]].rename(
+        columns={
+            "Mention_Total": "Mentions",
+            "Unique_Stories": "Unique Mentions",
+            "Effective_Reach": "Effective Reach",
+        }
+    ).copy()
+
+
+def build_outlets_export_table(session_state) -> pd.DataFrame:
+    df_traditional = session_state.get("df_traditional", pd.DataFrame()).copy()
+    summary, _story_level = build_outlet_metrics(df_traditional)
+    if summary.empty:
+        return pd.DataFrame(columns=["Outlet", "Media Types", "Mentions", "Unique Mentions", "Impressions", "Effective Reach", "Good Outlet Rate", "Coverage Themes"])
+
+    selected_outlets = [
+        str(outlet).strip()
+        for outlet in session_state.get("outlet_insights_selected_outlets", [])
+        if str(outlet).strip()
+    ]
+    summaries = dict(session_state.get("outlet_insights_summaries", {}))
+
+    if selected_outlets:
+        export_df = summary[summary["Outlet"].isin(selected_outlets)].copy()
+        export_df["SortOrder"] = export_df["Outlet"].map({name: idx for idx, name in enumerate(selected_outlets)})
+        export_df = export_df.sort_values("SortOrder").drop(columns=["SortOrder"])
+    else:
+        export_df = summary.sort_values(["Mention_Total", "Impressions", "Unique_Mentions"], ascending=False).copy()
+
+    export_df["Coverage Themes"] = export_df["Outlet"].map(lambda outlet: summaries.get(outlet, ""))
+
+    return export_df[[
+        "Outlet",
+        "Top_Types",
+        "Mention_Total",
+        "Unique_Mentions",
+        "Impressions",
+        "Effective_Reach",
+        "Good_Outlet_Rate",
+        "Coverage Themes",
+    ]].rename(
+        columns={
+            "Top_Types": "Media Types",
+            "Mention_Total": "Mentions",
+            "Unique_Mentions": "Unique Mentions",
+            "Effective_Reach": "Effective Reach",
+            "Good_Outlet_Rate": "Good Outlet Rate",
+        }
+    ).copy()
+
+
 def get_currency_symbol(original_ave_col: str | None) -> str:
     """Infer currency symbol from original uploaded AVE column name. Fallback to $."""
     original_ave_col = str(original_ave_col or "AVE")
@@ -156,6 +247,11 @@ def apply_sheet_column_formats(
         "Chart Callout": {"width": 40},
         "Top Story Summary": {"width": 55},
         "Entity Sentiment": {"width": 45},
+        "Unique Mentions": {"width": 14, "format": number_format},
+        "Effective Reach": {"width": 16, "format": number_format},
+        "Good Outlet Rate": {"width": 14},
+        "Coverage Themes": {"width": 65},
+        "Media Types": {"width": 24},
         "Field": {"width": 32},
         "Value": {"width": 40},
     }
@@ -501,17 +597,33 @@ def build_clean_workbook_bytes(session_state) -> bytes:
                 cleaned_exports.append(("SENTIMENT SAMPLE", sentiment_export, ws))
 
         # AUTHORS
-        authors = build_authors_export_table(
-            session_state.get("df_traditional", pd.DataFrame()).copy(),
-            existing_assignments=session_state.get("auth_outlet_table", pd.DataFrame()).copy()
-            if len(session_state.get("auth_outlet_table", pd.DataFrame())) > 0 else None,
-        )
+        authors = build_author_insights_export_table(session_state)
+        if authors.empty:
+            authors = build_authors_export_table(
+                session_state.get("df_traditional", pd.DataFrame()).copy(),
+                existing_assignments=session_state.get("auth_outlet_table", pd.DataFrame()).copy()
+                if len(session_state.get("auth_outlet_table", pd.DataFrame())) > 0 else None,
+            )
         if len(authors) > 0:
-            authors = authors.sort_values(by=["Mentions", "Impressions"], ascending=False).copy()
+            selected_authors = [
+                str(author).strip()
+                for author in session_state.get("author_insights_selected_authors", [])
+                if str(author).strip()
+            ]
+            if not selected_authors:
+                authors = authors.sort_values(by=["Mentions", "Impressions"], ascending=False).copy()
             authors.to_excel(writer, sheet_name="Authors", header=True, index=False)
             ws = writer.sheets["Authors"]
             ws.set_tab_color("green")
             cleaned_exports.append(("Authors", authors, ws))
+
+        # OUTLETS
+        outlets = build_outlets_export_table(session_state)
+        if len(outlets) > 0:
+            outlets.to_excel(writer, sheet_name="Outlets", header=True, index=False)
+            ws = writer.sheets["Outlets"]
+            ws.set_tab_color("green")
+            cleaned_exports.append(("Outlets", outlets, ws))
 
         # TOP STORIES
         if len(top_stories) > 0:

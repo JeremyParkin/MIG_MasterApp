@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-import runpy
+from ui.top_story_summaries_view import render_top_story_summaries
 
-
-legacy_pages_dir = Path(__file__).resolve().parent.parent / "legacy_pages"
-runpy.run_path(str(legacy_pages_dir / "7-Summaries.py"), run_name="__main__")
+render_top_story_summaries()

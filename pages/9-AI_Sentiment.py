@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-import runpy
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,6 +9,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from streamlit_tags import st_tags
+from ui.spot_checks_view import render_spot_checks_page
 
 from processing.sentiment_config import (
     init_sentiment_config_state,
@@ -658,17 +657,11 @@ if st.session_state.sentiment_section == "Run":
     st.stop()
 
 if st.session_state.sentiment_section == "AI Pre-Review":
-    st.session_state.sentiment_review_embedded = True
-    st.session_state.spot_checks_mode = "pre_review"
-    legacy_or_current = Path(__file__).resolve().parent / "10-Spot_Checks.py"
-    runpy.run_path(str(legacy_or_current), run_name="__main__")
+    render_spot_checks_page(embedded_review=True, spot_checks_mode="pre_review")
     st.stop()
 
 if st.session_state.sentiment_section == "Spot Checks":
-    st.session_state.sentiment_review_embedded = True
-    st.session_state.spot_checks_mode = "spot_checks"
-    legacy_or_current = Path(__file__).resolve().parent / "10-Spot_Checks.py"
-    runpy.run_path(str(legacy_or_current), run_name="__main__")
+    render_spot_checks_page(embedded_review=True, spot_checks_mode="spot_checks")
     st.stop()
 
 st.session_state.sentiment_review_embedded = False
