@@ -36,6 +36,18 @@ from utils.api_meter import (
 warnings.filterwarnings("ignore")
 
 st.markdown("<style>.block-container{padding-top:2.75rem !important;}</style>", unsafe_allow_html=True)
+embedded_review = bool(st.session_state.get("sentiment_review_embedded", False))
+spot_checks_mode = str(st.session_state.get("spot_checks_mode", "full") or "full")
+if embedded_review:
+    if spot_checks_mode == "pre_review":
+        st.subheader("Step 3: AI Pre-Review")
+        st.caption("Run a second AI pass on top candidates so likely agreements can be auto-resolved before human spot checks.")
+    else:
+        st.subheader("Step 4: Spot Checks")
+        st.caption("Review, correct, and finalize sentiment decisions on grouped stories that still need human judgment.")
+else:
+    st.title("Spot Checks")
+    st.caption("Review, correct, and finalize sentiment decisions on grouped stories before exporting the finished dataset.")
 
 if not st.session_state.get("sentiment_config_step", False):
     st.error("Please complete AI Sentiment setup before trying this step.")
@@ -84,7 +96,7 @@ def filter_candidates_for_review_mode(
 
     out = candidates_df.copy()
 
-    if review_mode == "Flagged only":
+    if review_mode == "Flagged for human review":
         if "Needs Human Review" in out.columns:
             flagged = out[out["Needs Human Review"] == "Yes"].copy()
             if not flagged.empty:
@@ -230,8 +242,8 @@ needs_review_count = int(
 
 
 last_batch = st.session_state.get("__last_spot_check_ai_summary__")
-if last_batch:
-    st.success("AI pre-review complete. Focus on the flagged stories below.")
+if last_batch and spot_checks_mode == "pre_review":
+    st.success("AI pre-review batch complete. Review counts updated below.")
 
 if base_candidates.empty:
     st.success("All set — no remaining stories need spot checks.")
@@ -242,99 +254,123 @@ if base_candidates.empty:
         st.metric("Acceptance rate", f"{acceptance_rate:.0%}")
     st.stop()
 
-# ---------------------------
-# Simplified top section
-# ---------------------------
-top_message = ""
-if reviewed_candidates.empty:
-    top_message = f"{len(base_candidates):,} stories are ready for review."
-else:
-    top_message = f"{needs_review_count:,} stories need your attention."
-    if disagreement_count > 0:
-        top_message += f" {disagreement_count:,} disagreement{'s' if disagreement_count != 1 else ''} found."
+if spot_checks_mode in {"full", "pre_review"}:
+    controls_in_expander = spot_checks_mode == "full"
 
-st.markdown(f"### {top_message}")
+    def render_pre_review_controls() -> None:
+        adv1, adv2 = st.columns(2)
+        with adv1:
+            st.number_input(
+                "Top candidates to send for AI pre-review",
+                min_value=1,
+                max_value=min(len(base_candidates), 200),
+                value=min(50, len(base_candidates)),
+                step=1,
+                key="spotcheck_auto_review_n",
+            )
+        with adv2:
+            st.number_input(
+                "Review confidence cutoff",
+                min_value=1,
+                max_value=100,
+                value=int(st.session_state.get("spotcheck_low_conf_threshold", DEFAULT_REVIEW_CONFIDENCE_THRESHOLD)),
+                step=1,
+                key="spotcheck_low_conf_threshold",
+            )
 
+        action1, action2 = st.columns(2)
 
-with st.expander("Advanced review options", expanded=False):
-    adv1, adv2 = st.columns(2)
-    with adv1:
-        auto_review_n = st.number_input(
-            "Top candidates to send for AI pre-review",
-            min_value=1,
-            max_value=min(len(base_candidates), 200),
-            value=min(50, len(base_candidates)),
-            step=1,
-            key="spotcheck_auto_review_n",
-        )
-    with adv2:
-        low_conf_threshold = st.number_input(
-            "Review confidence cutoff",
-            min_value=1,
-            max_value=100,
-            value=int(st.session_state.get("spotcheck_low_conf_threshold", DEFAULT_REVIEW_CONFIDENCE_THRESHOLD)),
-            step=1,
-            key="spotcheck_low_conf_threshold",
-        )
+        with action1:
+            if st.button("Run AI pre-review", type="secondary"):
+                st.session_state.pop("__last_spot_check_ai_summary__", None)
 
-    action1, action2 = st.columns(2)
+                with st.spinner("Running AI second opinions on top candidates..."):
+                    unique2, grouped2, batch_errors, total_in, total_out = run_batch_second_opinion(
+                        candidates_df=base_candidates,
+                        df_unique=st.session_state.df_sentiment_unique,
+                        df_grouped=st.session_state.df_sentiment_grouped_rows,
+                        pre_prompt=pre_prompt,
+                        sentiment_instruction=sentiment_instruction,
+                        post_prompt=post_prompt,
+                        functions=functions,
+                        sentiment_type=sentiment_type,
+                        api_key=st.secrets["key"],
+                        review_model=DEFAULT_SECOND_OPINION_MODEL,
+                        limit=int(st.session_state.get("spotcheck_auto_review_n", min(50, len(base_candidates)))),
+                        max_workers=8,
+                        low_conf_threshold=int(st.session_state.get("spotcheck_low_conf_threshold", DEFAULT_REVIEW_CONFIDENCE_THRESHOLD)),
+                    )
 
-    with action1:
-        if st.button("Run AI pre-review", type="secondary"):
-            st.session_state.pop("__last_spot_check_ai_summary__", None)
+                sync_sentiment_state(unique2, grouped2)
 
-            with st.spinner("Running AI second opinions on top candidates..."):
-                unique2, grouped2, batch_errors, total_in, total_out = run_batch_second_opinion(
-                    candidates_df=base_candidates,
-                    df_unique=st.session_state.df_sentiment_unique,
-                    df_grouped=st.session_state.df_sentiment_grouped_rows,
-                    pre_prompt=pre_prompt,
-                    sentiment_instruction=sentiment_instruction,
-                    post_prompt=post_prompt,
-                    functions=functions,
-                    sentiment_type=sentiment_type,
-                    api_key=st.secrets["key"],
-                    review_model=DEFAULT_SECOND_OPINION_MODEL,
-                    limit=int(auto_review_n),
-                    max_workers=8,
-                    low_conf_threshold=int(low_conf_threshold),
-                )
+                apply_usage_to_session(total_in, total_out, DEFAULT_SECOND_OPINION_MODEL)
 
-            sync_sentiment_state(unique2, grouped2)
+                batch_cost = estimate_cost_usd(total_in, total_out, DEFAULT_SECOND_OPINION_MODEL)
+                session_cost = get_api_cost_usd()
 
-            apply_usage_to_session(total_in, total_out, DEFAULT_SECOND_OPINION_MODEL)
+                st.session_state["__last_spot_check_ai_summary__"] = {
+                    "in_tok": total_in,
+                    "out_tok": total_out,
+                    "batch_cost": batch_cost,
+                    "session_cost": session_cost,
+                    "elapsed": 0.0,
+                    "errors": batch_errors,
+                }
+                st.rerun()
 
-            batch_cost = estimate_cost_usd(total_in, total_out, DEFAULT_SECOND_OPINION_MODEL)
-            session_cost = get_api_cost_usd()
+        with action2:
+            st.caption("High-confidence matching opinions are auto-assigned during AI pre-review.")
 
-            st.session_state["__last_spot_check_ai_summary__"] = {
-                "in_tok": total_in,
-                "out_tok": total_out,
-                "batch_cost": batch_cost,
-                "session_cost": session_cost,
-                "elapsed": 0.0,
-                "errors": batch_errors,
-            }
-            st.rerun()
+    if controls_in_expander:
+        with st.expander("Advanced review options", expanded=False):
+            render_pre_review_controls()
+    else:
+        render_pre_review_controls()
 
-    with action2:
-        st.caption("High-confidence matching opinions are auto-assigned during AI pre-review.")
-
-review_mode = st.radio(
-    "View",
-    ["Flagged only", "All remaining"],
-    horizontal=True,
-    label_visibility="collapsed",
-)
+if spot_checks_mode == "pre_review":
+    summary1, summary2, summary3 = st.columns(3)
+    with summary1:
+        st.metric("Ready for review", f"{len(base_candidates):,}")
+    with summary2:
+        st.metric("Needs human review", f"{needs_review_count:,}")
+    with summary3:
+        st.metric("Disagreements", f"{disagreement_count:,}")
+    st.stop()
 
 low_conf_threshold = int(
     st.session_state.get("spotcheck_low_conf_threshold", DEFAULT_REVIEW_CONFIDENCE_THRESHOLD)
 )
+
+review_mode = st.radio(
+    "Review queue",
+    ["Flagged for human review", "All unresolved stories"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="spotcheck_review_mode",
+)
+
+if spot_checks_mode == "spot_checks":
+    pending_candidates = filter_candidates_for_review_mode(
+        base_candidates,
+        review_mode=review_mode,
+        low_conf_threshold=low_conf_threshold,
+    )
+    summary1, summary2, summary3, summary4 = st.columns(4)
+    with summary1:
+        st.metric("Ready for review", f"{len(base_candidates):,}")
+    with summary2:
+        st.metric("Needs human review", f"{needs_review_count:,}")
+    with summary3:
+        st.metric("Disagreements", f"{disagreement_count:,}")
+    with summary4:
+        st.metric("In review queue", f"{len(pending_candidates):,}")
+
 candidates = filter_candidates_for_review_mode(
     base_candidates,
     review_mode=review_mode,
     low_conf_threshold=low_conf_threshold,
 )
+st.caption("This filter changes the queue used by Prev/Next. Flagged focuses only on stories explicitly marked for human review.")
 
 if candidates.empty:
     st.info("No stories match the current view.")
@@ -637,15 +673,15 @@ with right:
 
     st.caption(f"Story {idx + 1} of {len(candidates)} in current view")
 
-st.caption(
-"Stories where both AI opinions match at high review confidence are auto-assigned. The remaining stories need your judgment."
-)
+if spot_checks_mode != "spot_checks":
+    st.caption(
+        "Stories where both AI opinions match at high review confidence are auto-assigned. The remaining stories need your judgment."
+    )
 
 sentiment_dist = build_sentiment_distribution(st.session_state.df_sentiment_unique, sentiment_type)
 
-with st.expander("Current sentiment distribution", expanded=False):
-    # sentiment_chart = sentiment_dist.set_index("Sentiment")[["Count"]]
-    # st.bar_chart(sentiment_chart, height=260)
-    sentiment_table = sentiment_dist.copy()
-    sentiment_table["Share"] = (sentiment_table["Share"] * 100).map(lambda x: f"{x:.1f}%")
-    st.dataframe(sentiment_table, hide_index=True, use_container_width=True)
+if spot_checks_mode not in {"spot_checks", "distribution"}:
+    with st.expander("Current sentiment distribution", expanded=False):
+        sentiment_table = sentiment_dist.copy()
+        sentiment_table["Share"] = (sentiment_table["Share"] * 100).map(lambda x: f"{x:.1f}%")
+        st.dataframe(sentiment_table, hide_index=True, use_container_width=True)

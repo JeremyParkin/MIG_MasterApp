@@ -45,7 +45,7 @@ def format_compact_integer(num: float | int) -> str:
 
 
 st.title("Outlets")
-st.caption("Clean up outlet names, curate the final outlet list, and review output-ready insights in one place.")
+st.caption("Clean up outlet names, curate the final outlet list, and generate outlet insights.")
 
 if not st.session_state.get("standard_step", False):
     st.error("Please complete Basic Cleaning before trying this step.")
@@ -158,14 +158,32 @@ st.markdown(
 
 step1, step2, step3 = st.columns(3, gap="small")
 with step1:
-    if st.button("1. Cleanup", key="outlets_step_cleanup", use_container_width=True):
+    if st.button(
+        "1. Cleanup",
+        key="outlets_step_cleanup",
+        use_container_width=True,
+        type="primary" if st.session_state.outlets_section == "Cleanup" else "secondary",
+    ):
         st.session_state.outlets_section = "Cleanup"
+        st.rerun()
 with step2:
-    if st.button("2. Selection", key="outlets_step_selection", use_container_width=True):
+    if st.button(
+        "2. Selection",
+        key="outlets_step_selection",
+        use_container_width=True,
+        type="primary" if st.session_state.outlets_section == "Selection" else "secondary",
+    ):
         st.session_state.outlets_section = "Selection"
+        st.rerun()
 with step3:
-    if st.button("3. Insights", key="outlets_step_insights", use_container_width=True):
+    if st.button(
+        "3. Insights",
+        key="outlets_step_insights",
+        use_container_width=True,
+        type="primary" if st.session_state.outlets_section == "Insights" else "secondary",
+    ):
         st.session_state.outlets_section = "Insights"
+        st.rerun()
 
 st.markdown(
     '<div class="outlets-step-note">Work left to right: clean outlet names, save the final outlet list, then review chart/table and narrative outputs.</div>',

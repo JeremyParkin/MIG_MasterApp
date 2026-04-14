@@ -19,6 +19,7 @@ from processing.translation import (
 warnings.filterwarnings("ignore")
 
 st.title("Translation")
+st.caption("Translate non-English headlines and snippets so the rest of the workflow can be reviewed and summarized in English.")
 
 
 def display_non_english_records(df, title: str) -> None:

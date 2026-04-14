@@ -10,6 +10,7 @@ import streamlit as st
 
 
 st.title("Save & Load")
+st.caption("Save the current session to resume later, or load a previous session snapshot back into the app.")
 st.divider()
 
 

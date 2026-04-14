@@ -40,8 +40,7 @@ def build_pages() -> list:
         st.Page("pages/5-Translation.py", title="Translation", icon=":material/mediation:"),
         st.Page("pages/6-Top_Stories_Workflow.py", title="Top Stories", icon=":material/newspaper:"),
         st.Page("pages/8-Tagging.py", title="Tagging", icon=":material/sell:"),
-        st.Page("pages/9-AI_Sentiment.py", title="AI Sentiment", icon=":material/auto_awesome:"),
-        st.Page("pages/10-Spot_Checks.py", title="Spot Checks", icon=":material/fact_check:"),
+        st.Page("pages/9-AI_Sentiment.py", title="Sentiment", icon=":material/auto_awesome:"),
         st.Page("pages/11-Download.py", title="Download", icon=":material/download:"),
         st.Page("pages/12-Save_Load.py", title="Save & Load", icon=":material/save:"),
     ]

@@ -77,7 +77,7 @@ def format_compact_integer(num: float | int) -> str:
     return str(int(n)) if n.is_integer() else str(round(n))
 
 st.title("Authors")
-st.caption("Resolve missing authors, assign primary outlets, and curate final key authors in one place.")
+st.caption("Resolve missing authors, assign primary outlets, and curate final key authors and insights.")
 
 if not st.session_state.get("standard_step", False):
     st.error("Please complete Basic Cleaning before trying this step.")

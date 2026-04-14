@@ -30,10 +30,20 @@ st.markdown(
 
 step1, step2 = st.columns(2, gap="small")
 with step1:
-    if st.button("1. Selection", key="top_stories_workflow_step_selection", use_container_width=True):
+    if st.button(
+        "1. Selection",
+        key="top_stories_workflow_step_selection",
+        use_container_width=True,
+        type="primary" if st.session_state.top_stories_section == "Selection" else "secondary",
+    ):
         st.session_state.top_stories_section = "Selection"
 with step2:
-    if st.button("2. Summaries", key="top_stories_workflow_step_summaries", use_container_width=True):
+    if st.button(
+        "2. Summaries",
+        key="top_stories_workflow_step_summaries",
+        use_container_width=True,
+        type="primary" if st.session_state.top_stories_section == "Summaries" else "secondary",
+    ):
         st.session_state.top_stories_section = "Summaries"
 
 st.markdown(

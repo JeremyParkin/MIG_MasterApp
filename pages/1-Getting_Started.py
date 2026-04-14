@@ -17,6 +17,7 @@ from ui.charts import build_time_series_area_chart
 warnings.filterwarnings("ignore")
 
 st.title("Getting Started")
+st.caption("Upload an Agility export, normalize the file structure, and set the client/reporting context for the rest of the workflow.")
 
 init_getting_started_state()
 

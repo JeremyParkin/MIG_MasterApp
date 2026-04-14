@@ -24,6 +24,7 @@ from utils.formatting import format_number, NUMERIC_FORMAT_DICT
 warnings.filterwarnings("ignore")
 
 st.title("Basic Cleaning")
+st.caption("Standardize the raw export, remove duplicates, calculate effective reach, and group similar coverage into unique stories.")
 
 
 def ensure_basic_cleaning_state() -> None:

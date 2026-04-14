@@ -5,6 +5,7 @@ import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -42,6 +43,8 @@ warnings.filterwarnings("ignore")
 DEFAULT_TAGGING_MODEL = "gpt-5.4-nano"
 
 st.title("AI Tagging")
+st.caption("Prepare a grouped coverage sample, configure tag definitions, and apply AI tags back onto the dataset.")
+st.session_state.setdefault("tagging_section", "Setup")
 
 if not st.session_state.get("standard_step", False):
     st.error("Please complete Basic Cleaning before trying this step.")
@@ -100,10 +103,108 @@ def build_tag_distribution(df_tagging_unique: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def build_tag_distribution_chart(tag_dist: pd.DataFrame) -> alt.Chart:
+    working = tag_dist.copy()
+    working["Share Label"] = (working["Share"] * 100).map(lambda x: f"{x:.1f}%")
+
+    base = alt.Chart(working).encode(
+        y=alt.Y(
+            "Tag:N",
+            sort="-x",
+            axis=alt.Axis(title=None, labelLimit=240, labelPadding=10),
+        )
+    )
+
+    bars = base.mark_bar(cornerRadiusEnd=3, color="#636E95").encode(
+        x=alt.X("Count:Q", axis=alt.Axis(title=None, grid=True, tickMinStep=1)),
+        tooltip=[
+            "Tag",
+            alt.Tooltip("Count:Q", format=","),
+            alt.Tooltip("Share:Q", format=".1%", title="Share"),
+        ],
+    )
+
+    text = base.mark_text(
+        align="left",
+        baseline="middle",
+        dx=6,
+        color="#F8FAFC",
+        fontWeight=600,
+    ).encode(
+        x="Count:Q",
+        text="Share Label:N",
+    )
+
+    return (
+        (bars + text)
+        .properties(height=max(220, 38 * len(working)))
+        .configure_view(strokeWidth=0)
+        .configure_axis(
+            gridColor="rgba(148, 163, 184, 0.18)",
+            domain=False,
+            tickColor="rgba(148, 163, 184, 0.35)",
+            labelColor="#E5E7EB",
+            titleColor="#E5E7EB",
+        )
+    )
+
+
+st.markdown(
+    """
+    <style>
+    .tagging-step-note {
+        margin: 0.15rem 0 1rem 0;
+        color: rgba(250, 250, 250, 0.72);
+        font-size: 0.95rem;
+    }
+    div[data-testid="stButton"] button[kind="secondary"] {
+        min-height: 2.8rem;
+        font-weight: 600;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+step1, step2, step3 = st.columns(3, gap="small")
+with step1:
+    if st.button(
+        "1. Setup",
+        key="tagging_nav_setup",
+        use_container_width=True,
+        type="primary" if st.session_state.tagging_section == "Setup" else "secondary",
+    ):
+        st.session_state.tagging_section = "Setup"
+        st.rerun()
+with step2:
+    if st.button(
+        "2. Run",
+        key="tagging_nav_run",
+        use_container_width=True,
+        type="primary" if st.session_state.tagging_section == "Run" else "secondary",
+    ):
+        st.session_state.tagging_section = "Run"
+        st.rerun()
+with step3:
+    if st.button(
+        "3. Review",
+        key="tagging_nav_review",
+        use_container_width=True,
+        type="primary" if st.session_state.tagging_section == "Review" else "secondary",
+    ):
+        st.session_state.tagging_section = "Review"
+        st.rerun()
+
+st.markdown(
+    '<div class="tagging-step-note">Work left to right: prepare the tagging dataset, run AI tagging, then review the outputs and distributions.</div>',
+    unsafe_allow_html=True,
+)
+
+
 # =========================
 # STEP 1: DATASET PREP + CONFIG
 # =========================
-if not st.session_state.tagging_config_step:
+if st.session_state.tagging_section == "Setup":
     st.subheader("Step 1: Prepare Tagging Dataset & Configuration")
     st.caption("Sampling happens at the row level first, then the sampled rows are regrouped into unique stories.")
 
@@ -260,174 +361,225 @@ if not st.session_state.tagging_config_step:
         st.session_state.tag_definitions = tag_definitions
         st.session_state.tagging_mode = tagging_mode
         st.session_state.tagging_model = DEFAULT_TAGGING_MODEL
+        st.session_state.tagging_section = "Run"
 
         st.rerun()
 
+    if st.session_state.tagging_config_step:
+        st.info("A tagging dataset is already prepared. You can adjust the setup and prepare again, or move to Run.")
     st.stop()
 
 # =========================
 # STEP 2: RUN AI TAGGING
 # =========================
-st.subheader("Step 2: Run AI Tagging")
-
-top_col1, top_col2, top_col3, top_col4 = st.columns(4)
-with top_col1:
-    st.metric("Eligible mentions", f"{population_size:,}")
-with top_col2:
-    st.metric("Sample used", f"{len(st.session_state.df_tagging_rows):,}")
-with top_col3:
-    st.metric("Grouped stories", f"{len(st.session_state.df_tagging_unique):,}")
-with top_col4:
-    if st.button("Reset Tagging Dataset"):
-        reset_tagging_config_state(st.session_state)
-        st.rerun()
-
-config_col1, config_col2 = st.columns(2)
-with config_col1:
-    st.caption(f"Dataset mode: {_format_sample_mode(st.session_state.get('tagging_sample_mode', 'representative'))}")
-with config_col2:
-    st.caption(f"Tagging mode: {st.session_state.get('tagging_mode', 'Single best tag')}")
-
+if not st.session_state.tagging_config_step:
+    if st.session_state.tagging_section in {"Run", "Review"}:
+        st.info("Prepare the tagging dataset in Setup before running or reviewing AI tagging.")
+    st.stop()
 
 remaining_df = get_remaining_tagging_rows(st.session_state.df_tagging_unique)
 remaining_count = len(remaining_df)
 
-if remaining_count == 0:
-    row_limit = 0
-    st.info("No grouped stories remain to tag.")
-else:
-    default_batch_value = st.session_state.get("tagging_batch_size", DEFAULT_TAGGING_BATCH_SIZE)
-    default_batch_value = min(default_batch_value, remaining_count)
+if st.session_state.tagging_section == "Run":
+    st.subheader("Step 2: Run AI Tagging")
+    processed_count = len(st.session_state.df_tagging_unique) - remaining_count
 
-    row_limit = st.number_input(
-        "Batch size (0 for all remaining rows)",
-        min_value=0,
-        max_value=remaining_count,
-        value=default_batch_value,
-        step=1,
-        key="tagging_batch_size",
-    )
+    top_col1, top_col2, top_col3, top_col4, top_col5 = st.columns(5)
+    with top_col1:
+        st.metric("Eligible mentions", f"{population_size:,}")
+    with top_col2:
+        st.metric("Sample used", f"{len(st.session_state.df_tagging_rows):,}")
+    with top_col3:
+        st.metric("Grouped stories", f"{len(st.session_state.df_tagging_unique):,}")
+    with top_col4:
+        st.metric("Processed stories", f"{processed_count:,}")
+    with top_col5:
+        st.metric("Remaining stories", f"{remaining_count:,}")
 
-if row_limit > 0:
-    batch_df = remaining_df.iloc[:row_limit].copy()
-else:
-    batch_df = remaining_df.copy()
+    reset_col1, reset_col2 = st.columns([4, 1])
+    with reset_col2:
+        if st.button("Reset Tagging Dataset"):
+            reset_tagging_config_state(st.session_state)
+            st.session_state.tagging_section = "Setup"
+            st.rerun()
 
-st.write(f"Selected grouped stories for analysis: {len(batch_df):,}")
+    config_col1, config_col2 = st.columns(2)
+    with config_col1:
+        st.caption(f"Dataset mode: {_format_sample_mode(st.session_state.get('tagging_sample_mode', 'representative'))}")
+    with config_col2:
+        st.caption(f"Tagging mode: {st.session_state.get('tagging_mode', 'Single best tag')}")
 
-apply_clicked = st.button("Apply Tags", type="primary", disabled=(len(batch_df) == 0))
-reset_results_clicked = st.button("Reset Processed Rows")
+    if remaining_count == 0:
+        row_limit = 0
+        st.info("No grouped stories remain to tag.")
+    else:
+        default_batch_value = st.session_state.get("tagging_batch_size", DEFAULT_TAGGING_BATCH_SIZE)
+        default_batch_value = min(default_batch_value, remaining_count)
 
-if reset_results_clicked:
-    unique, grouped = reset_ai_tagging_results(
-        st.session_state.df_tagging_unique,
-        st.session_state.df_tagging_grouped_rows,
-    )
-    st.session_state.df_tagging_unique = unique
-    st.session_state.df_tagging_grouped_rows = grouped
-    st.session_state.df_tagging_rows = st.session_state.df_tagging_grouped_rows.copy()
-    st.success("Reset AI tagging results.")
-    st.rerun()
+        row_limit = st.number_input(
+            "Batch size (0 for all remaining rows)",
+            min_value=0,
+            max_value=remaining_count,
+            value=default_batch_value,
+            step=1,
+            key="tagging_batch_size",
+        )
 
-if apply_clicked:
-    tag_definitions = st.session_state.get("tag_definitions", [])
-    tagging_mode = st.session_state.get("tagging_mode", "Single best tag")
-    model = st.session_state.get("tagging_model", DEFAULT_TAGGING_MODEL)
+    if row_limit > 0:
+        batch_df = remaining_df.iloc[:row_limit].copy()
+    else:
+        batch_df = remaining_df.copy()
 
-    if len(tag_definitions) == 0:
-        st.error("No tag definitions are saved. Please reset and prepare the tagging dataset again.")
-        st.stop()
+    st.write(f"Selected grouped stories for analysis: {len(batch_df):,}")
 
-    progress_bar = st.progress(0)
-    total_in = 0
-    total_out = 0
-    errors = []
-    completed = 0
-    total = len(batch_df)
-    start_time = time.time()
+    apply_clicked = st.button("Apply Tags", type="primary", disabled=(len(batch_df) == 0))
+    reset_results_clicked = st.button("Reset Processed Rows")
 
-    rows_for_workers = [(idx, row.to_dict()) for idx, row in batch_df.iterrows()]
+    if reset_results_clicked:
+        unique, grouped = reset_ai_tagging_results(
+            st.session_state.df_tagging_unique,
+            st.session_state.df_tagging_grouped_rows,
+        )
+        st.session_state.df_tagging_unique = unique
+        st.session_state.df_tagging_grouped_rows = grouped
+        st.session_state.df_tagging_rows = st.session_state.df_tagging_grouped_rows.copy()
+        st.success("Reset AI tagging results.")
+        st.rerun()
 
-    with ThreadPoolExecutor(max_workers=DEFAULT_TAGGING_MAX_WORKERS) as executor:
-        future_map = {
-            executor.submit(
-                analyze_story_worker,
-                row_tuple,
-                tag_definitions,
-                tagging_mode,
-                model,
-                st.secrets["key"],
-            ): row_tuple[0]
-            for row_tuple in rows_for_workers
+    if apply_clicked:
+        tag_definitions = st.session_state.get("tag_definitions", [])
+        tagging_mode = st.session_state.get("tagging_mode", "Single best tag")
+        model = st.session_state.get("tagging_model", DEFAULT_TAGGING_MODEL)
+
+        if len(tag_definitions) == 0:
+            st.error("No tag definitions are saved. Please reset and prepare the tagging dataset again.")
+            st.stop()
+
+        progress_bar = st.progress(0)
+        total_in = 0
+        total_out = 0
+        errors = []
+        completed = 0
+        total = len(batch_df)
+        start_time = time.time()
+
+        rows_for_workers = [(idx, row.to_dict()) for idx, row in batch_df.iterrows()]
+
+        with ThreadPoolExecutor(max_workers=DEFAULT_TAGGING_MAX_WORKERS) as executor:
+            future_map = {
+                executor.submit(
+                    analyze_story_worker,
+                    row_tuple,
+                    tag_definitions,
+                    tagging_mode,
+                    model,
+                    st.secrets["key"],
+                ): row_tuple[0]
+                for row_tuple in rows_for_workers
+            }
+
+            for future in as_completed(future_map):
+                completed += 1
+
+                try:
+                    idx, result, error_message, in_tok, out_tok = future.result()
+                    total_in += int(in_tok or 0)
+                    total_out += int(out_tok or 0)
+
+                    original_index = batch_df.loc[idx, "index"]
+
+                    if error_message:
+                        errors.append(f"Story {original_index + 1}: {error_message}")
+                    else:
+                        st.session_state.df_tagging_unique = apply_tagging_result_to_unique_df(
+                            st.session_state.df_tagging_unique,
+                            original_index=original_index,
+                            result=result,
+                            tagging_mode=tagging_mode,
+                            tag_definitions=tag_definitions,
+                        )
+
+                except Exception as e:
+                    errors.append(str(e))
+
+                progress_bar.progress(completed / max(1, total))
+
+        st.session_state.df_tagging_grouped_rows = cascade_tags_to_grouped_rows(
+            st.session_state.df_tagging_grouped_rows,
+            st.session_state.df_tagging_unique,
+        )
+
+        st.session_state.df_tagging_rows = st.session_state.df_tagging_grouped_rows.copy()
+
+        apply_usage_to_session(total_in, total_out, model)
+
+        batch_cost = estimate_cost_usd(total_in, total_out, model)
+        session_cost = get_api_cost_usd()
+
+        st.session_state["__last_tagging_batch_summary__"] = {
+            "done": total,
+            "elapsed": time.time() - start_time,
+            "in_tok": total_in,
+            "out_tok": total_out,
+            "batch_cost": batch_cost,
+            "session_cost": session_cost,
+            "errors": errors,
         }
+        st.session_state.tagging_section = "Run"
+        st.rerun()
 
-        for future in as_completed(future_map):
-            completed += 1
+    st.stop()
 
-            try:
-                idx, result, error_message, in_tok, out_tok = future.result()
-                total_in += int(in_tok or 0)
-                total_out += int(out_tok or 0)
+# =========================
+# STEP 3: REVIEW OUTPUTS
+# =========================
+st.subheader("Step 3: Review Tagging Outputs")
+st.caption("Inspect the grouped tagging dataset, current tag distribution, and the saved tag definitions.")
 
-                original_index = batch_df.loc[idx, "index"]
+review_col1, review_col2, review_col3 = st.columns(3)
+with review_col1:
+    st.metric("Grouped stories", f"{len(st.session_state.df_tagging_unique):,}")
+with review_col2:
+    tagged_df = get_remaining_tagging_rows(st.session_state.df_tagging_unique)
+    processed_count = len(st.session_state.df_tagging_unique) - len(tagged_df)
+    st.metric("Processed stories", f"{processed_count:,}")
+with review_col3:
+    st.metric("Remaining stories", f"{len(tagged_df):,}")
 
-                if error_message:
-                    errors.append(f"Story {original_index + 1}: {error_message}")
-                else:
-                    st.session_state.df_tagging_unique = apply_tagging_result_to_unique_df(
-                        st.session_state.df_tagging_unique,
-                        original_index=original_index,
-                        result=result,
-                        tagging_mode=tagging_mode,
-                        tag_definitions=tag_definitions,
-                    )
+review_tab1, review_tab2, review_tab3 = st.tabs(["Dataset", "Distribution", "Tag Guide"])
 
-            except Exception as e:
-                errors.append(str(e))
-
-            progress_bar.progress(completed / max(1, total))
-
-    st.session_state.df_tagging_grouped_rows = cascade_tags_to_grouped_rows(
-        st.session_state.df_tagging_grouped_rows,
-        st.session_state.df_tagging_unique,
-    )
-
-    # keep row-level sample export dataframe in sync too
-    st.session_state.df_tagging_rows = st.session_state.df_tagging_grouped_rows.copy()
-
-    apply_usage_to_session(total_in, total_out, model)
-
-    batch_cost = estimate_cost_usd(total_in, total_out, model)
-    session_cost = get_api_cost_usd()
-
-    st.session_state["__last_tagging_batch_summary__"] = {
-        "done": total,
-        "elapsed": time.time() - start_time,
-        "in_tok": total_in,
-        "out_tok": total_out,
-        "batch_cost": batch_cost,
-        "session_cost": session_cost,
-        "errors": errors,
-    }
-
-    st.rerun()
-
-with st.expander("Grouped tagging dataset preview", expanded=False):
+with review_tab1:
     st.dataframe(
         st.session_state.df_tagging_unique.head(200),
         use_container_width=True,
         hide_index=True,
     )
 
-tag_dist = build_tag_distribution(st.session_state.df_tagging_unique)
-with st.expander("Current AI tag distribution", expanded=False):
+with review_tab2:
+    tag_dist = build_tag_distribution(st.session_state.df_tagging_unique)
     if tag_dist.empty:
         st.caption("No AI tags have been assigned yet.")
     else:
-        # tag_chart = tag_dist.head(12).set_index("Tag")[["Count"]]
-        # st.bar_chart(tag_chart, height=280)
-        tag_table = tag_dist.copy()
-        tag_table["Share"] = (tag_table["Share"] * 100).map(lambda x: f"{x:.1f}%")
-        st.dataframe(tag_table, use_container_width=True, hide_index=True)
-with st.expander("Tag definitions", expanded=False):
+        include_other = st.toggle(
+            "Include Other in percentages",
+            value=True,
+            key="tagging_distribution_include_other",
+        )
+        filtered_dist = tag_dist.copy()
+        if not include_other:
+            filtered_dist = filtered_dist[
+                filtered_dist["Tag"].fillna("").astype(str).str.strip().str.lower() != "other"
+            ].copy()
+            total = int(filtered_dist["Count"].sum())
+            filtered_dist["Share"] = filtered_dist["Count"] / total if total > 0 else 0.0
+
+        dist_col1, dist_col2 = st.columns([1.35, 1], gap="large")
+        with dist_col1:
+            st.altair_chart(build_tag_distribution_chart(filtered_dist), use_container_width=True)
+        with dist_col2:
+            tag_table = filtered_dist.copy()
+            tag_table["Share"] = (tag_table["Share"] * 100).map(lambda x: f"{x:.1f}%")
+            st.dataframe(tag_table, use_container_width=True, hide_index=True)
+
+with review_tab3:
     st.code(st.session_state.get("tags_text", ""))

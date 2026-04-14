@@ -13,6 +13,7 @@ from processing.notebooklm_exports import build_notebooklm_zip
 warnings.filterwarnings("ignore")
 
 st.title("Download")
+st.caption("Build and download the cleaned workbook and NotebookLM-ready bundle from the current session state.")
 
 if not st.session_state.get("standard_step", False):
     st.error("Please complete Basic Cleaning before trying this step.")
