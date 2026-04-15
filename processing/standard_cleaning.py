@@ -687,7 +687,9 @@ def dedupe_social(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     working = df.reset_index(drop=True).copy()
     working["_original_order"] = np.arange(len(working))
     working["_date_time"] = pd.to_datetime(working["Date"], errors="coerce") if "Date" in working.columns else pd.NaT
-    working["_text_norm"] = normalize_snippet_for_compare(working["Snippet"]) if "Snippet" in working.columns else ""
+    working["_text_norm"] = (
+        working["Snippet"].apply(normalize_snippet_for_compare) if "Snippet" in working.columns else ""
+    )
 
     duplicate_indexes = set()
 
