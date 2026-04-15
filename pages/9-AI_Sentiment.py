@@ -9,7 +9,6 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from streamlit_tags import st_tags
-from ui.spot_checks_view import render_spot_checks_page
 
 from processing.sentiment_config import (
     init_sentiment_config_state,
@@ -67,6 +66,8 @@ if st.session_state.pop("sentiment_scroll_to_top", False):
 if not st.session_state.get("standard_step", False):
     st.error("Please complete Basic Cleaning before trying this step.")
     st.stop()
+
+from ui.spot_checks_view import render_spot_checks_page
 
 init_sentiment_config_state(st.session_state)
 init_ai_sentiment_state(st.session_state)
