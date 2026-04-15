@@ -1,6 +1,7 @@
 # 8-Tagging.py
 from __future__ import annotations
 
+import html
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -28,6 +29,7 @@ from processing.ai_tagging import (
     apply_tagging_result_to_unique_df,
     cascade_tags_to_grouped_rows,
     reset_ai_tagging_results,
+    generate_tag_observations,
     DEFAULT_TAGGING_BATCH_SIZE,
     DEFAULT_TAGGING_MAX_WORKERS,
 )
@@ -361,6 +363,7 @@ if st.session_state.tagging_section == "Setup":
         st.session_state.tag_definitions = tag_definitions
         st.session_state.tagging_mode = tagging_mode
         st.session_state.tagging_model = DEFAULT_TAGGING_MODEL
+        st.session_state.tagging_observation_output = None
         st.session_state.tagging_section = "Run"
 
         st.rerun()
@@ -443,6 +446,7 @@ if st.session_state.tagging_section == "Run":
         st.session_state.df_tagging_unique = unique
         st.session_state.df_tagging_grouped_rows = grouped
         st.session_state.df_tagging_rows = st.session_state.df_tagging_grouped_rows.copy()
+        st.session_state.tagging_observation_output = None
         st.success("Reset AI tagging results.")
         st.rerun()
 
@@ -510,6 +514,7 @@ if st.session_state.tagging_section == "Run":
         )
 
         st.session_state.df_tagging_rows = st.session_state.df_tagging_grouped_rows.copy()
+        st.session_state.tagging_observation_output = None
 
         apply_usage_to_session(total_in, total_out, model)
 
@@ -534,7 +539,7 @@ if st.session_state.tagging_section == "Run":
 # STEP 3: REVIEW OUTPUTS
 # =========================
 st.subheader("Step 3: Review Tagging Outputs")
-st.caption("Inspect the grouped tagging dataset, current tag distribution, and the saved tag definitions.")
+st.caption("Review the current tag distribution, generate report-ready tag observations, and inspect the grouped dataset when needed.")
 
 review_col1, review_col2, review_col3 = st.columns(3)
 with review_col1:
@@ -546,40 +551,142 @@ with review_col2:
 with review_col3:
     st.metric("Remaining stories", f"{len(tagged_df):,}")
 
-review_tab1, review_tab2, review_tab3 = st.tabs(["Dataset", "Distribution", "Tag Guide"])
+st.subheader("Distribution")
+tag_dist = build_tag_distribution(st.session_state.df_tagging_unique)
+include_other = st.toggle(
+    "Include Other in percentages",
+    value=True,
+    key="tagging_distribution_include_other",
+)
 
-with review_tab1:
+if tag_dist.empty:
+    st.caption("No AI tags have been assigned yet.")
+    filtered_dist = tag_dist.copy()
+else:
+    filtered_dist = tag_dist.copy()
+    if not include_other:
+        filtered_dist = filtered_dist[
+            filtered_dist["Tag"].fillna("").astype(str).str.strip().str.lower() != "other"
+        ].copy()
+        total = int(filtered_dist["Count"].sum())
+        filtered_dist["Share"] = filtered_dist["Count"] / total if total > 0 else 0.0
+
+    dist_col1, dist_col2 = st.columns([1.35, 1], gap="large")
+    with dist_col1:
+        st.altair_chart(build_tag_distribution_chart(filtered_dist), use_container_width=True)
+    with dist_col2:
+        tag_table = filtered_dist.copy()
+        tag_table["Share"] = (tag_table["Share"] * 100).map(lambda x: f"{x:.1f}%")
+        st.dataframe(tag_table, use_container_width=True, hide_index=True)
+
+st.divider()
+st.subheader("Tag Observations")
+obs_button_col, obs_blurb_col = st.columns([1.2, 3], gap="medium")
+with obs_button_col:
+    if st.button("Generate tag observations", type="primary", key="generate_tag_observations"):
+        try:
+            observation_output, _, _ = generate_tag_observations(
+                df_tagging_unique=st.session_state.df_tagging_unique,
+                client_name=client_name,
+                include_other=include_other,
+                api_key=st.secrets["key"],
+            )
+            st.session_state.tagging_observation_output = observation_output
+        except Exception as e:
+            st.session_state.tagging_observation_output = {"_error": str(e)}
+        st.rerun()
+with obs_blurb_col:
+    st.caption(
+        "Uses finalized AI tags plus representative grouped stories from each tag bucket. The examples are weighted toward the highest-volume and most syndicated coverage."
+    )
+
+meta_col1, meta_col2, meta_col3, meta_col4, meta_col5 = st.columns(5, gap="small")
+with meta_col1:
+    show_example_outlet = st.checkbox("Show outlet", value=True, key="tagging_obs_show_outlet")
+with meta_col2:
+    show_example_type = st.checkbox("Show media type", value=True, key="tagging_obs_show_media_type")
+with meta_col3:
+    show_example_mentions = st.checkbox("Show mentions", value=True, key="tagging_obs_show_mentions")
+with meta_col4:
+    show_example_impressions = st.checkbox("Show impressions", value=True, key="tagging_obs_show_impressions")
+with meta_col5:
+    show_example_effective_reach = st.checkbox("Show effective reach", value=True, key="tagging_obs_show_effective_reach")
+
+observation_output = st.session_state.get("tagging_observation_output")
+if observation_output and observation_output.get("_error"):
+    st.error(f"Could not generate tag observations: {observation_output['_error']}")
+elif observation_output:
+    overall_observation = str(observation_output.get("overall_observation", "") or "").strip()
+    if overall_observation:
+        st.markdown("### Overall Observations")
+        st.write(overall_observation)
+
+    sections = observation_output.get("tag_sections", [])
+    examples_by_tag = observation_output.get("_examples_by_tag", {})
+    for section in sections:
+        tag_label = str(section.get("tag", "") or "").strip()
+        observation_text = str(section.get("observation", "") or "").strip()
+        if not tag_label:
+            continue
+        st.markdown(f"### {html.escape(tag_label)}", unsafe_allow_html=True)
+        if observation_text:
+            st.write(observation_text)
+
+        tag_examples = examples_by_tag.get(tag_label, [])
+        if tag_examples:
+            st.caption("Representative examples")
+            example_blocks = []
+            for item in tag_examples[:5]:
+                headline = str(item.get("headline", "") or "").strip()
+                url = str(item.get("url", "") or "").strip()
+                outlet = str(item.get("outlet", "") or "").strip()
+                example_type = str(item.get("example_type", "") or "").strip()
+                mentions = int(item.get("mentions", 0) or 0)
+                impressions = int(item.get("impressions", 0) or 0)
+                effective_reach = int(item.get("effective_reach", 0) or 0)
+                if not headline:
+                    continue
+
+                meta_parts = []
+                if show_example_outlet and outlet:
+                    meta_parts.append(outlet)
+                if show_example_type and example_type:
+                    meta_parts.append(example_type)
+
+                metric_parts = []
+                if show_example_mentions:
+                    metric_parts.append(f"Mentions: {mentions:,}")
+                if show_example_impressions:
+                    metric_parts.append(f"Impressions: {impressions:,}")
+                if show_example_effective_reach:
+                    metric_parts.append(f"Effective Reach: {effective_reach:,}")
+
+                meta_line = " | ".join(meta_parts + metric_parts)
+                headline_html = (
+                    f'<a href="{html.escape(url, quote=True)}" target="_blank">{html.escape(headline)}</a>'
+                    if url else html.escape(headline)
+                )
+                metrics_html = (
+                    f'<div style="font-size:0.84rem; opacity:0.72; letter-spacing:0.01em; margin-top:0.12rem;">{html.escape(meta_line)}</div>'
+                    if meta_line else ""
+                )
+                example_blocks.append(
+                    '<div style="margin:0 0 0.7rem 0;">'
+                    f'<div style="line-height:1.35;">{headline_html}</div>'
+                    f"{metrics_html}"
+                    "</div>"
+                )
+            if example_blocks:
+                st.markdown("".join(example_blocks), unsafe_allow_html=True)
+else:
+    st.info("Generate observations to add narrative context to the current tag distribution.")
+
+with st.expander("Grouped tagging dataset preview", expanded=False):
     st.dataframe(
         st.session_state.df_tagging_unique.head(200),
         use_container_width=True,
         hide_index=True,
     )
 
-with review_tab2:
-    tag_dist = build_tag_distribution(st.session_state.df_tagging_unique)
-    if tag_dist.empty:
-        st.caption("No AI tags have been assigned yet.")
-    else:
-        include_other = st.toggle(
-            "Include Other in percentages",
-            value=True,
-            key="tagging_distribution_include_other",
-        )
-        filtered_dist = tag_dist.copy()
-        if not include_other:
-            filtered_dist = filtered_dist[
-                filtered_dist["Tag"].fillna("").astype(str).str.strip().str.lower() != "other"
-            ].copy()
-            total = int(filtered_dist["Count"].sum())
-            filtered_dist["Share"] = filtered_dist["Count"] / total if total > 0 else 0.0
-
-        dist_col1, dist_col2 = st.columns([1.35, 1], gap="large")
-        with dist_col1:
-            st.altair_chart(build_tag_distribution_chart(filtered_dist), use_container_width=True)
-        with dist_col2:
-            tag_table = filtered_dist.copy()
-            tag_table["Share"] = (tag_table["Share"] * 100).map(lambda x: f"{x:.1f}%")
-            st.dataframe(tag_table, use_container_width=True, hide_index=True)
-
-with review_tab3:
+with st.expander("Tag guide", expanded=False):
     st.code(st.session_state.get("tags_text", ""))
