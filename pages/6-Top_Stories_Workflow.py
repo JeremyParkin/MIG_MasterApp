@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import streamlit as st
-from ui.top_stories_selection_view import render_top_stories_selection
-from ui.top_story_summaries_view import render_top_story_summaries
-
 
 st.title("Top Stories")
 st.caption("Build the saved top-stories list, then generate summary outputs in one combined workflow.")
+
+if not st.session_state.get("standard_step", False):
+    st.error("Please complete Basic Cleaning before trying this step.")
+    st.stop()
+
+from ui.top_stories_selection_view import render_top_stories_selection
+from ui.top_story_summaries_view import render_top_story_summaries
 
 st.session_state.setdefault("top_stories_section", "Selection")
 
