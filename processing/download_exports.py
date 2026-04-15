@@ -32,6 +32,7 @@ def explode_tags(df: pd.DataFrame) -> pd.DataFrame:
 
     tags = out["Tags"].fillna("").astype(str).str.strip()
     tags = tags.replace({"nan": "", "None": ""})
+    tags = tags.str.replace(r"\s*,\s*", ",", regex=True)
     out["Tags"] = tags
 
     cleaned_tag_lists = out["Tags"].apply(
