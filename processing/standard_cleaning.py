@@ -672,6 +672,106 @@ def dedupe_traditional(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     return cleaned_df, dupes_df
 
 
+def dedupe_social(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Social dedupe is intentionally conservative and only removes obvious accidental duplicates:
+    1. same normalized Type + URL
+    2. same normalized Type + exact normalized text + exact timestamp
+    3. same normalized Type + exact normalized text + within 60 seconds
+    """
+    df = df.copy()
+
+    if df.empty or "Type" not in df.columns:
+        return df.copy(), pd.DataFrame()
+
+    working = df.reset_index(drop=True).copy()
+    working["_original_order"] = np.arange(len(working))
+    working["_date_time"] = pd.to_datetime(working["Date"], errors="coerce") if "Date" in working.columns else pd.NaT
+    working["_text_norm"] = normalize_snippet_for_compare(working["Snippet"]) if "Snippet" in working.columns else ""
+
+    duplicate_indexes = set()
+
+    url_valid_mask = has_nonblank_value(working["Type"])
+    if "URL" in working.columns:
+        url_valid_mask = url_valid_mask & has_nonblank_value(working["URL"])
+        url_working = working[url_valid_mask].copy()
+        if not url_working.empty:
+            url_working["_url_norm"] = (
+                url_working["URL"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .str.lower()
+                .str.replace("http:", "https:", regex=False)
+            )
+            url_working["_social_url_key"] = url_working["Type"].astype(str).str.strip() + "||" + url_working["_url_norm"]
+            sort_cols = [c for c in ["_social_url_key", "Impressions", "_date_time", "_original_order"] if c in url_working.columns]
+            ascending = [True if col != "Impressions" else False for col in sort_cols]
+            url_working = url_working.sort_values(sort_cols, ascending=ascending)
+            duplicate_indexes.update(url_working[url_working["_social_url_key"].duplicated(keep="first")].index.tolist())
+
+    remaining = working.drop(index=list(duplicate_indexes)).copy() if duplicate_indexes else working.copy()
+    exact_required_mask = (
+        has_nonblank_value(remaining["Type"])
+        & has_nonblank_value(remaining["_text_norm"])
+        & remaining["_date_time"].notna()
+    )
+    exact_working = remaining[exact_required_mask].copy()
+
+    if not exact_working.empty:
+        exact_working["_exact_social_key"] = (
+            exact_working["Type"].astype(str).str.strip()
+            + "||"
+            + exact_working["_text_norm"].astype(str)
+            + "||"
+            + exact_working["_date_time"].astype(str)
+        )
+        sort_cols = [c for c in ["_exact_social_key", "Impressions", "_original_order"] if c in exact_working.columns]
+        ascending = [True if col != "Impressions" else False for col in sort_cols]
+        exact_working = exact_working.sort_values(sort_cols, ascending=ascending)
+        duplicate_indexes.update(exact_working[exact_working["_exact_social_key"].duplicated(keep="first")].index.tolist())
+
+    remaining = working.drop(index=list(duplicate_indexes)).copy() if duplicate_indexes else working.copy()
+    window_required_mask = (
+        has_nonblank_value(remaining["Type"])
+        & has_nonblank_value(remaining["_text_norm"])
+        & remaining["_date_time"].notna()
+    )
+    window_working = remaining[window_required_mask].copy()
+
+    for _, group in window_working.groupby(["Type", "_text_norm"], dropna=False):
+        if len(group) < 2:
+            continue
+        group = group.sort_values(["_date_time", "_original_order"])
+        clusters = _cluster_time_proximate_indices(group, "_date_time")
+        for cluster in clusters:
+            if len(cluster) <= 1:
+                continue
+            component_rows = window_working.loc[cluster].copy()
+            keep_index = choose_best_row_index(component_rows)
+            duplicate_indexes.update(set(cluster) - {keep_index})
+
+    if duplicate_indexes:
+        social_dupes = working.loc[list(duplicate_indexes)].copy()
+        cleaned_social = working.drop(index=list(duplicate_indexes)).copy()
+    else:
+        social_dupes = pd.DataFrame()
+        cleaned_social = working.copy()
+
+    helper_cols = [
+        "_original_order",
+        "_date_time",
+        "_text_norm",
+        "_url_norm",
+        "_social_url_key",
+        "_exact_social_key",
+    ]
+    cleaned_social.drop(columns=helper_cols, inplace=True, errors="ignore")
+    social_dupes.drop(columns=helper_cols, inplace=True, errors="ignore")
+
+    return cleaned_social, social_dupes
+
+
 def extract_relevant_text(snippet: str) -> str:
     words = str(snippet or "").split()
     if len(words) > 250:
@@ -697,6 +797,8 @@ def run_standard_cleaning(
 
     if drop_dupes:
         df_traditional, df_dupes = dedupe_traditional(df_traditional)
+        df_social, social_dupes = dedupe_social(df_social)
+        df_dupes = pd.concat([df_dupes, social_dupes], ignore_index=True).reset_index(drop=True)
     else:
         df_dupes = pd.DataFrame()
 
