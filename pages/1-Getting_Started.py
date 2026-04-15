@@ -46,6 +46,7 @@ if not st.session_state.upload_step:
 
     if uploaded_file is not None:
         st.session_state.df_untouched = read_uploaded_file(uploaded_file)
+        st.session_state.uploaded_filename = uploaded_file.name
 
     submitted = st.button("Submit", type="primary")
 
@@ -90,7 +91,8 @@ if not st.session_state.upload_step:
 # Post-upload view
 # ----------------------------
 if st.session_state.upload_step:
-    st.success("File uploaded.")
+    uploaded_filename = str(st.session_state.get("uploaded_filename", "") or "").strip()
+    st.success(f"File uploaded: {uploaded_filename}" if uploaded_filename else "File uploaded.")
 
     if st.button("Start Over?"):
         clear_all_session_state()
@@ -139,13 +141,19 @@ if st.session_state.upload_step:
     with col3:
         st.subheader("Top Outlets")
         if "Outlet" in df_display.columns:
-            original_top_outlets = top_x_by_mentions(df_display, "Outlet")
-            st.dataframe(
-                original_top_outlets,
-                use_container_width=True,
-                hide_index=True
-            )
-            # st.write(original_top_outlets)
+            outlets_df = df_display.copy()
+            outlets_df["Outlet"] = outlets_df["Outlet"].fillna("").astype(str).str.strip()
+            outlets_df = outlets_df[outlets_df["Outlet"] != ""].copy()
+
+            if not outlets_df.empty:
+                original_top_outlets = top_x_by_mentions(outlets_df, "Outlet")
+                st.dataframe(
+                    original_top_outlets,
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("No non-blank outlets available.")
         else:
             st.info("No Outlet column available.")
 

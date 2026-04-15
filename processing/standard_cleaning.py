@@ -676,8 +676,7 @@ def dedupe_social(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Social dedupe is intentionally conservative and only removes obvious accidental duplicates:
     1. same normalized Type + URL
-    2. same normalized Type + exact normalized text + exact timestamp
-    3. same normalized Type + exact normalized text + within 60 seconds
+    2. same normalized Type + same Author + exact normalized text + exact timestamp
     """
     df = df.copy()
 
@@ -689,6 +688,9 @@ def dedupe_social(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     working["_date_time"] = pd.to_datetime(working["Date"], errors="coerce") if "Date" in working.columns else pd.NaT
     working["_text_norm"] = (
         working["Snippet"].apply(normalize_snippet_for_compare) if "Snippet" in working.columns else ""
+    )
+    working["_author_norm"] = (
+        working["Author"].fillna("").astype(str).str.strip() if "Author" in working.columns else ""
     )
 
     duplicate_indexes = set()
@@ -715,6 +717,7 @@ def dedupe_social(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     remaining = working.drop(index=list(duplicate_indexes)).copy() if duplicate_indexes else working.copy()
     exact_required_mask = (
         has_nonblank_value(remaining["Type"])
+        & has_nonblank_value(remaining["_author_norm"])
         & has_nonblank_value(remaining["_text_norm"])
         & remaining["_date_time"].notna()
     )
@@ -724,6 +727,8 @@ def dedupe_social(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         exact_working["_exact_social_key"] = (
             exact_working["Type"].astype(str).str.strip()
             + "||"
+            + exact_working["_author_norm"].astype(str)
+            + "||"
             + exact_working["_text_norm"].astype(str)
             + "||"
             + exact_working["_date_time"].astype(str)
@@ -732,26 +737,6 @@ def dedupe_social(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         ascending = [True if col != "Impressions" else False for col in sort_cols]
         exact_working = exact_working.sort_values(sort_cols, ascending=ascending)
         duplicate_indexes.update(exact_working[exact_working["_exact_social_key"].duplicated(keep="first")].index.tolist())
-
-    remaining = working.drop(index=list(duplicate_indexes)).copy() if duplicate_indexes else working.copy()
-    window_required_mask = (
-        has_nonblank_value(remaining["Type"])
-        & has_nonblank_value(remaining["_text_norm"])
-        & remaining["_date_time"].notna()
-    )
-    window_working = remaining[window_required_mask].copy()
-
-    for _, group in window_working.groupby(["Type", "_text_norm"], dropna=False):
-        if len(group) < 2:
-            continue
-        group = group.sort_values(["_date_time", "_original_order"])
-        clusters = _cluster_time_proximate_indices(group, "_date_time")
-        for cluster in clusters:
-            if len(cluster) <= 1:
-                continue
-            component_rows = window_working.loc[cluster].copy()
-            keep_index = choose_best_row_index(component_rows)
-            duplicate_indexes.update(set(cluster) - {keep_index})
 
     if duplicate_indexes:
         social_dupes = working.loc[list(duplicate_indexes)].copy()
@@ -764,6 +749,7 @@ def dedupe_social(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         "_original_order",
         "_date_time",
         "_text_norm",
+        "_author_norm",
         "_url_norm",
         "_social_url_key",
         "_exact_social_key",
