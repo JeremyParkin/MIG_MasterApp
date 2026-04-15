@@ -8,10 +8,11 @@ from typing import Any
 import pandas as pd
 from openai import OpenAI
 
-from utils.api_meter import extract_usage_tokens
+from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
 DEFAULT_SENTIMENT_MODEL = "gpt-5.4-nano"
+DEFAULT_SENTIMENT_OBSERVATION_MODEL = "gpt-5.4-mini"
 DEFAULT_SENTIMENT_BATCH_SIZE = 25
 DEFAULT_SENTIMENT_MAX_WORKERS = 8
 MAX_RETRIES = 2
@@ -310,8 +311,8 @@ def build_sentiment_distribution(df_unique: pd.DataFrame, sentiment_type: str) -
             "NOT RELEVANT",
         ]
 
-    assigned = df_unique.get("Assigned Sentiment", pd.Series(index=df_unique.index, dtype="object")).fillna("").astype(str).str.strip()
-    ai = df_unique.get("AI Sentiment", pd.Series(index=df_unique.index, dtype="object")).fillna("").astype(str).str.strip()
+    assigned = _get_text_series(df_unique, "Assigned Sentiment")
+    ai = _get_text_series(df_unique, "AI Sentiment")
 
     final = assigned.where(assigned != "", ai)
     final = final.where(final != "", "UNASSIGNED").str.upper()
@@ -323,3 +324,218 @@ def build_sentiment_distribution(df_unique: pd.DataFrame, sentiment_type: str) -
     total = int(out["Count"].sum())
     out["Share"] = out["Count"] / total if total > 0 else 0
     return out
+
+
+def _get_text_series(df: pd.DataFrame, column_name: str) -> pd.Series:
+    if column_name not in df.columns:
+        return pd.Series(index=df.index, dtype="object")
+
+    values = df[column_name]
+    if isinstance(values, pd.DataFrame):
+        values = values.iloc[:, 0]
+
+    return values.fillna("").astype(str).str.strip()
+
+
+def build_final_sentiment_series(df_unique: pd.DataFrame) -> pd.Series:
+    assigned = _get_text_series(df_unique, "Assigned Sentiment")
+    ai = _get_text_series(df_unique, "AI Sentiment")
+    final = assigned.where(assigned != "", ai)
+    return final.where(final != "", pd.NA).astype("string").str.upper()
+
+
+def _truncate_text(text: str, limit: int = 420) -> str:
+    text = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
+def build_sentiment_observation_payload(
+    df_unique: pd.DataFrame,
+    df_grouped_rows: pd.DataFrame | None,
+    sentiment_type: str,
+    include_not_relevant: bool,
+    per_sentiment_limit: int = 6,
+) -> dict[str, Any]:
+    working = df_unique.copy()
+    working["Final Sentiment"] = build_final_sentiment_series(working)
+    working = working[working["Final Sentiment"].notna()].copy()
+
+    if not include_not_relevant:
+        working = working[working["Final Sentiment"] != "NOT RELEVANT"].copy()
+
+    if working.empty:
+        return {"distribution": [], "examples_by_sentiment": {}}
+
+    for col in ["Mentions", "Impressions", "Effective Reach", "Group Count"]:
+        if col not in working.columns:
+            working[col] = 0
+        working[col] = pd.to_numeric(working[col], errors="coerce").fillna(0)
+
+    for col in ["Headline", "AI Sentiment Rationale"]:
+        if col not in working.columns:
+            working[col] = ""
+        working[col] = _get_text_series(working, col)
+
+    prime_lookup = pd.DataFrame(columns=["Group ID", "Prime URL", "Prime Outlet", "Prime Type", "Prime Snippet"])
+    if isinstance(df_grouped_rows, pd.DataFrame) and not df_grouped_rows.empty and "Group ID" in df_grouped_rows.columns:
+        grouped = df_grouped_rows.copy()
+        if "Prime Example" in grouped.columns:
+            grouped = grouped[grouped["Prime Example"] == 1].copy()
+        if grouped.empty:
+            grouped = df_grouped_rows.copy()
+        for source_col, target_col in [
+            ("URL", "Prime URL"),
+            ("Example URL", "Prime URL"),
+            ("Outlet", "Prime Outlet"),
+            ("Example Outlet", "Prime Outlet"),
+            ("Type", "Prime Type"),
+            ("Example Type", "Prime Type"),
+            ("Snippet", "Prime Snippet"),
+            ("Example Snippet", "Prime Snippet"),
+        ]:
+            if source_col in grouped.columns and target_col not in grouped.columns:
+                grouped[target_col] = _get_text_series(grouped, source_col)
+        keep_cols = [c for c in ["Group ID", "Prime URL", "Prime Outlet", "Prime Type", "Prime Snippet"] if c in grouped.columns]
+        prime_lookup = grouped[keep_cols].drop_duplicates(subset=["Group ID"], keep="first").copy()
+
+    working = working.merge(prime_lookup, on="Group ID", how="left")
+
+    working["Display URL"] = _get_text_series(working, "Example URL") if "Example URL" in working.columns else ""
+    if "Display URL" not in working.columns:
+        working["Display URL"] = ""
+    working["Display URL"] = working["Display URL"].where(working["Display URL"] != "", _get_text_series(working, "URL") if "URL" in working.columns else "")
+    if "Prime URL" in working.columns:
+        working["Display URL"] = working["Display URL"].where(working["Display URL"] != "", _get_text_series(working, "Prime URL"))
+
+    working["Display Outlet"] = _get_text_series(working, "Example Outlet") if "Example Outlet" in working.columns else ""
+    working["Display Outlet"] = working["Display Outlet"].where(working["Display Outlet"] != "", _get_text_series(working, "Outlet") if "Outlet" in working.columns else "")
+    if "Prime Outlet" in working.columns:
+        working["Display Outlet"] = working["Display Outlet"].where(working["Display Outlet"] != "", _get_text_series(working, "Prime Outlet"))
+
+    working["Display Type"] = _get_text_series(working, "Example Type") if "Example Type" in working.columns else ""
+    working["Display Type"] = working["Display Type"].where(working["Display Type"] != "", _get_text_series(working, "Type") if "Type" in working.columns else "")
+    if "Prime Type" in working.columns:
+        working["Display Type"] = working["Display Type"].where(working["Display Type"] != "", _get_text_series(working, "Prime Type"))
+
+    working["Display Snippet"] = _get_text_series(working, "Example Snippet") if "Example Snippet" in working.columns else ""
+    working["Display Snippet"] = working["Display Snippet"].where(working["Display Snippet"] != "", _get_text_series(working, "Snippet") if "Snippet" in working.columns else "")
+    if "Prime Snippet" in working.columns:
+        working["Display Snippet"] = working["Display Snippet"].where(working["Display Snippet"] != "", _get_text_series(working, "Prime Snippet"))
+
+    working["_has_url"] = working["Display URL"].ne("")
+    working["_is_online_example"] = working["Display Type"].str.upper().eq("ONLINE")
+
+    distribution_df = build_sentiment_distribution(working.rename(columns={"Final Sentiment": "Assigned Sentiment"}), sentiment_type)
+    distribution_records = distribution_df.to_dict(orient="records")
+
+    examples_by_sentiment: dict[str, list[dict[str, Any]]] = {}
+    for sentiment, group in working.groupby("Final Sentiment", dropna=False):
+        ranked = group.sort_values(
+            ["_is_online_example", "_has_url", "Group Count", "Mentions", "Impressions", "Effective Reach"],
+            ascending=[False, False, False, False, False, False],
+        )
+        examples = []
+        for _, row in ranked.drop_duplicates(subset=["Headline"], keep="first").head(per_sentiment_limit).iterrows():
+            examples.append({
+                "group_id": row.get("Group ID", ""),
+                "headline": row.get("Headline", ""),
+                "outlet": row.get("Display Outlet", ""),
+                "url": row.get("Display URL", ""),
+                "example_type": row.get("Display Type", ""),
+                "mentions": int(row.get("Mentions", 0) or 0),
+                "impressions": int(row.get("Impressions", 0) or 0),
+                "effective_reach": int(row.get("Effective Reach", 0) or 0),
+                "group_count": int(row.get("Group Count", 0) or 0),
+                "snippet": _truncate_text(row.get("Display Snippet", ""), 420),
+                "sentiment_rationale": _truncate_text(row.get("AI Sentiment Rationale", ""), 220),
+            })
+        examples_by_sentiment[str(sentiment)] = examples
+
+    return {
+        "distribution": distribution_records,
+        "examples_by_sentiment": examples_by_sentiment,
+    }
+
+
+def build_sentiment_observation_prompt(
+    client_name: str,
+    sentiment_type: str,
+    include_not_relevant: bool,
+    payload: dict[str, Any],
+) -> str:
+    return f"""
+You are helping a media intelligence analyst write concise, report-ready sentiment observations for {client_name or 'the client'}.
+
+Use the finalized sentiment distribution and representative grouped stories below.
+The examples are intentionally selected from the most syndicated and highest-volume coverage in each sentiment bucket.
+Each example may also include an existing AI sentiment rationale; use it as supporting context, but ground your summary in the coverage details themselves.
+
+Return strict JSON with this shape:
+{{
+  "overall_observation": "1-2 sentences",
+  "sentiment_sections": [
+    {{
+      "sentiment": "LABEL",
+      "observation": "1-2 concise sentences"
+    }}
+  ]
+}}
+
+Requirements:
+- Keep it factual, neutral, and report-ready.
+- Explain what kinds of coverage are driving each sentiment category.
+- Do not overstate small buckets.
+- If negative or unfavorable coverage is isolated, say so.
+- Use only sentiment labels present in the provided data.
+- Support both 3-way and 5-way sentiment.
+- {"Exclude NOT RELEVANT from the narrative unless it is present in the provided examples." if not include_not_relevant else "Include NOT RELEVANT only if it appears meaningfully in the provided examples."}
+
+Sentiment mode: {sentiment_type}
+
+Input data:
+{json.dumps(payload, ensure_ascii=True)}
+""".strip()
+
+
+def generate_sentiment_observations(
+    df_unique: pd.DataFrame,
+    df_grouped_rows: pd.DataFrame | None,
+    client_name: str,
+    sentiment_type: str,
+    include_not_relevant: bool,
+    api_key: str,
+    model: str = DEFAULT_SENTIMENT_OBSERVATION_MODEL,
+) -> tuple[dict[str, Any], int, int]:
+    payload = build_sentiment_observation_payload(
+        df_unique=df_unique,
+        df_grouped_rows=df_grouped_rows,
+        sentiment_type=sentiment_type,
+        include_not_relevant=include_not_relevant,
+    )
+    prompt = build_sentiment_observation_prompt(
+        client_name=client_name,
+        sentiment_type=sentiment_type,
+        include_not_relevant=include_not_relevant,
+        payload=payload,
+    )
+
+    client = OpenAI(api_key=api_key)
+    response = client.responses.create(
+        model=model,
+        input=[
+            {"role": "system", "content": "You write concise, neutral media-intelligence summaries."},
+            {"role": "user", "content": prompt},
+        ],
+        text={"verbosity": "low"},
+    )
+
+    add_api_usage(response, model)
+    in_tok, out_tok = extract_usage_tokens(response)
+    raw = getattr(response, "output_text", "") or ""
+    parsed = _extract_json_payload(raw)
+    if parsed is None:
+        raise ValueError("Model did not return valid JSON for sentiment observations.")
+    parsed["_examples_by_sentiment"] = payload.get("examples_by_sentiment", {})
+    return parsed, in_tok, out_tok

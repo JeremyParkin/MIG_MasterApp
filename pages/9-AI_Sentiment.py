@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -32,7 +33,9 @@ from processing.ai_sentiment import (
     DEFAULT_SENTIMENT_BATCH_SIZE,
     DEFAULT_SENTIMENT_MAX_WORKERS,
     DEFAULT_SENTIMENT_MODEL,
+    DEFAULT_SENTIMENT_OBSERVATION_MODEL,
     build_sentiment_distribution,
+    generate_sentiment_observations,
 )
 from utils.api_meter import (
     init_api_meter,
@@ -72,6 +75,8 @@ from ui.spot_checks_view import render_spot_checks_page
 init_sentiment_config_state(st.session_state)
 init_ai_sentiment_state(st.session_state)
 init_api_meter()
+st.session_state.setdefault("sentiment_observation_output", {})
+st.session_state.setdefault("sentiment_observation_include_nr", True)
 
 _last = st.session_state.get("__last_sentiment_batch_summary__")
 if _last and st.session_state.get("sentiment_section") == "Run":
@@ -638,7 +643,7 @@ if st.session_state.sentiment_section == "Run":
         sentiment_dist = build_sentiment_distribution(st.session_state.df_sentiment_unique, sentiment_type)
         include_not_relevant_preview = st.toggle(
             "Include Not Relevant in percentages",
-            value=True,
+            value=False,
             key="sentiment_distribution_include_nr_preview",
         )
         sentiment_table, sentiment_chart = _build_distribution_view(
@@ -708,3 +713,115 @@ with dist_view2:
         columns={"Share Label": "Share"}
     )
     st.dataframe(display_table, hide_index=True, use_container_width=True)
+
+st.divider()
+st.subheader("Sentiment Observations")
+st.caption("Generate report-ready observations about what kinds of coverage are driving the final sentiment mix, with example headlines for each sentiment category.")
+
+generate_obs_col1, generate_obs_col2 = st.columns([1.2, 3], gap="medium")
+with generate_obs_col1:
+    if st.button("Generate sentiment observations", type="primary", key="generate_sentiment_observations"):
+        with st.spinner("Generating sentiment observations..."):
+            try:
+                obs_output, _, _ = generate_sentiment_observations(
+                    df_unique=st.session_state.df_sentiment_unique,
+                    df_grouped_rows=st.session_state.get("df_sentiment_grouped_rows"),
+                    client_name=str(st.session_state.get("client_name", "")).strip(),
+                    sentiment_type=sentiment_type,
+                    include_not_relevant=include_not_relevant_final,
+                    api_key=st.secrets["key"],
+                    model=DEFAULT_SENTIMENT_OBSERVATION_MODEL,
+                )
+                st.session_state.sentiment_observation_output = obs_output
+                st.session_state.sentiment_observation_include_nr = include_not_relevant_final
+            except Exception as e:
+                st.error(f"Could not generate sentiment observations: {e}")
+with generate_obs_col2:
+    st.caption("Uses finalized sentiment labels plus representative grouped stories from each sentiment bucket. The examples are weighted toward the most syndicated and highest-volume coverage.")
+
+example_meta_col1, example_meta_col2, example_meta_col3, example_meta_col4, example_meta_col5 = st.columns(5, gap="small")
+with example_meta_col1:
+    show_example_outlet = st.checkbox("Show outlet", value=True, key="sentiment_obs_show_outlet")
+with example_meta_col2:
+    show_example_type = st.checkbox("Show media type", value=True, key="sentiment_obs_show_type")
+with example_meta_col3:
+    show_example_mentions = st.checkbox("Show mentions", value=True, key="sentiment_obs_show_mentions")
+with example_meta_col4:
+    show_example_impressions = st.checkbox("Show impressions", value=True, key="sentiment_obs_show_impressions")
+with example_meta_col5:
+    show_example_effective_reach = st.checkbox("Show effective reach", value=True, key="sentiment_obs_show_effective_reach")
+
+observation_output = st.session_state.get("sentiment_observation_output", {})
+if observation_output:
+    if st.session_state.get("sentiment_observation_include_nr", True) != include_not_relevant_final:
+        st.info("The current observations were generated with a different Not Relevant setting. Regenerate if you want them aligned to the current distribution view.")
+
+    overall_observation = str(observation_output.get("overall_observation", "") or "").strip()
+    if overall_observation:
+        st.markdown("### Overall Observations")
+        st.write(overall_observation)
+
+    sections = observation_output.get("sentiment_sections", [])
+    examples_by_sentiment = observation_output.get("_examples_by_sentiment", {})
+    if sections:
+        for section in sections:
+            sentiment_label = str(section.get("sentiment", "") or "").strip()
+            observation_text = str(section.get("observation", "") or "").strip()
+
+            if not sentiment_label:
+                continue
+
+            st.markdown(f"### {html.escape(sentiment_label.title())}", unsafe_allow_html=True)
+            if observation_text:
+                st.write(observation_text)
+
+            sentiment_examples = examples_by_sentiment.get(sentiment_label, [])
+            if sentiment_examples:
+                st.caption("Representative examples")
+                example_blocks = []
+                for item in sentiment_examples[:5]:
+                    headline = str(item.get("headline", "") or "").strip()
+                    url = str(item.get("url", "") or "").strip()
+                    outlet = str(item.get("outlet", "") or "").strip()
+                    example_type = str(item.get("example_type", "") or "").strip()
+                    mentions = int(item.get("mentions", 0) or 0)
+                    impressions = int(item.get("impressions", 0) or 0)
+
+                    if not headline:
+                        continue
+
+                    effective_reach = int(item.get("effective_reach", 0) or 0)
+                    meta_parts = []
+                    if show_example_outlet and outlet:
+                        meta_parts.append(outlet)
+                    if show_example_type and example_type:
+                        meta_parts.append(example_type)
+
+                    metric_parts = []
+                    if show_example_mentions:
+                        metric_parts.append(f"Mentions: {mentions:,}")
+                    if show_example_impressions:
+                        metric_parts.append(f"Impressions: {impressions:,}")
+                    if show_example_effective_reach:
+                        metric_parts.append(f"Effective Reach: {effective_reach:,}")
+
+                    meta_line = " | ".join(meta_parts + metric_parts)
+                    if url:
+                        headline_html = f'<a href="{html.escape(url, quote=True)}" target="_blank">{html.escape(headline)}</a>'
+                    else:
+                        headline_html = html.escape(headline)
+
+                    metrics_html = (
+                        f'<div style="font-size:0.84rem; opacity:0.72; letter-spacing:0.01em; margin-top:0.12rem;">{html.escape(meta_line)}</div>'
+                        if meta_line else ""
+                    )
+                    example_blocks.append(
+                        '<div style="margin:0 0 0.7rem 0;">'
+                        f'<div style="line-height:1.35;">{headline_html}</div>'
+                        f'{metrics_html}'
+                        '</div>'
+                    )
+                if example_blocks:
+                    st.markdown("".join(example_blocks), unsafe_allow_html=True)
+else:
+    st.info("Generate observations to add narrative context to the final sentiment distribution.")

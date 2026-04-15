@@ -1030,7 +1030,6 @@ def render_author_insights_tab(mode: str = "selection") -> None:
         return
 
     if mode == "insights":
-        render_generate_button("insights")
         st.divider()
         st.subheader("Chart Table")
         metric_label = st.radio(
@@ -1179,6 +1178,11 @@ def render_author_insights_tab(mode: str = "selection") -> None:
 
         st.divider()
         st.subheader("Report Copy")
+        generate_col1, generate_col2 = st.columns([1.2, 3], gap="medium")
+        with generate_col1:
+            render_generate_button("insights")
+        with generate_col2:
+            st.caption("Uses shortlisted authors plus representative grouped stories from each author footprint to generate concise, report-ready coverage themes.")
         metrics_col1, metrics_col2, metrics_col3, metrics_col4 = st.columns(4, gap="small")
         with metrics_col1:
             show_mentions = st.checkbox("Show mentions", value=True, key="authors_report_show_mentions")
