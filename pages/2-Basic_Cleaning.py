@@ -239,7 +239,7 @@ else:
         drop_dupes = st.checkbox(
             "Drop duplicates",
             value=True,
-            help="Remove likely duplicates after cleaning and media-type splitting.",
+            help="After media types are normalized, remove non-broadcast duplicates by URL and by Type + Outlet + Headline, then run separate broadcast duplicate checks using outlet, media type, date, time proximity, and snippet similarity.",
         )
 
         submitted = st.form_submit_button("Run Basic Cleaning", type="primary")

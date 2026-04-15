@@ -27,12 +27,14 @@ def normalize_snippet_for_compare(text: str) -> str:
     return text
 
 
+def has_nonblank_value(series: pd.Series) -> pd.Series:
+    return series.fillna("").astype(str).str.strip().ne("")
+
+
 def snippet_similarity(a: str, b: str) -> float:
     a_norm = normalize_snippet_for_compare(a)
     b_norm = normalize_snippet_for_compare(b)
 
-    if not a_norm and not b_norm:
-        return 1.0
     if not a_norm or not b_norm:
         return 0.0
 
@@ -175,14 +177,15 @@ def split_broadcast(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def dedupe_by_url(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """URL dedupe stays within the same normalized media type and skips blank keys."""
     df = df.copy()
 
-    if "URL" not in df.columns:
+    if "URL" not in df.columns or "Type" not in df.columns:
         return df, pd.DataFrame()
 
-    url_series = df["URL"].replace("", np.nan)
-    blank_urls = df[url_series.isna()].copy()
-    working = df[~url_series.isna()].copy()
+    valid_mask = has_nonblank_value(df["URL"]) & has_nonblank_value(df["Type"])
+    excluded_rows = df[~valid_mask].copy()
+    working = df[valid_mask].copy()
 
     if working.empty:
         return df.copy(), pd.DataFrame()
@@ -191,11 +194,13 @@ def dedupe_by_url(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         working["URL"]
         .fillna("")
         .astype(str)
+        .str.strip()
         .str.lower()
         .str.replace("http:", "https:", regex=False)
     )
+    working["_url_dedupe_key"] = working["Type"].astype(str).str.strip() + "||" + working["URL_Helper"]
 
-    sort_cols = [c for c in ["URL_Helper", "Author", "Impressions", "Date"] if c in working.columns]
+    sort_cols = [c for c in ["_url_dedupe_key", "Author", "Impressions", "Date"] if c in working.columns]
     if sort_cols:
         ascending = []
         for col in sort_cols:
@@ -205,13 +210,13 @@ def dedupe_by_url(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
                 ascending.append(True)
         working = working.sort_values(sort_cols, ascending=ascending)
 
-    dupe_urls = working[working["URL_Helper"].duplicated(keep="first")].copy()
-    deduped = working[~working["URL_Helper"].duplicated(keep="first")].copy()
+    dupe_urls = working[working["_url_dedupe_key"].duplicated(keep="first")].copy()
+    deduped = working[~working["_url_dedupe_key"].duplicated(keep="first")].copy()
 
-    deduped.drop(columns=["URL_Helper"], inplace=True, errors="ignore")
-    dupe_urls.drop(columns=["URL_Helper"], inplace=True, errors="ignore")
+    deduped.drop(columns=["URL_Helper", "_url_dedupe_key"], inplace=True, errors="ignore")
+    dupe_urls.drop(columns=["URL_Helper", "_url_dedupe_key"], inplace=True, errors="ignore")
 
-    deduped = pd.concat([deduped, blank_urls], ignore_index=True)
+    deduped = pd.concat([deduped, excluded_rows], ignore_index=True)
     return deduped, dupe_urls
 
 
@@ -244,10 +249,9 @@ def choose_best_row_index(group_df: pd.DataFrame) -> int:
 
 def dedupe_non_broadcast_by_fields(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Candidate duplicates are rows with same Type + Outlet + Headline.
-    Confirm duplication if either:
-    - dates are within 48 hours, or
-    - snippets are >= 90% similar.
+    Non-broadcast dedupe runs after media-type normalization:
+    first by same normalized Type + URL, then by same normalized
+    Type + Outlet + Headline.
     """
     df = df.copy()
 
@@ -377,8 +381,17 @@ def dedupe_broadcast_legacy(broadcast_df: pd.DataFrame) -> tuple[pd.DataFrame, p
 
     duplicate_indexes = set()
 
+    required_mask = (
+        has_nonblank_value(working["Outlet"])
+        & has_nonblank_value(working["Type"])
+        & has_nonblank_value(working["_snippet_text"])
+        & working["_date_time"].notna()
+    )
+    excluded_rows = working[~required_mask].copy()
+    working = working[required_mask].copy()
+
     group_cols = [c for c in ["Outlet", "Type", "_date_only"] if c in working.columns]
-    if not group_cols:
+    if not group_cols or working.empty:
         return broadcast_df.copy(), pd.DataFrame()
 
     for _, group in working.groupby(group_cols, dropna=False):
@@ -456,6 +469,7 @@ def dedupe_broadcast_legacy(broadcast_df: pd.DataFrame) -> tuple[pd.DataFrame, p
         "_snippet_norm",
         "_snippet_len",
     ]
+    cleaned_broadcast = pd.concat([cleaned_broadcast, excluded_rows], ignore_index=True)
     cleaned_broadcast.drop(columns=helper_cols, inplace=True, errors="ignore")
     broadcast_dupes.drop(columns=helper_cols, inplace=True, errors="ignore")
 
@@ -497,6 +511,7 @@ def _cluster_time_proximate_indices(sorted_group: pd.DataFrame, time_col: str) -
 
 
 def dedupe_broadcast(broadcast_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Broadcast dedupe uses outlet, normalized media type, date, time proximity, and snippet similarity."""
     broadcast_df = broadcast_df.copy()
 
     if broadcast_df.empty:
@@ -521,8 +536,17 @@ def dedupe_broadcast(broadcast_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataF
     )
     working["_snippet_len"] = working["_snippet_text"].str.len()
 
+    required_mask = (
+        has_nonblank_value(working["Outlet"])
+        & has_nonblank_value(working["Type"])
+        & has_nonblank_value(working["_snippet_text"])
+        & working["_date_time"].notna()
+    )
+    excluded_rows = working[~required_mask].copy()
+    working = working[required_mask].copy()
+
     group_cols = [c for c in ["Outlet", "Type", "_date_only"] if c in working.columns]
-    if not group_cols:
+    if not group_cols or working.empty:
         return broadcast_df.copy(), pd.DataFrame()
 
     duplicate_indexes = set()
@@ -626,6 +650,7 @@ def dedupe_broadcast(broadcast_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataF
         "_snippet_norm",
         "_snippet_len",
     ]
+    cleaned_broadcast = pd.concat([cleaned_broadcast, excluded_rows], ignore_index=True)
     cleaned_broadcast.drop(columns=helper_cols, inplace=True, errors="ignore")
     broadcast_dupes.drop(columns=helper_cols, inplace=True, errors="ignore")
 

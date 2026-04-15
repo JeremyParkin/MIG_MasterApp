@@ -34,10 +34,25 @@ def explode_tags(df: pd.DataFrame) -> pd.DataFrame:
     tags = tags.replace({"nan": "", "None": ""})
     out["Tags"] = tags
 
-    dummies = out["Tags"].str.get_dummies(sep=",")
-    dummies.columns = [c.strip() for c in dummies.columns]
+    cleaned_tag_lists = out["Tags"].apply(
+        lambda value: [
+            token.strip()
+            for token in str(value).split(",")
+            if token.strip() and token.strip().lower() not in {"nan", "none"}
+        ]
+    )
 
-    dummies = dummies.loc[:, [c for c in dummies.columns if c and c.lower() != "nan"]]
+    unique_tags = sorted({tag for tags_list in cleaned_tag_lists for tag in tags_list})
+    if not unique_tags:
+        return out
+
+    dummies = pd.DataFrame(
+        {
+            tag: cleaned_tag_lists.apply(lambda tags_list, current_tag=tag: int(current_tag in tags_list))
+            for tag in unique_tags
+        },
+        index=out.index,
+    )
 
     if not dummies.empty:
         dummies = dummies.astype("category")
