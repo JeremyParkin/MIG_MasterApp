@@ -448,16 +448,18 @@ def build_markdown_output(
             if pd.notna(value) and str(value).strip():
                 markdown_content += f":material/pie_chart: **Sentiment Opinion:** <br>_{value}_  \n\n"
 
+        metric_parts = []
         if show_mentions:
             mentions = row.get("Mentions", 0)
-            markdown_content += f"**Mentions**: {mentions} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"
-
+            metric_parts.append(f"Mentions: {mentions}")
         if show_impressions:
             impressions = row.get("Impressions", 0)
-            markdown_content += f"**Impressions**: {int(impressions):,}"
-
-        if show_mentions or show_impressions:
-            markdown_content += "<br>"
+            metric_parts.append(f"Impressions: {int(impressions):,}")
+        if metric_parts:
+            metric_line = " | ".join(metric_parts)
+            markdown_content += (
+                f'<span style="font-size:0.84rem; opacity:0.72; letter-spacing:0.01em;">{metric_line}</span><br>'
+            )
 
         markdown_content += "<br>"
 

@@ -19,8 +19,12 @@ def init_outlet_workflow_state(session_state) -> None:
     session_state.setdefault("outlet_insights_selected_outlets", [])
     session_state.setdefault("outlet_insights_summaries", {})
     session_state.setdefault("outlet_insights_active_outlet", "")
-    session_state.setdefault("outlet_cleanup_source", "")
-    session_state.setdefault("outlet_cleanup_target", "")
+    session_state.setdefault("outlet_rollup_map", {})
+    session_state.setdefault("outlet_cleanup_manual_selection", [])
+    session_state.setdefault("outlet_cleanup_manual_target", "")
+    session_state.setdefault("outlet_cleanup_rule_mode", "Contains")
+    session_state.setdefault("outlet_cleanup_rule_pattern", "")
+    session_state.setdefault("outlet_cleanup_rule_target", "")
 
 
 def _normalize_outlet_key(text: str) -> str:
@@ -70,6 +74,37 @@ def _clean_outlet_df(df: pd.DataFrame) -> pd.DataFrame:
     return working
 
 
+def _normalize_network_canonical(text: str) -> str | None:
+    key = _normalize_outlet_key(text)
+    rules = [
+        ("ctv", "CTV"),
+        ("cbc", "CBC"),
+        ("global news", "Global News"),
+        ("global", "Global News"),
+        ("citynews", "CityNews"),
+        ("the canadian press", "The Canadian Press"),
+        ("canadian press", "The Canadian Press"),
+        ("radio canada", "Radio-Canada"),
+        ("bnn bloomberg", "BNN Bloomberg"),
+    ]
+    for needle, canonical in rules:
+        if needle in key:
+            return canonical
+    return None
+
+
+def build_outlet_workflow_df(df_traditional: pd.DataFrame, outlet_rollup_map: dict[str, str] | None = None) -> pd.DataFrame:
+    working = _clean_outlet_df(df_traditional)
+    if working.empty:
+        return working
+
+    rollup_map = {str(k).strip(): str(v).strip() for k, v in (outlet_rollup_map or {}).items() if str(k).strip() and str(v).strip()}
+    working["Original Outlet"] = working["Outlet"]
+    working["Canonical Outlet"] = working["Original Outlet"].map(lambda name: rollup_map.get(str(name).strip(), str(name).strip()))
+    working["Outlet"] = working["Canonical Outlet"]
+    return working
+
+
 def _pick_story_row(group: pd.DataFrame) -> pd.Series:
     ordered = group.sort_values(
         by=["Prime Example", "_is_good_outlet", "Impressions", "Mentions", "Date"],
@@ -105,8 +140,8 @@ def _build_outlet_story_rows(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def build_outlet_metrics(df_traditional: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    working = _clean_outlet_df(df_traditional)
+def build_outlet_metrics(df_traditional: pd.DataFrame, outlet_rollup_map: dict[str, str] | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    working = build_outlet_workflow_df(df_traditional, outlet_rollup_map=outlet_rollup_map)
     story_level = _build_outlet_story_rows(working)
 
     if story_level.empty:
@@ -120,8 +155,15 @@ def build_outlet_metrics(df_traditional: pd.DataFrame) -> tuple[pd.DataFrame, pd
             Impressions=("Story Impressions", "sum"),
             Effective_Reach=("Story Effective Reach", "sum"),
             Prime_Example_Stories=("Prime Example Story", "sum"),
+            Source_Outlets=("Outlet", "size"),
         )
     )
+    source_counts = (
+        working.groupby("Outlet", as_index=False)["Original Outlet"]
+        .nunique()
+        .rename(columns={"Original Outlet": "Source_Outlet_Count"})
+    )
+    summary = summary.merge(source_counts, on="Outlet", how="left")
 
     good_rate = (
         story_level.assign(_is_good=story_level["Representative Flag"].eq("Good Outlet"))
@@ -175,8 +217,13 @@ def build_outlet_headline_table(story_level_df: pd.DataFrame, outlet_name: str, 
     return outlet_rows[[c for c in display_cols if c in outlet_rows.columns]].copy()
 
 
-def build_outlet_top_authors(df_traditional: pd.DataFrame, outlet_name: str, limit: int = 5) -> pd.DataFrame:
-    working = _clean_outlet_df(df_traditional)
+def build_outlet_top_authors(
+    df_traditional: pd.DataFrame,
+    outlet_name: str,
+    limit: int = 5,
+    outlet_rollup_map: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    working = build_outlet_workflow_df(df_traditional, outlet_rollup_map=outlet_rollup_map)
     outlet_rows = working[working["Outlet"] == outlet_name].copy()
     if outlet_rows.empty:
         return pd.DataFrame()
@@ -194,8 +241,8 @@ def build_outlet_top_authors(df_traditional: pd.DataFrame, outlet_name: str, lim
     return author_df
 
 
-def build_outlet_variant_candidates(df_traditional: pd.DataFrame) -> pd.DataFrame:
-    working = _clean_outlet_df(df_traditional)
+def build_outlet_variant_candidates(df_traditional: pd.DataFrame, outlet_rollup_map: dict[str, str] | None = None) -> pd.DataFrame:
+    working = build_outlet_workflow_df(df_traditional, outlet_rollup_map=outlet_rollup_map)
     if working.empty:
         return pd.DataFrame()
 
@@ -229,36 +276,112 @@ def build_outlet_variant_candidates(df_traditional: pd.DataFrame) -> pd.DataFram
     return display
 
 
-def apply_outlet_name_cleanup(session_state, old_name: str, new_name: str) -> None:
-    old_name = str(old_name or "").strip()
-    new_name = str(new_name or "").strip()
-    if not old_name or not new_name or old_name == new_name:
+def build_rollup_suggestions(df_traditional: pd.DataFrame, outlet_rollup_map: dict[str, str] | None = None) -> pd.DataFrame:
+    working = _clean_outlet_df(df_traditional)
+    if working.empty:
+        return pd.DataFrame()
+
+    raw_outlets = (
+        working.groupby("Outlet", as_index=False)
+        .agg(
+            Mentions=("Mentions", "sum"),
+            Impressions=("Impressions", "sum"),
+            Effective_Reach=("Effective Reach", "sum"),
+        )
+    )
+    rollup_map = {str(k).strip(): str(v).strip() for k, v in (outlet_rollup_map or {}).items() if str(k).strip() and str(v).strip()}
+
+    suggestions: dict[str, list[str]] = {}
+    for outlet in raw_outlets["Outlet"].tolist():
+        suggested = _normalize_network_canonical(outlet)
+        if suggested and suggested != outlet:
+            suggestions.setdefault(suggested, []).append(outlet)
+
+    rows: list[dict[str, Any]] = []
+    for canonical, outlets in suggestions.items():
+        unique_outlets = sorted(set(outlets))
+        if len(unique_outlets) < 2:
+            continue
+        subset = raw_outlets[raw_outlets["Outlet"].isin(unique_outlets)].copy()
+        mapped_already = [outlet for outlet in unique_outlets if rollup_map.get(outlet, outlet) == canonical]
+        if len(mapped_already) >= len(unique_outlets):
+            continue
+        rows.append({
+            "Suggested Rollup": canonical,
+            "Source Outlet Count": len(unique_outlets),
+            "Already Mapped": len(mapped_already),
+            "Mentions": int(subset["Mentions"].sum()),
+            "Impressions": int(subset["Impressions"].sum()),
+            "Effective Reach": int(subset["Effective_Reach"].sum()),
+            "Source Outlets": " | ".join(unique_outlets[:8]),
+        })
+
+    if not rows:
+        return pd.DataFrame()
+
+    return pd.DataFrame(rows).sort_values(["Mentions", "Impressions"], ascending=False).reset_index(drop=True)
+
+
+def build_outlet_rollup_preview(df_traditional: pd.DataFrame, outlet_rollup_map: dict[str, str] | None = None) -> pd.DataFrame:
+    working = _clean_outlet_df(df_traditional)
+    if working.empty:
+        return pd.DataFrame()
+
+    rollup_map = {str(k).strip(): str(v).strip() for k, v in (outlet_rollup_map or {}).items() if str(k).strip() and str(v).strip()}
+    preview = (
+        working.groupby("Outlet", as_index=False)
+        .agg(
+            Mentions=("Mentions", "sum"),
+            Impressions=("Impressions", "sum"),
+            Effective_Reach=("Effective Reach", "sum"),
+        )
+        .sort_values(["Mentions", "Impressions"], ascending=False)
+        .reset_index(drop=True)
+    )
+    preview["Canonical Outlet"] = preview["Outlet"].map(lambda name: rollup_map.get(str(name).strip(), str(name).strip()))
+    preview["Rollup Applied"] = preview["Outlet"] != preview["Canonical Outlet"]
+    return preview[["Outlet", "Canonical Outlet", "Rollup Applied", "Mentions", "Impressions", "Effective_Reach"]]
+
+
+def apply_outlet_rollup_map(session_state, outlet_names: list[str], canonical_name: str) -> None:
+    canonical_name = str(canonical_name or "").strip()
+    names = [str(name).strip() for name in outlet_names if str(name).strip()]
+    if not canonical_name or not names:
         return
 
-    for key, value in list(session_state.items()):
-        if isinstance(value, pd.DataFrame) and not value.empty:
-            updated = value.copy()
-            changed = False
-            for col in ["Outlet", "Example Outlet"]:
-                if col in updated.columns:
-                    updated.loc[updated[col].fillna("").astype(str).str.strip() == old_name, col] = new_name
-                    changed = True
-            if changed:
-                session_state[key] = updated
+    mapping = dict(session_state.get("outlet_rollup_map", {}))
+    for name in names:
+        mapping[name] = canonical_name
+    session_state.outlet_rollup_map = mapping
 
-    selected = session_state.get("outlet_insights_selected_outlets", [])
-    session_state.outlet_insights_selected_outlets = [new_name if outlet == old_name else outlet for outlet in selected]
+    selected = [mapping.get(outlet, outlet) for outlet in session_state.get("outlet_insights_selected_outlets", [])]
+    session_state.outlet_insights_selected_outlets = list(dict.fromkeys(selected))
 
     active = str(session_state.get("outlet_insights_active_outlet", "") or "").strip()
-    if active == old_name:
-        session_state.outlet_insights_active_outlet = new_name
+    if active in names:
+        session_state.outlet_insights_active_outlet = canonical_name
 
     summaries = dict(session_state.get("outlet_insights_summaries", {}))
-    if old_name in summaries:
-        if new_name not in summaries:
-            summaries[new_name] = summaries[old_name]
-        summaries.pop(old_name, None)
+    migrated = False
+    for name in names:
+        if name in summaries and canonical_name not in summaries:
+            summaries[canonical_name] = summaries[name]
+            migrated = True
+        summaries.pop(name, None)
+    if migrated or names:
         session_state.outlet_insights_summaries = summaries
+
+
+def remove_outlet_rollup_map(session_state, outlet_names: list[str]) -> None:
+    mapping = dict(session_state.get("outlet_rollup_map", {}))
+    changed = False
+    for name in outlet_names:
+        key = str(name).strip()
+        if key in mapping:
+            mapping.pop(key, None)
+            changed = True
+    if changed:
+        session_state.outlet_rollup_map = mapping
 
 
 def build_outlet_prompt(

@@ -953,7 +953,12 @@ def render_author_insights_tab(mode: str = "selection") -> None:
             st.session_state.author_insights_summaries = summaries
             st.rerun()
 
-    def build_report_html() -> str:
+    def build_report_html(
+        show_mentions: bool,
+        show_unique_mentions: bool,
+        show_impressions: bool,
+        show_effective_reach: bool,
+    ) -> str:
         blocks = []
         for _, row in shortlist_df.iterrows():
             author_name = str(row.get("Author", "") or "").strip()
@@ -968,11 +973,19 @@ def render_author_insights_tab(mode: str = "selection") -> None:
             if outlet:
                 header += f' <span style="opacity:0.82;">|</span> <span style="font-style:italic; opacity:0.92;">{html.escape(outlet)}</span>'
 
-            metrics = (
-                f"Mentions: {mentions:,} | "
-                f"Unique Mentions: {unique_mentions:,} | "
-                f"Impressions: {impressions:,} | "
-                f"Effective Reach: {effective_reach:,}"
+            metric_parts = []
+            if show_mentions:
+                metric_parts.append(f"Mentions: {mentions:,}")
+            if show_unique_mentions:
+                metric_parts.append(f"Unique Mentions: {unique_mentions:,}")
+            if show_impressions:
+                metric_parts.append(f"Impressions: {impressions:,}")
+            if show_effective_reach:
+                metric_parts.append(f"Effective Reach: {effective_reach:,}")
+            metrics = " | ".join(metric_parts)
+            metrics_html = (
+                f'<div style="font-size:0.84rem; opacity:0.72; letter-spacing:0.01em;">{html.escape(metrics)}</div>'
+                if metrics else ""
             )
 
             body_html = html.escape(themes) if themes else ""
@@ -980,7 +993,7 @@ def render_author_insights_tab(mode: str = "selection") -> None:
                 '<div style="margin-bottom:1.2rem;">'
                 f'<div style="font-size:1.08rem; font-weight:700; margin-bottom:0.2rem;">{header}</div>'
                 f'<div style="line-height:1.55; margin-bottom:0.28rem;">{body_html}</div>'
-                f'<div style="font-size:0.84rem; opacity:0.72; letter-spacing:0.01em;">{html.escape(metrics)}</div>'
+                f'{metrics_html}'
                 '</div>'
             )
             blocks.append(block)
@@ -1014,10 +1027,11 @@ def render_author_insights_tab(mode: str = "selection") -> None:
         if selected_authors:
             st.divider()
             render_shortlist_editor("split")
-            render_generate_button("split")
         return
 
     if mode == "insights":
+        render_generate_button("insights")
+        st.divider()
         st.subheader("Chart Table")
         metric_label = st.radio(
             "Chart metric",
@@ -1165,7 +1179,22 @@ def render_author_insights_tab(mode: str = "selection") -> None:
 
         st.divider()
         st.subheader("Report Copy")
-        report_html = build_report_html()
+        metrics_col1, metrics_col2, metrics_col3, metrics_col4 = st.columns(4, gap="small")
+        with metrics_col1:
+            show_mentions = st.checkbox("Show mentions", value=True, key="authors_report_show_mentions")
+        with metrics_col2:
+            show_unique_mentions = st.checkbox("Show unique mentions", value=True, key="authors_report_show_unique_mentions")
+        with metrics_col3:
+            show_impressions = st.checkbox("Show impressions", value=True, key="authors_report_show_impressions")
+        with metrics_col4:
+            show_effective_reach = st.checkbox("Show effective reach", value=True, key="authors_report_show_effective_reach")
+
+        report_html = build_report_html(
+            show_mentions=show_mentions,
+            show_unique_mentions=show_unique_mentions,
+            show_impressions=show_impressions,
+            show_effective_reach=show_effective_reach,
+        )
         if report_html:
             st.markdown(report_html, unsafe_allow_html=True)
         else:

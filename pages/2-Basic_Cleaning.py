@@ -208,7 +208,7 @@ if st.session_state.standard_step:
 
     render_dataset_expander(
         st.session_state.df_traditional,
-        "Traditional / Online / Broadcast",
+        "Traditional",
         preview_rows=1000,
         unique_mentions=traditional_unique_mentions,
     )

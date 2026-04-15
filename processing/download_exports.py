@@ -142,7 +142,10 @@ def build_author_insights_export_table(session_state) -> pd.DataFrame:
 
 def build_outlets_export_table(session_state) -> pd.DataFrame:
     df_traditional = session_state.get("df_traditional", pd.DataFrame()).copy()
-    summary, _story_level = build_outlet_metrics(df_traditional)
+    summary, _story_level = build_outlet_metrics(
+        df_traditional,
+        outlet_rollup_map=session_state.get("outlet_rollup_map", {}),
+    )
     if summary.empty:
         return pd.DataFrame(columns=["Outlet", "Media Types", "Mentions", "Unique Mentions", "Impressions", "Effective Reach", "Good Outlet Rate", "Coverage Themes"])
 
