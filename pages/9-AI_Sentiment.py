@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from streamlit_tags import st_tags
+from ui.insight_blocks import build_linked_example_blocks_html
 
 from processing.sentiment_config import (
     init_sentiment_config_state,
@@ -778,50 +779,15 @@ if observation_output:
             sentiment_examples = examples_by_sentiment.get(sentiment_label, [])
             if sentiment_examples:
                 st.caption("Representative examples")
-                example_blocks = []
-                for item in sentiment_examples[:5]:
-                    headline = str(item.get("headline", "") or "").strip()
-                    url = str(item.get("url", "") or "").strip()
-                    outlet = str(item.get("outlet", "") or "").strip()
-                    example_type = str(item.get("example_type", "") or "").strip()
-                    mentions = int(item.get("mentions", 0) or 0)
-                    impressions = int(item.get("impressions", 0) or 0)
-
-                    if not headline:
-                        continue
-
-                    effective_reach = int(item.get("effective_reach", 0) or 0)
-                    meta_parts = []
-                    if show_example_outlet and outlet:
-                        meta_parts.append(outlet)
-                    if show_example_type and example_type:
-                        meta_parts.append(example_type)
-
-                    metric_parts = []
-                    if show_example_mentions:
-                        metric_parts.append(f"Mentions: {mentions:,}")
-                    if show_example_impressions:
-                        metric_parts.append(f"Impressions: {impressions:,}")
-                    if show_example_effective_reach:
-                        metric_parts.append(f"Effective Reach: {effective_reach:,}")
-
-                    meta_line = " | ".join(meta_parts + metric_parts)
-                    if url:
-                        headline_html = f'<a href="{html.escape(url, quote=True)}" target="_blank">{html.escape(headline)}</a>'
-                    else:
-                        headline_html = html.escape(headline)
-
-                    metrics_html = (
-                        f'<div style="font-size:0.84rem; opacity:0.72; letter-spacing:0.01em; margin-top:0.12rem;">{html.escape(meta_line)}</div>'
-                        if meta_line else ""
-                    )
-                    example_blocks.append(
-                        '<div style="margin:0 0 0.7rem 0;">'
-                        f'<div style="line-height:1.35;">{headline_html}</div>'
-                        f'{metrics_html}'
-                        '</div>'
-                    )
+                example_blocks = build_linked_example_blocks_html(
+                    sentiment_examples[:5],
+                    show_outlet=show_example_outlet,
+                    show_media_type=show_example_type,
+                    show_mentions=show_example_mentions,
+                    show_impressions=show_example_impressions,
+                    show_effective_reach=show_example_effective_reach,
+                )
                 if example_blocks:
-                    st.markdown("".join(example_blocks), unsafe_allow_html=True)
+                    st.markdown(example_blocks, unsafe_allow_html=True)
 else:
     st.info("Generate observations to add narrative context to the final sentiment distribution.")

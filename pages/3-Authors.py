@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 import streamlit as st
 import processing.author_outlets as author_outlets_module
+from ui.insight_blocks import build_linked_example_blocks_html
 
 from processing.author_insights import (
     DEFAULT_AUTHOR_SUMMARY_MODEL,
@@ -800,46 +801,28 @@ def render_author_insights_tab(mode: str = "selection") -> None:
     ) -> str:
         if df.empty:
             return ""
-        html_blocks: list[str] = []
+        items = []
         for _, row in df.iterrows():
-            headline = str(row.get("Headline", "") or "").strip()
-            url = str(row.get("Representative URL", "") or "").strip()
-            outlet = str(row.get("Representative Outlet", "") or "").strip()
-            media_type = str(row.get("Type", "") or "").strip()
-            date_val = row.get("Date")
-            mentions = int(pd.to_numeric(pd.Series([row.get("Story Mentions", 0)]), errors="coerce").fillna(0).iloc[0])
-            impressions = int(pd.to_numeric(pd.Series([row.get("Story Impressions", 0)]), errors="coerce").fillna(0).iloc[0])
-            effective_reach = int(pd.to_numeric(pd.Series([row.get("Story Effective Reach", 0)]), errors="coerce").fillna(0).iloc[0])
-
-            if url:
-                headline_line = f'<a href="{html.escape(url, quote=True)}" target="_blank">{html.escape(headline)}</a>'
-            else:
-                headline_line = html.escape(headline)
-
-            meta_parts = []
-            if show_outlet and outlet:
-                meta_parts.append(outlet)
-            if show_media_type and media_type:
-                meta_parts.append(media_type)
-
-            metric_parts = []
-            if show_mentions:
-                metric_parts.append(f"Mentions: {mentions:,}")
-            if show_impressions:
-                metric_parts.append(f"Impressions: {impressions:,}")
-            if show_effective_reach:
-                metric_parts.append(f"Effective Reach: {effective_reach:,}")
-
-            meta_line = " | ".join(meta_parts + metric_parts)
-
-            html_blocks.append(
-                '<div style="margin:0 0 0.7rem 0;">'
-                f'<div style="line-height:1.35;">{headline_line}</div>'
-                f'<div style="font-size:0.84rem; opacity:0.72; letter-spacing:0.01em; margin-top:0.12rem;">{html.escape(meta_line)}</div>'
-                '</div>'
+            items.append(
+                {
+                    "headline": row.get("Headline", ""),
+                    "url": row.get("Representative URL", ""),
+                    "outlet": row.get("Representative Outlet", ""),
+                    "example_type": row.get("Type", ""),
+                    "mentions": int(pd.to_numeric(pd.Series([row.get("Story Mentions", 0)]), errors="coerce").fillna(0).iloc[0]),
+                    "impressions": int(pd.to_numeric(pd.Series([row.get("Story Impressions", 0)]), errors="coerce").fillna(0).iloc[0]),
+                    "effective_reach": int(pd.to_numeric(pd.Series([row.get("Story Effective Reach", 0)]), errors="coerce").fillna(0).iloc[0]),
+                }
             )
 
-        return "".join(html_blocks)
+        return build_linked_example_blocks_html(
+            items,
+            show_outlet=show_outlet,
+            show_media_type=show_media_type,
+            show_mentions=show_mentions,
+            show_impressions=show_impressions,
+            show_effective_reach=show_effective_reach,
+        )
 
     def render_candidate_selection_table(include_syndication: bool, key_suffix: str) -> None:
         st.subheader("Candidate Authors")

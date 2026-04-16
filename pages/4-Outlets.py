@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 import processing.outlet_insights as outlet_insights
+from ui.insight_blocks import build_linked_example_blocks_html
 from utils.formatting import NUMERIC_FORMAT_DICT
 
 warnings.filterwarnings("ignore")
@@ -97,40 +98,28 @@ def build_story_examples_html(
     if df.empty:
         return ""
 
-    html_blocks: list[str] = []
+    items = []
     for _, row in df.iterrows():
-        headline = str(row.get("Headline", "") or "").strip()
-        url = str(row.get("Representative URL", "") or "").strip()
-        author = str(row.get("Author", "") or "").strip()
-        media_type = str(row.get("Type", "") or "").strip()
-        mentions = int(pd.to_numeric(pd.Series([row.get("Story Mentions", 0)]), errors="coerce").fillna(0).iloc[0])
-        impressions = int(pd.to_numeric(pd.Series([row.get("Story Impressions", 0)]), errors="coerce").fillna(0).iloc[0])
-        effective_reach = int(pd.to_numeric(pd.Series([row.get("Story Effective Reach", 0)]), errors="coerce").fillna(0).iloc[0])
-
-        headline_line = f'<a href="{url}" target="_blank">{html.escape(headline)}</a>' if url else html.escape(headline)
-        meta_parts = []
-        if show_author and author:
-            meta_parts.append(author)
-        if show_media_type and media_type:
-            meta_parts.append(media_type)
-
-        metric_parts = []
-        if show_mentions:
-            metric_parts.append(f"Mentions: {mentions:,}")
-        if show_impressions:
-            metric_parts.append(f"Impressions: {impressions:,}")
-        if show_effective_reach:
-            metric_parts.append(f"Effective Reach: {effective_reach:,}")
-        meta_line = " | ".join(meta_parts + metric_parts)
-
-        html_blocks.append(
-            '<div style="margin:0 0 0.7rem 0;">'
-            f'<div style="line-height:1.35;">{headline_line}</div>'
-            f'<div style="font-size:0.84rem; opacity:0.72; letter-spacing:0.01em; margin-top:0.12rem;">{html.escape(meta_line)}</div>'
-            '</div>'
+        items.append(
+            {
+                "headline": row.get("Headline", ""),
+                "url": row.get("Representative URL", ""),
+                "outlet": row.get("Author", ""),
+                "example_type": row.get("Type", ""),
+                "mentions": int(pd.to_numeric(pd.Series([row.get("Story Mentions", 0)]), errors="coerce").fillna(0).iloc[0]),
+                "impressions": int(pd.to_numeric(pd.Series([row.get("Story Impressions", 0)]), errors="coerce").fillna(0).iloc[0]),
+                "effective_reach": int(pd.to_numeric(pd.Series([row.get("Story Effective Reach", 0)]), errors="coerce").fillna(0).iloc[0]),
+            }
         )
 
-    return "".join(html_blocks)
+    return build_linked_example_blocks_html(
+        items,
+        show_outlet=show_author,
+        show_media_type=show_media_type,
+        show_mentions=show_mentions,
+        show_impressions=show_impressions,
+        show_effective_reach=show_effective_reach,
+    )
 
 
 def build_report_html(
