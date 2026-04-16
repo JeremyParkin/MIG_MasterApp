@@ -88,9 +88,35 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
     
     
     def sync_sentiment_state(unique_df: pd.DataFrame, grouped_df: pd.DataFrame) -> None:
+        translation_updates = pd.DataFrame()
+        if isinstance(grouped_df, pd.DataFrame) and not grouped_df.empty and "Group ID" in grouped_df.columns:
+            translation_cols = [col for col in ["Translated Headline", "Translated Body"] if col in grouped_df.columns]
+            if translation_cols:
+                translation_updates = grouped_df[["Group ID", *translation_cols]].copy()
+                translation_updates = translation_updates.drop_duplicates(subset=["Group ID"], keep="last")
+
+        def apply_translation_updates(target_df: pd.DataFrame | None) -> pd.DataFrame | None:
+            if not isinstance(target_df, pd.DataFrame) or target_df.empty:
+                return target_df
+            if translation_updates.empty or "Group ID" not in target_df.columns:
+                return target_df
+
+            out = target_df.copy()
+            for col in translation_updates.columns:
+                if col == "Group ID":
+                    continue
+                if col not in out.columns:
+                    out[col] = pd.NA
+                value_map = translation_updates.set_index("Group ID")[col].to_dict()
+                out[col] = out["Group ID"].map(value_map).combine_first(out[col])
+            return out
+
         st.session_state.df_sentiment_unique = unique_df
         st.session_state.df_sentiment_grouped_rows = grouped_df
         st.session_state.df_sentiment_rows = grouped_df.copy()
+        st.session_state.df_traditional = apply_translation_updates(st.session_state.get("df_traditional"))
+        if "df_ai_grouped" in st.session_state:
+            st.session_state.df_ai_grouped = apply_translation_updates(st.session_state.get("df_ai_grouped"))
     
     
     def filter_candidates_for_review_mode(
@@ -109,7 +135,14 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
                 if not flagged.empty:
                     return flagged
             return out
-    
+
+        if review_mode == "Disagreements only":
+            if "AI Agreement" in out.columns:
+                disagreements = out[out["AI Agreement"].fillna("").astype(str).str.strip() == "Disagree"].copy()
+                if not disagreements.empty:
+                    return disagreements
+            return out
+
         return out
     
     
@@ -350,7 +383,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
     
     review_mode = st.radio(
         "Review queue",
-        ["Flagged for human review", "All unresolved stories"],
+        ["Flagged for human review", "Disagreements only", "All unresolved stories"],
         horizontal=True,
         label_visibility="collapsed",
         key="spotcheck_review_mode",
@@ -377,7 +410,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         review_mode=review_mode,
         low_conf_threshold=low_conf_threshold,
     )
-    st.caption("This filter changes the queue used by Prev/Next. Flagged focuses only on stories explicitly marked for human review.")
+    st.caption("This filter changes the queue used by Prev/Next. Flagged focuses on stories marked for human review, and Disagreements focuses only on first-vs-second AI mismatches.")
     
     if candidates.empty:
         st.info("No stories match the current view.")
@@ -428,7 +461,9 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
             try:
                 th = translate_text(head_raw) if str(head_raw).strip() else None
                 tb = translate_text(body_raw) if str(body_raw).strip() else None
-    
+
+                st.session_state.spot_lock_gid = current_group_id
+
                 unique, grouped = apply_translation_to_group(
                     st.session_state.df_sentiment_unique,
                     st.session_state.df_sentiment_grouped_rows,

@@ -67,6 +67,9 @@ def load_session_state(uploaded_file) -> None:
     uploaded_file.seek(0)
     session_data = dill.loads(uploaded_file.read())
 
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+
     saved_df_names = session_data.get("df_names", [])
     restored_df_names: list[str] = []
 

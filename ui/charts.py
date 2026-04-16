@@ -8,9 +8,9 @@ import pandas as pd
 
 
 _ADAPTIVE_AXIS_EXPR = """
-    datum.value >= 1e9 ? format(datum.value / 1e9, '.0f') + ' B' :
-    datum.value >= 1e6 ? format(datum.value / 1e6, '.0f') + ' M' :
-    datum.value >= 1e3 ? format(datum.value / 1e3, '.0f') + ' K' :
+    datum.value >= 1e9 ? (datum.value >= 1e10 ? format(datum.value / 1e9, '.0f') : format(datum.value / 1e9, '.1f')) + ' B' :
+    datum.value >= 1e6 ? (datum.value >= 1e7 ? format(datum.value / 1e6, '.0f') : format(datum.value / 1e6, '.1f')) + ' M' :
+    datum.value >= 1e3 ? (datum.value >= 1e4 ? format(datum.value / 1e3, '.0f') : format(datum.value / 1e3, '.1f')) + ' K' :
     format(datum.value, ',')
 """
 
@@ -24,7 +24,7 @@ def build_time_series_area_chart(
 ) -> Any | None:
     """
     Build an Altair area chart with adaptive y-axis labels like:
-    12 K, 3.4 M, 20 B.
+    12 K, 3.4 M, 1.2 B.
     """
     try:
         alt = importlib.import_module("altair")

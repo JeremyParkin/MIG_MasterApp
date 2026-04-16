@@ -696,7 +696,7 @@ with dist_col3:
 
 include_not_relevant_final = st.toggle(
     "Include Not Relevant in percentages",
-    value=True,
+    value=False,
     key="sentiment_distribution_include_nr_final",
 )
 

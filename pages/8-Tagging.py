@@ -556,7 +556,7 @@ st.subheader("Distribution")
 tag_dist = build_tag_distribution(st.session_state.df_tagging_unique)
 include_other = st.toggle(
     "Include Other in percentages",
-    value=True,
+    value=False,
     key="tagging_distribution_include_other",
 )
 
