@@ -11,6 +11,7 @@ import streamlit as st
 import processing.author_outlets as author_outlets_module
 from ui.insight_blocks import build_linked_example_blocks_html
 
+from processing.analysis_context import build_analysis_context_text, init_analysis_context_state
 from processing.author_insights import (
     DEFAULT_AUTHOR_SUMMARY_MODEL,
     build_author_headline_table,
@@ -86,6 +87,7 @@ def render_authors_page() -> None:
     init_author_outlets_state(st.session_state)
     init_author_outlet_prefetch_state(st.session_state)
     init_author_insights_state(st.session_state)
+    init_analysis_context_state(st.session_state)
     st.session_state.setdefault("authors_section", "Missing")
 
     if st.session_state.get("pickle_load", False) is True and len(st.session_state.get("auth_outlet_table", [])) > 0:
@@ -530,6 +532,23 @@ def render_authors_page() -> None:
             db_outlets = cache_entry.get("db_outlets", [])
             possibles = cache_entry.get("possibles", [])
 
+            if st.session_state.get("authors_outlet_form_author") != original_author_name:
+                st.session_state.authors_outlet_form_author = original_author_name
+                st.session_state.authors_outlet_manual = ""
+                if len(matched_authors) > 0:
+                    st.session_state.authors_outlet_pick = possibles[0] if possibles else ""
+                else:
+                    fallback_options = list(outlets_in_coverage_list) if len(outlets_in_coverage_list) > 0 else []
+                    st.session_state.authors_outlet_pick_fallback = fallback_options[0] if fallback_options else ""
+            else:
+                if len(matched_authors) > 0:
+                    if st.session_state.get("authors_outlet_pick") not in possibles:
+                        st.session_state.authors_outlet_pick = possibles[0] if possibles else ""
+                else:
+                    fallback_options = list(outlets_in_coverage_list) if len(outlets_in_coverage_list) > 0 else []
+                    if st.session_state.get("authors_outlet_pick_fallback") not in fallback_options:
+                        st.session_state.authors_outlet_pick_fallback = fallback_options[0] if fallback_options else ""
+
             form_block = st.container()
             info_block = st.container()
 
@@ -939,6 +958,7 @@ def render_authors_page() -> None:
                 st.session_state.authors_section = "Insights"
                 summaries = dict(summary_store)
                 client_name = str(st.session_state.get("client_name", "")).strip()
+                analysis_context = build_analysis_context_text(st.session_state)
                 with st.spinner("Generating author theme summaries..."):
                     for author_name in selected_authors:
                         author_row = shortlist_df.loc[shortlist_df["Author"] == author_name].iloc[0]
@@ -951,6 +971,7 @@ def render_authors_page() -> None:
                                 headline_df=headline_df,
                                 api_key=st.secrets["key"],
                                 model=DEFAULT_AUTHOR_SUMMARY_MODEL,
+                                analysis_context=analysis_context,
                             )
                             summaries[author_name] = summary_text
                         except Exception as e:

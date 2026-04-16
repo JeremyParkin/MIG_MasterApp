@@ -8,17 +8,18 @@ def render_top_stories_selection() -> None:
     
     import pandas as pd
     import streamlit as st
-    
-    from processing.top_stories import (
-        normalize_top_stories_df,
-        apply_filters,
-        build_grouped_story_candidates,
-        save_selected_rows,
-        remove_saved_candidates_from_display,
-        reset_generated_candidates,
-    )
+
+    import processing.top_stories as top_stories_module
     
     warnings.filterwarnings("ignore")
+    top_stories_module = importlib.reload(top_stories_module)
+
+    normalize_top_stories_df = top_stories_module.normalize_top_stories_df
+    apply_filters = top_stories_module.apply_filters
+    build_grouped_story_candidates = top_stories_module.build_grouped_story_candidates
+    save_selected_rows = top_stories_module.save_selected_rows
+    remove_saved_candidates_from_display = top_stories_module.remove_saved_candidates_from_display
+    reset_generated_candidates = top_stories_module.reset_generated_candidates
     
     title_col, chart_col = st.columns([2, 3], gap="medium")
     
@@ -333,6 +334,7 @@ def render_top_stories_selection() -> None:
                     "Group ID": None,
                     "Example Outlet": None,
                     "Example Type": None,
+                    "Source Group IDs": None,
                 },
                 hide_index=True,
             )

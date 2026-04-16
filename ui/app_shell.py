@@ -35,6 +35,7 @@ def build_pages() -> list:
     return [
         st.Page("pages/1-Getting_Started.py", title="Getting Started", icon=":material/play_arrow:"),
         st.Page("pages/2-Basic_Cleaning.py", title="Basic Cleaning", icon=":material/mop:"),
+        st.Page("pages/2a-Analysis_Context.py", title="Analysis Context", icon=":material/tune:"),
         st.Page("pages/3-Authors.py", title="Authors", icon=":material/groups:"),
         st.Page("pages/4-Outlets.py", title="Outlets", icon=":material/apartment:"),
         st.Page("pages/5-Translation.py", title="Translation", icon=":material/mediation:"),

@@ -12,6 +12,12 @@ import streamlit.components.v1 as components
 from streamlit_tags import st_tags
 from ui.insight_blocks import build_linked_example_blocks_html
 
+from processing.analysis_context import (
+    build_analysis_context_text,
+    build_analysis_context_caption,
+    get_analysis_context_payload,
+    init_analysis_context_state,
+)
 from processing.sentiment_config import (
     init_sentiment_config_state,
     calculate_representative_sample_size,
@@ -74,6 +80,7 @@ if not st.session_state.get("standard_step", False):
 from ui.spot_checks_view import render_spot_checks_page
 
 init_sentiment_config_state(st.session_state)
+init_analysis_context_state(st.session_state)
 init_ai_sentiment_state(st.session_state)
 init_api_meter()
 st.session_state.setdefault("sentiment_observation_output", {})
@@ -364,11 +371,14 @@ if st.session_state.sentiment_section == "Setup":
     st.write("**Sentiment configuration**")
 
     col1, col2 = st.columns([2, 1])
+    analysis_payload = get_analysis_context_payload(st.session_state)
     with col1:
-        primary_name = st.text_input(
-            "Primary Entity Name",
-            value=st.session_state.ui_primary_names[0] if st.session_state.ui_primary_names else "",
-        )
+        st.write("**Shared analysis context**")
+        analysis_caption = build_analysis_context_caption(st.session_state)
+        if analysis_caption:
+            st.caption(analysis_caption)
+        else:
+            st.caption("No shared analysis context saved yet. Add it on the Analysis Context page.")
     with col2:
         sentiment_type = st.selectbox(
             "Sentiment Type",
@@ -377,36 +387,11 @@ if st.session_state.sentiment_section == "Setup":
         )
 
     model = DEFAULT_SENTIMENT_MODEL
-    primary_names = [primary_name.strip()] if primary_name.strip() else []
+    primary_names = [analysis_payload["primary_name"].strip()] if analysis_payload["primary_name"].strip() else []
 
     st.divider()
-
-    alternate_names = st_tags(
-        label="**Alternate names**",
-        text="Press enter to add more",
-        maxtags=10,
-        value=st.session_state.ui_alternate_names,
-        key="sentiment_alternate_names_tags",
-    )
-    spokespeople = st_tags(
-        label="**Key spokespeople**",
-        text="Press enter to add more",
-        maxtags=10,
-        value=st.session_state.ui_spokespeople,
-        key="sentiment_spokespeople_tags",
-    )
-    products = st_tags(
-        label="**Products or sub-brands**",
-        text="Press enter to add more",
-        maxtags=10,
-        value=st.session_state.ui_products,
-        key="sentiment_products_tags",
-    )
-    toning_rationale = st.text_area(
-        "**Additional rationale, context, or guidance** (optional):",
-        st.session_state.ui_toning_rationale,
-        key="sentiment_toning_rationale_text",
-    )
+    if analysis_payload["guidance"]:
+        st.caption(f"Shared guidance: {analysis_payload['guidance']}")
 
     prep_clicked = st.button("Prepare Sentiment Dataset", type="primary")
 
@@ -448,10 +433,10 @@ if st.session_state.sentiment_section == "Setup":
         build_sentiment_configuration(
             session_state=st.session_state,
             primary_names=primary_names,
-            alternate_names=alternate_names,
-            spokespeople=spokespeople,
-            products=products,
-            toning_rationale=toning_rationale,
+            alternate_names=analysis_payload["alternate_names"],
+            spokespeople=analysis_payload["spokespeople"],
+            products=analysis_payload["products"],
+            toning_rationale=analysis_payload["guidance"],
             sentiment_type=sentiment_type,
             model=model,
         )
@@ -732,6 +717,7 @@ with generate_obs_col1:
                     include_not_relevant=include_not_relevant_final,
                     api_key=st.secrets["key"],
                     model=DEFAULT_SENTIMENT_OBSERVATION_MODEL,
+                    analysis_context=build_analysis_context_text(st.session_state),
                 )
                 st.session_state.sentiment_observation_output = obs_output
                 st.session_state.sentiment_observation_include_nr = include_not_relevant_final

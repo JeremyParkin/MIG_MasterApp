@@ -180,6 +180,7 @@ def build_author_prompt(
     client_name: str,
     author_row: pd.Series,
     headline_df: pd.DataFrame,
+    analysis_context: str = "",
 ) -> str:
     story_json = []
     for _, row in headline_df.drop_duplicates(subset=["Headline", "Representative Outlet"]).head(8).iterrows():
@@ -192,18 +193,32 @@ def build_author_prompt(
         })
 
     return f"""
-You are helping a media intelligence analyst summarize an author's coverage themes that are relevant to {client_name or 'the client brand'}.
+You are helping a media intelligence analyst summarize an author's coverage themes that are relevant to this analysis focus:
+{analysis_context or client_name or 'the client brand'}
 
 Write 1-2 concise sentences, about 35-80 words total.
 
 Requirements:
 - Keep it factual and report-ready.
 - Focus on recurring themes, angles, or beats visible in the headlines and example stories.
-- Keep the emphasis on how this author's coverage relates to {client_name or 'the client brand'}.
+- Assume the shared analysis focus above is already understood.
+- Start quickly with the author's distinctive beat, angle, or role in the coverage.
+- Do not waste opening words restating that the author's coverage is "related to" or "focused on" the topic.
+- Vary the opening structure across authors.
+- Keep the emphasis on the distinctive substance of the author's coverage, not on re-framing the assignment.
 - Mention notable outlets only when they materially help describe the author's footprint.
 - Do not invent expertise, intent, or biography.
 - Do not list raw counts unless they are essential.
 - Do not use bullets.
+- Prefer direct phrasing such as:
+  - "Writes mainly about..."
+  - "Highlights..."
+  - "Shows up most around..."
+  - "Appears mainly in..."
+- Avoid boilerplate phrasing such as:
+  - "Quebec-related coverage..."
+  - "Coverage of [topic]..."
+  - "This author's coverage centers on..." when a more direct opening would work.
 
 Author: {author_name}
 Total mentions: {int(author_row.get("Mention_Total", 0) or 0)}
@@ -221,8 +236,9 @@ def generate_author_summary(
     headline_df: pd.DataFrame,
     api_key: str,
     model: str = DEFAULT_AUTHOR_SUMMARY_MODEL,
+    analysis_context: str = "",
 ) -> tuple[str, int, int]:
-    prompt = build_author_prompt(author_name, client_name, author_row, headline_df)
+    prompt = build_author_prompt(author_name, client_name, author_row, headline_df, analysis_context=analysis_context)
     client = OpenAI(api_key=api_key)
 
     response = client.responses.create(

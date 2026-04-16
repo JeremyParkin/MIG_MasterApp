@@ -49,6 +49,201 @@ def normalize_top_stories_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _normalize_top_story_headline(text: str) -> str:
+    text = str(text or "").strip().lower()
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[^\w\s]", "", text)
+    return text.strip()
+
+
+def _normalize_top_story_snippet(text: str) -> str:
+    text = str(text or "").strip().lower()
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[^\w\s]", "", text)
+    return text.strip()
+
+
+def _top_story_snippet_fingerprint(text: str, max_chars: int = 160) -> str:
+    normalized = _normalize_top_story_snippet(text)
+    if not normalized:
+        return ""
+    return normalized[:max_chars].strip()
+
+
+def _headline_similarity(a: str, b: str) -> float:
+    a_norm = _normalize_top_story_headline(a)
+    b_norm = _normalize_top_story_headline(b)
+    if not a_norm or not b_norm:
+        return 0.0
+
+    a_tokens = set(a_norm.split())
+    b_tokens = set(b_norm.split())
+    if not a_tokens or not b_tokens:
+        return 0.0
+
+    overlap = len(a_tokens & b_tokens)
+    return overlap / max(min(len(a_tokens), len(b_tokens)), 1)
+
+
+def _pick_consolidated_top_story_row(group: pd.DataFrame) -> pd.Series:
+    working = group.copy()
+    working["_snippet_len"] = working["Example Snippet"].fillna("").astype(str).str.len()
+    working["_headline_len"] = working["Headline"].fillna("").astype(str).str.len()
+    working["_has_url"] = working["Example URL"].fillna("").astype(str).str.strip().ne("")
+    ordered = working.sort_values(
+        by=["_snippet_len", "Mentions", "Impressions", "_has_url", "_headline_len"],
+        ascending=[False, False, False, False, False],
+        na_position="last",
+    )
+    return ordered.iloc[0]
+
+
+def _top_story_merge_type(example_type: str) -> str:
+    example_type = str(example_type or "").strip().upper()
+    if example_type in {"ONLINE", "PRINT"}:
+        return "TEXT"
+    return example_type
+
+
+def _assign_text_story_merge_ids(mergeable: pd.DataFrame) -> pd.Series:
+    merge_ids = pd.Series(index=mergeable.index, dtype="object")
+    next_id = 0
+    ordered = mergeable.sort_values(["Date", "Headline"], na_position="last", kind="mergesort")
+    headline_groups: dict[str, tuple[str, object]] = {}
+    snippet_groups: list[tuple[str, str, str, object]] = []
+
+    for idx, row in ordered.iterrows():
+        date_value = row.get("Date")
+        headline_key = row.get("_normalized_headline", "")
+        snippet_key = row.get("_snippet_fingerprint", "")
+        headline = row.get("Headline", "")
+
+        chosen_group: str | None = None
+
+        if headline_key and headline_key in headline_groups:
+            existing_group, existing_date = headline_groups[headline_key]
+            if (
+                pd.notna(date_value)
+                and pd.notna(existing_date)
+                and abs((pd.Timestamp(date_value) - pd.Timestamp(existing_date)).days) <= 1
+            ):
+                chosen_group = existing_group
+
+        if chosen_group is None and snippet_key and len(snippet_key) >= 80:
+            for existing_snippet_key, existing_headline, existing_group, existing_date in reversed(snippet_groups):
+                if pd.notna(date_value) and pd.notna(existing_date):
+                    date_gap = abs((pd.Timestamp(date_value) - pd.Timestamp(existing_date)).days)
+                else:
+                    date_gap = 999
+                if date_gap > 1:
+                    continue
+                if snippet_key == existing_snippet_key and _headline_similarity(headline, existing_headline) >= 0.5:
+                    chosen_group = existing_group
+                    break
+
+        if chosen_group is None:
+            chosen_group = f"TEXT::{date_value}::{next_id}"
+            next_id += 1
+
+        merge_ids.loc[idx] = chosen_group
+
+        if headline_key:
+            headline_groups[headline_key] = (chosen_group, date_value)
+        if snippet_key and len(snippet_key) >= 80:
+            snippet_groups.append((snippet_key, headline, chosen_group, date_value))
+
+    return merge_ids
+
+
+def consolidate_top_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Consolidate likely duplicate Top Story candidates for ONLINE/PRINT together
+    using normalized headline + date, while keeping broadcast types separate.
+    """
+    working = normalize_top_stories_df(df)
+    if working.empty:
+        return working
+
+    if "Example Type" not in working.columns:
+        working["Example Type"] = ""
+
+    working["Date"] = pd.to_datetime(working["Date"], errors="coerce").dt.date
+    working["Example Type"] = working["Example Type"].fillna("").astype(str).str.strip().str.upper()
+    working["_merge_type"] = working["Example Type"].map(_top_story_merge_type)
+    working["_normalized_headline"] = working["Headline"].map(_normalize_top_story_headline)
+    working["_snippet_fingerprint"] = working["Example Snippet"].map(_top_story_snippet_fingerprint)
+    working["Source Group IDs"] = (
+        working["Group ID"]
+        .apply(lambda x: "" if pd.isna(x) else str(x).strip())
+        .replace("None", "")
+    )
+
+    mergeable_mask = (
+        working["_merge_type"].eq("TEXT")
+        & working["Date"].notna()
+        & (
+            working["_normalized_headline"].ne("")
+            | working["_snippet_fingerprint"].ne("")
+        )
+    )
+
+    passthrough = working.loc[~mergeable_mask].copy()
+    mergeable = working.loc[mergeable_mask].copy()
+
+    if mergeable.empty:
+        return working.drop(columns=["_normalized_headline", "_snippet_fingerprint", "_merge_type"], errors="ignore")
+
+    rows: list[dict[str, Any]] = []
+    mergeable["_text_story_merge_id"] = _assign_text_story_merge_ids(mergeable)
+
+    for group_key, group in mergeable.groupby("_text_story_merge_id", dropna=False):
+        if len(group) == 1:
+            rows.append(group.drop(columns=["_normalized_headline", "_snippet_fingerprint", "_merge_type", "_text_story_merge_id"], errors="ignore").iloc[0].to_dict())
+            continue
+
+        best_row = _pick_consolidated_top_story_row(group)
+        source_ids = [str(x).strip() for x in group["Group ID"].dropna().astype(str).tolist() if str(x).strip()]
+        source_ids = list(dict.fromkeys(source_ids))
+
+        merged_row = best_row.drop(labels=["_normalized_headline", "_snippet_fingerprint", "_merge_type", "_text_story_merge_id"], errors="ignore").to_dict()
+        merged_row["Group ID"] = f"TOPMERGE::{group_key}"
+        merged_row["Mentions"] = int(pd.to_numeric(group["Mentions"], errors="coerce").fillna(0).sum())
+        merged_row["Impressions"] = int(pd.to_numeric(group["Impressions"], errors="coerce").fillna(0).sum())
+        merged_types = [str(x).strip().upper() for x in group["Example Type"].dropna().astype(str).tolist() if str(x).strip()]
+        merged_types = list(dict.fromkeys(merged_types))
+        merged_row["Example Type"] = ", ".join(merged_types)
+        merged_row["Source Group IDs"] = " | ".join(source_ids)
+        rows.append(merged_row)
+
+    merged_df = pd.DataFrame(rows)
+    passthrough = passthrough.drop(columns=["_normalized_headline", "_snippet_fingerprint", "_merge_type"], errors="ignore")
+    passthrough["Source Group IDs"] = (
+        passthrough["Source Group IDs"].fillna("").astype(str).replace("None", "")
+    )
+    if "Source Group IDs" not in merged_df.columns:
+        merged_df["Source Group IDs"] = merged_df["Group ID"].fillna("").astype(str)
+
+    out = pd.concat([merged_df, passthrough], ignore_index=True, sort=False)
+    out["Date"] = pd.to_datetime(out["Date"], errors="coerce").dt.date
+    out["Mentions"] = pd.to_numeric(out["Mentions"], errors="coerce").fillna(0).astype(int)
+    out["Impressions"] = pd.to_numeric(out["Impressions"], errors="coerce").fillna(0).astype(int)
+    out["Source Group IDs"] = out["Source Group IDs"].fillna("").astype(str).replace("None", "")
+    desired_cols = [
+        "Group ID",
+        "Headline",
+        "Date",
+        "Mentions",
+        "Impressions",
+        "Example Outlet",
+        "Example URL",
+        "Example Type",
+        "Example Snippet",
+        "Source Group IDs",
+    ]
+    existing = [c for c in desired_cols if c in out.columns]
+    return out[existing].copy()
+
+
 
 def build_grouped_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -118,7 +313,7 @@ def build_grouped_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
     result["Impressions"] = pd.to_numeric(result["Impressions"], errors="coerce").fillna(0)
     result["Mentions"] = pd.to_numeric(result["Mentions"], errors="coerce").fillna(0).astype(int)
 
-    return result[[
+    result = result[[
         "Group ID",
         "Headline",
         "Date",
@@ -129,6 +324,7 @@ def build_grouped_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
         "Example Type",
         "Example Snippet",
     ]]
+    return consolidate_top_story_candidates(result)
 
 
 def tokenize_boolean_query(query: str):

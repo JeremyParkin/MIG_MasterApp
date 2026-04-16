@@ -8,6 +8,7 @@ import warnings
 import pandas as pd
 import streamlit as st
 
+from processing.analysis_context import build_analysis_context_text, init_analysis_context_state
 import processing.outlet_insights as outlet_insights
 from ui.insight_blocks import build_linked_example_blocks_html
 from utils.formatting import NUMERIC_FORMAT_DICT
@@ -62,6 +63,7 @@ def render_outlets_page() -> None:
         st.stop()
 
     init_outlet_workflow_state(st.session_state)
+    init_analysis_context_state(st.session_state)
 
     def rebuild_outlet_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         df_traditional = st.session_state.df_traditional.copy()
@@ -682,6 +684,7 @@ def render_outlets_page() -> None:
             if st.button("Generate outlet coverage themes", type="primary", key="generate_outlet_summaries"):
                 summaries = dict(st.session_state.get("outlet_insights_summaries", {}))
                 client_name = str(st.session_state.get("client_name", "")).strip()
+                analysis_context = build_analysis_context_text(st.session_state)
                 with st.spinner("Generating outlet theme summaries..."):
                     for outlet_name in selected_outlets:
                         outlet_row = shortlist_df.loc[shortlist_df["Outlet"] == outlet_name].iloc[0]
@@ -701,6 +704,7 @@ def render_outlets_page() -> None:
                                 top_authors_df=author_df,
                                 api_key=st.secrets["key"],
                                 model=DEFAULT_OUTLET_SUMMARY_MODEL,
+                                analysis_context=analysis_context,
                             )
                             summaries[outlet_name] = summary_text
                         except Exception as e:

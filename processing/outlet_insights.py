@@ -392,6 +392,7 @@ def build_outlet_prompt(
     outlet_row: pd.Series,
     headline_df: pd.DataFrame,
     top_authors_df: pd.DataFrame,
+    analysis_context: str = "",
 ) -> str:
     story_json = []
     for _, row in headline_df.drop_duplicates(subset=["Headline"]).head(6).iterrows():
@@ -405,18 +406,32 @@ def build_outlet_prompt(
     top_authors = top_authors_df["Author"].dropna().astype(str).head(5).tolist() if not top_authors_df.empty else []
 
     return f"""
-You are helping a media intelligence analyst summarize why an outlet matters in coverage relevant to {client_name or 'the client brand'}.
+You are helping a media intelligence analyst summarize why an outlet matters in coverage relevant to this analysis focus:
+{analysis_context or client_name or 'the client brand'}.
 
 Write 1-2 concise sentences, about 35-80 words total.
 
 Requirements:
 - Keep it factual and report-ready.
 - Focus on recurring themes or angles visible in the example stories.
-- Keep the emphasis on how this outlet's coverage relates to {client_name or 'the client brand'}.
+- Assume the shared analysis focus above is already understood.
+- Start quickly with the outlet's actual coverage role, topics, or framing style.
+- Do not spend opening words explaining that the outlet is "relevant to" or "matters for" the topic.
+- Vary the opening structure across outlets.
+- Keep the emphasis on what the outlet tends to surface, package, or amplify within the analysis focus.
 - Mention specific contributing authors only if materially helpful.
 - Do not invent significance, editorial stance, or motives.
 - Do not speculate about whether the outlet originated a story.
 - Do not use bullets.
+- Prefer direct phrasing such as:
+  - "Regularly surfaces..."
+  - "Shows up most around..."
+  - "Packages the topic through..."
+  - "Frames the coverage through..."
+- Avoid boilerplate phrasing such as:
+  - "X is relevant because..."
+  - "X matters for [topic] because..."
+  - "Coverage of [topic] in X..."
 
 Outlet: {outlet_name}
 Top media types: {outlet_row.get("Top_Types", "")}
@@ -438,8 +453,16 @@ def generate_outlet_summary(
     top_authors_df: pd.DataFrame,
     api_key: str,
     model: str = DEFAULT_OUTLET_SUMMARY_MODEL,
+    analysis_context: str = "",
 ) -> tuple[str, int, int]:
-    prompt = build_outlet_prompt(outlet_name, client_name, outlet_row, headline_df, top_authors_df)
+    prompt = build_outlet_prompt(
+        outlet_name,
+        client_name,
+        outlet_row,
+        headline_df,
+        top_authors_df,
+        analysis_context=analysis_context,
+    )
     client = OpenAI(api_key=api_key)
 
     response = client.responses.create(

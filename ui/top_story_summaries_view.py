@@ -6,11 +6,15 @@ def render_top_story_summaries() -> None:
     import warnings
     
     import streamlit as st
-    from streamlit_tags import st_tags
+    
+    from processing.analysis_context import (
+        build_analysis_context_caption,
+        get_analysis_context_payload,
+        init_analysis_context_state,
+    )
     
     from processing.top_story_summaries import (
         init_top_story_summary_state,
-        seed_entity_names,
         normalize_summary_df,
         build_entity_context,
         build_prompt_preview,
@@ -33,6 +37,7 @@ def render_top_story_summaries() -> None:
         st.stop()
     
     init_top_story_summary_state(st.session_state)
+    init_analysis_context_state(st.session_state)
     
     batch = st.session_state.pop("__summary_batch_result__", None)
     
@@ -53,51 +58,19 @@ def render_top_story_summaries() -> None:
     
     st.subheader("Generate Analysis")
     
-    summary_col1, summary_col2, summary_col3 = st.columns(3, gap="small")
-    
-    with summary_col1:
-        client_name = str(st.session_state.get("client_name", "")).strip()
-        seed_entity_names(st.session_state, client_name)
-    
-        entity_names = st_tags(
-            label="Entity name and aliases",
-            text="Primary then aliases",
-            maxtags=20,
-            value=st.session_state.top_story_entity_names,
-            key="top_story_entity_names_tags",
-        )
-        st.session_state.top_story_entity_names = entity_names
-    
-        primary_name = entity_names[0].strip() if entity_names else ""
-        alternate_names = [name.strip() for name in entity_names[1:] if name.strip()]
-    
-    with summary_col2:
-        spokespeople = st_tags(
-            label="Key spokespeople",
-            maxtags=20,
-            value=st.session_state.top_story_spokespeople,
-            key="top_story_spokespeople_tags",
-        )
-        st.session_state.top_story_spokespeople = spokespeople
-    
-    with summary_col3:
-        products = st_tags(
-            label="Products / sub-brands / initiatives",
-            text="Press enter to add more",
-            maxtags=20,
-            value=st.session_state.top_story_products,
-            key="top_story_products_tags",
-        )
-        st.session_state.top_story_products = products
-    
-    additional_guidance = st.text_area(
-        "**Additional guidance (optional)**",
-        value=st.session_state.top_story_guidance,
-        height=50,
-        help="Optional extra instructions for how the model should interpret or prioritize the entity in coverage.",
-        key="top_story_guidance_text",
-    )
-    st.session_state.top_story_guidance = additional_guidance
+    analysis_payload = get_analysis_context_payload(st.session_state)
+    primary_name = analysis_payload["primary_name"]
+    alternate_names = analysis_payload["alternate_names"]
+    spokespeople = analysis_payload["spokespeople"]
+    products = analysis_payload["products"]
+    additional_guidance = analysis_payload["guidance"]
+
+    st.write("**Shared analysis context**")
+    analysis_caption = build_analysis_context_caption(st.session_state)
+    if analysis_caption:
+        st.caption(analysis_caption)
+    else:
+        st.caption("No shared analysis context saved yet. Add it on the Analysis Context page.")
     
     generate_col1, generate_col2 = st.columns([1.5, 3], gap="medium")
     with generate_col1:

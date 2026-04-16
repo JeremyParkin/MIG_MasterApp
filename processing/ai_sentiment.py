@@ -464,9 +464,11 @@ def build_sentiment_observation_prompt(
     sentiment_type: str,
     include_not_relevant: bool,
     payload: dict[str, Any],
+    analysis_context: str = "",
 ) -> str:
     return f"""
-You are helping a media intelligence analyst write concise, report-ready sentiment observations for {client_name or 'the client'}.
+You are helping a media intelligence analyst write concise, report-ready sentiment observations for this analysis focus:
+{analysis_context or client_name or 'the client'}.
 
 Use the finalized sentiment distribution and representative grouped stories below.
 The examples are intentionally selected from the most syndicated and highest-volume coverage in each sentiment bucket.
@@ -507,6 +509,7 @@ def generate_sentiment_observations(
     include_not_relevant: bool,
     api_key: str,
     model: str = DEFAULT_SENTIMENT_OBSERVATION_MODEL,
+    analysis_context: str = "",
 ) -> tuple[dict[str, Any], int, int]:
     payload = build_sentiment_observation_payload(
         df_unique=df_unique,
@@ -519,6 +522,7 @@ def generate_sentiment_observations(
         sentiment_type=sentiment_type,
         include_not_relevant=include_not_relevant,
         payload=payload,
+        analysis_context=analysis_context,
     )
 
     client = OpenAI(api_key=api_key)
