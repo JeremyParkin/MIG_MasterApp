@@ -49,6 +49,20 @@ def normalize_top_stories_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _empty_top_story_candidate_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=[
+        "Group ID",
+        "Headline",
+        "Date",
+        "Mentions",
+        "Impressions",
+        "Example Outlet",
+        "Example URL",
+        "Example Type",
+        "Example Snippet",
+    ])
+
+
 def _normalize_top_story_headline(text: str) -> str:
     text = str(text or "").strip().lower()
     text = re.sub(r"\s+", " ", text)
@@ -155,6 +169,68 @@ def _assign_text_story_merge_ids(mergeable: pd.DataFrame) -> pd.Series:
     return merge_ids
 
 
+def build_prime_grouped_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Build one representative candidate per original Group ID, before any
+    Top Stories-specific consolidation.
+    """
+    df = normalize_top_stories_df(df)
+
+    if df.empty or "Group ID" not in df.columns:
+        return _empty_top_story_candidate_df()
+
+    if "Prime Example" not in df.columns:
+        raise ValueError(
+            "Prime Example column is missing. Please rerun Basic Cleaning so grouped stories have a canonical exemplar."
+        )
+
+    rows: list[dict[str, Any]] = []
+
+    for group_id, group in df.groupby("Group ID", dropna=False):
+        mentions = pd.to_numeric(group["Mentions"], errors="coerce").fillna(0).sum()
+        impressions = pd.to_numeric(group["Impressions"], errors="coerce").fillna(0).sum()
+
+        prime_group = group[group["Prime Example"] == 1].copy()
+        if prime_group.empty:
+            continue
+
+        best_row = prime_group.iloc[0]
+        group_id_str = "" if pd.isna(group_id) else str(group_id).strip()
+
+        rows.append({
+            "Group ID": group_id,
+            "Headline": best_row.get("Headline", ""),
+            "Date": best_row.get("Date", pd.NaT),
+            "Mentions": int(mentions),
+            "Impressions": impressions,
+            "Example Outlet": best_row.get("Outlet", ""),
+            "Example URL": best_row.get("URL", ""),
+            "Example Type": best_row.get("Type", ""),
+            "Example Snippet": best_row.get("Snippet", ""),
+            "Source Group IDs": group_id_str,
+        })
+
+    if not rows:
+        return _empty_top_story_candidate_df()
+
+    result = pd.DataFrame(rows)
+    result["Date"] = pd.to_datetime(result["Date"], errors="coerce").dt.date
+    result["Impressions"] = pd.to_numeric(result["Impressions"], errors="coerce").fillna(0)
+    result["Mentions"] = pd.to_numeric(result["Mentions"], errors="coerce").fillna(0).astype(int)
+    return result[[
+        "Group ID",
+        "Headline",
+        "Date",
+        "Mentions",
+        "Impressions",
+        "Example Outlet",
+        "Example URL",
+        "Example Type",
+        "Example Snippet",
+        "Source Group IDs",
+    ]]
+
+
 def consolidate_top_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
     """
     Consolidate likely duplicate Top Story candidates for ONLINE/PRINT together
@@ -250,70 +326,55 @@ def build_grouped_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
     Group filtered row-level stories by Group ID and use the canonical Prime Example row
     as the representative row.
     """
-    df = normalize_top_stories_df(df)
+    result = build_prime_grouped_story_candidates(df)
+    return consolidate_top_story_candidates(result)
 
-    if df.empty or "Group ID" not in df.columns:
-        return pd.DataFrame(columns=[
-            "Group ID",
-            "Headline",
-            "Date",
-            "Mentions",
-            "Impressions",
-            "Example Outlet",
-            "Example URL",
-            "Example Type",
-            "Example Snippet",
-        ])
 
-    if "Prime Example" not in df.columns:
-        raise ValueError(
-            "Prime Example column is missing. Please rerun Basic Cleaning so grouped stories have a canonical exemplar."
-        )
+def parse_source_group_ids(value: Any, fallback_group_id: Any = None) -> list[str]:
+    parts: list[str] = []
+    raw = str(value or "").strip()
+    if raw:
+        parts.extend([p.strip() for p in raw.split("|") if p.strip()])
 
-    rows: list[dict[str, Any]] = []
+    if not parts and fallback_group_id is not None and not pd.isna(fallback_group_id):
+        fallback = str(fallback_group_id).strip()
+        if fallback:
+            parts.append(fallback)
 
-    for group_id, group in df.groupby("Group ID", dropna=False):
-        mentions = pd.to_numeric(group["Mentions"], errors="coerce").fillna(0).sum()
-        impressions = pd.to_numeric(group["Impressions"], errors="coerce").fillna(0).sum()
+    return list(dict.fromkeys(parts))
 
-        prime_group = group[group["Prime Example"] == 1].copy()
-        if prime_group.empty:
-            continue
 
-        # Just in case, keep one canonical representative
-        best_row = prime_group.iloc[0]
+def build_source_candidate_table(
+    df: pd.DataFrame,
+    source_group_ids: Any,
+    fallback_group_id: Any = None,
+) -> pd.DataFrame:
+    candidates = build_prime_grouped_story_candidates(df)
+    if candidates.empty:
+        return candidates
 
-        rows.append({
-            "Group ID": group_id,
-            "Headline": best_row.get("Headline", ""),
-            "Date": best_row.get("Date", pd.NaT),
-            "Mentions": int(mentions),
-            "Impressions": impressions,
-            "Example Outlet": best_row.get("Outlet", ""),
-            "Example URL": best_row.get("URL", ""),
-            "Example Type": best_row.get("Type", ""),
-            "Example Snippet": best_row.get("Snippet", ""),
-        })
+    source_ids = parse_source_group_ids(source_group_ids, fallback_group_id=fallback_group_id)
+    if not source_ids:
+        return _empty_top_story_candidate_df()
 
-    if not rows:
-        return pd.DataFrame(columns=[
-            "Group ID",
-            "Headline",
-            "Date",
-            "Mentions",
-            "Impressions",
-            "Example Outlet",
-            "Example URL",
-            "Example Type",
-            "Example Snippet",
-        ])
+    candidate_working = candidates.copy()
+    candidate_working["_group_id_key"] = candidate_working["Group ID"].astype(str)
+    candidate_working = candidate_working[candidate_working["_group_id_key"].isin(source_ids)].copy()
+    if candidate_working.empty:
+        return _empty_top_story_candidate_df()
 
-    result = pd.DataFrame(rows)
-    result["Date"] = pd.to_datetime(result["Date"], errors="coerce").dt.date
-    result["Impressions"] = pd.to_numeric(result["Impressions"], errors="coerce").fillna(0)
-    result["Mentions"] = pd.to_numeric(result["Mentions"], errors="coerce").fillna(0).astype(int)
+    candidate_working["_snippet_len"] = candidate_working["Example Snippet"].fillna("").astype(str).str.len()
+    candidate_working["_has_url"] = candidate_working["Example URL"].fillna("").astype(str).str.strip().ne("")
+    candidate_working["_headline_len"] = candidate_working["Headline"].fillna("").astype(str).str.len()
+    candidate_working = candidate_working.sort_values(
+        by=["_snippet_len", "Mentions", "Impressions", "_has_url", "_headline_len"],
+        ascending=[False, False, False, False, False],
+        na_position="last",
+    ).reset_index(drop=True)
+    candidate_working["Source Rank"] = range(1, len(candidate_working) + 1)
 
-    result = result[[
+    display_cols = [
+        "Source Rank",
         "Group ID",
         "Headline",
         "Date",
@@ -323,8 +384,71 @@ def build_grouped_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
         "Example URL",
         "Example Type",
         "Example Snippet",
-    ]]
-    return consolidate_top_story_candidates(result)
+        "Source Group IDs",
+    ]
+    existing = [c for c in display_cols if c in candidate_working.columns]
+    return candidate_working[existing].copy()
+
+
+def rotate_saved_story_source(
+    saved_df: pd.DataFrame,
+    source_df: pd.DataFrame,
+    story_group_id: Any,
+    step: int = 1,
+) -> pd.DataFrame:
+    if saved_df.empty or "Group ID" not in saved_df.columns:
+        return saved_df
+
+    story_key = "" if pd.isna(story_group_id) else str(story_group_id).strip()
+    if not story_key:
+        return saved_df
+
+    working = saved_df.copy()
+    working["_group_id_key"] = working["Group ID"].astype(str)
+    match_idx = working.index[working["_group_id_key"] == story_key].tolist()
+    if not match_idx:
+        return saved_df
+
+    row_idx = match_idx[0]
+    current_row = working.loc[row_idx]
+    candidates = build_source_candidate_table(
+        df=source_df,
+        source_group_ids=current_row.get("Source Group IDs", ""),
+        fallback_group_id=current_row.get("Group ID"),
+    )
+    if len(candidates) <= 1:
+        return saved_df
+
+    current_url = str(current_row.get("Example URL", "") or "").strip()
+    current_outlet = str(current_row.get("Example Outlet", "") or "").strip()
+    current_type = str(current_row.get("Example Type", "") or "").strip()
+
+    current_pos = 0
+    for pos, (_, candidate) in enumerate(candidates.iterrows()):
+        if (
+            str(candidate.get("Example URL", "") or "").strip() == current_url
+            and str(candidate.get("Example Outlet", "") or "").strip() == current_outlet
+            and str(candidate.get("Example Type", "") or "").strip() == current_type
+        ):
+            current_pos = pos
+            break
+
+    next_pos = (current_pos + step) % len(candidates)
+    next_candidate = candidates.iloc[next_pos]
+
+    for col in ["Example Outlet", "Example URL", "Example Type", "Example Snippet", "Date"]:
+        if col in working.columns and col in next_candidate.index:
+            working.at[row_idx, col] = next_candidate.get(col, working.at[row_idx, col])
+
+    if "Source Group IDs" in working.columns and "Source Group IDs" in next_candidate.index:
+        working.at[row_idx, "Source Group IDs"] = next_candidate.get("Source Group IDs", working.at[row_idx, "Source Group IDs"])
+
+    for generated_col in ["Chart Callout", "Top Story Summary", "Entity Sentiment Label", "Entity Sentiment Rationale", "Entity Sentiment"]:
+        if generated_col in working.columns:
+            working.at[row_idx, generated_col] = ""
+
+    working = working.drop(columns=["_group_id_key"], errors="ignore")
+    return working
 
 
 def tokenize_boolean_query(query: str):

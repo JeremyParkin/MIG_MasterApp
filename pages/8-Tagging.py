@@ -160,9 +160,12 @@ st.markdown(
         color: rgba(250, 250, 250, 0.72);
         font-size: 0.95rem;
     }
-    div[data-testid="stButton"] button[kind="secondary"] {
+    div[data-testid="stButton"] button {
         min-height: 2.8rem;
         font-weight: 600;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
     </style>
     """,

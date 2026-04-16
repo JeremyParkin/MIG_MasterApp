@@ -29,7 +29,7 @@ def render_top_story_summaries() -> None:
     
     warnings.filterwarnings("ignore")
     
-    st.subheader("Step 2: Top Story Insights")
+    st.subheader("Step 3: Top Story Insights")
     st.caption("Generate the saved top-story outputs and review the overall observations and report copy.")
     
     if len(st.session_state.get("added_df", [])) == 0:
