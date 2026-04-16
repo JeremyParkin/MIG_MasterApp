@@ -164,8 +164,10 @@ def build_author_headline_table(story_level_df: pd.DataFrame, author_name: str, 
     display_cols = [
         "Headline",
         "Date",
+        "Type",
         "Story Mentions",
         "Story Impressions",
+        "Story Effective Reach",
         "Representative Outlet",
         "Representative URL",
     ]

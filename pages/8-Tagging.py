@@ -189,7 +189,7 @@ with step2:
         st.rerun()
 with step3:
     if st.button(
-        "3. Review",
+        "3. Insights",
         key="tagging_nav_review",
         use_container_width=True,
         type="primary" if st.session_state.tagging_section == "Review" else "secondary",
@@ -198,7 +198,7 @@ with step3:
         st.rerun()
 
 st.markdown(
-    '<div class="tagging-step-note">Work left to right: prepare the tagging dataset, run AI tagging, then review the outputs and distributions.</div>',
+    '<div class="tagging-step-note">Work left to right: prepare the tagging dataset, run AI tagging, then review the output-ready insights.</div>',
     unsafe_allow_html=True,
 )
 
@@ -538,7 +538,7 @@ if st.session_state.tagging_section == "Run":
 # =========================
 # STEP 3: REVIEW OUTPUTS
 # =========================
-st.subheader("Step 3: Review Tagging Outputs")
+st.subheader("Step 3: Tagging Insights")
 st.caption("Review the current tag distribution, generate report-ready tag observations, and inspect the grouped dataset when needed.")
 
 review_col1, review_col2, review_col3 = st.columns(3)

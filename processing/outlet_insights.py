@@ -210,8 +210,10 @@ def build_outlet_headline_table(story_level_df: pd.DataFrame, outlet_name: str, 
         "Headline",
         "Date",
         "Author",
+        "Type",
         "Story Mentions",
         "Story Impressions",
+        "Story Effective Reach",
         "Representative URL",
     ]
     return outlet_rows[[c for c in display_cols if c in outlet_rows.columns]].copy()

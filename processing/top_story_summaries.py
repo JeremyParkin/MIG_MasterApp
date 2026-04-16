@@ -21,6 +21,7 @@ TYPE_DICT = {
 }
 
 DEFAULT_MODEL = "gpt-5.4-mini"
+DEFAULT_OBSERVATION_MODEL = "gpt-5.4-mini"
 SHORT_SNIPPET_THRESHOLD = 150
 DEFAULT_MAX_WORKERS = 8
 MAX_RETRIES = 2
@@ -33,6 +34,7 @@ def init_top_story_summary_state(session_state) -> None:
         "top_story_products": [],
         "top_story_guidance": "",
         "top_story_entity_names_seeded": False,
+        "top_story_observation_output": None,
     }.items():
         if key not in session_state:
             session_state[key] = default
@@ -464,3 +466,87 @@ def build_markdown_output(
         markdown_content += "<br>"
 
     return markdown_content
+
+
+def build_top_story_observation_payload(df: pd.DataFrame) -> dict[str, Any]:
+    working = normalize_summary_df(df.copy())
+    if working.empty:
+        return {"stories": []}
+
+    stories = []
+    ranked = working.sort_values(["Mentions", "Impressions"], ascending=False)
+    for _, row in ranked.head(10).iterrows():
+        stories.append(
+            {
+                "headline": str(row.get("Headline", "") or "").strip(),
+                "outlet": str(row.get("Example Outlet", "") or "").strip(),
+                "type": str(row.get("Example Type", "") or "").strip(),
+                "mentions": int(row.get("Mentions", 0) or 0),
+                "impressions": int(row.get("Impressions", 0) or 0),
+                "summary": str(row.get("Top Story Summary", "") or "").strip(),
+                "callout": str(row.get("Chart Callout", "") or "").strip(),
+                "sentiment": str(row.get("Entity Sentiment", "") or "").strip(),
+                "sentiment_rationale": str(row.get("Entity Sentiment Rationale", "") or "").strip(),
+            }
+        )
+    return {"stories": stories}
+
+
+def build_top_story_observation_prompt(entity_name: str, payload: dict[str, Any]) -> str:
+    return f"""
+You are helping a media intelligence analyst write a concise, report-ready overall observation for a set of top stories about {entity_name or 'the entity'}.
+
+Use the representative story set below. Each story may already include a summary, chart callout, and sentiment rationale.
+
+Return strict JSON with this shape:
+{{
+  "overall_observation": "2-4 concise sentences"
+}}
+
+Requirements:
+- Keep it factual, neutral, and report-ready.
+- Summarize the dominant coverage themes and how the entity shows up across the top-story set.
+- Note whether the set leans toward announcements, controversy, routine updates, product news, corporate developments, etc. when visible.
+- Do not invent broader implications beyond the supplied stories.
+
+Input data:
+{json.dumps(payload, ensure_ascii=True)}
+""".strip()
+
+
+def generate_top_story_observation(
+    df: pd.DataFrame,
+    entity_name: str,
+    api_key: str,
+    model: str = DEFAULT_OBSERVATION_MODEL,
+) -> tuple[dict[str, Any], int, int]:
+    payload = build_top_story_observation_payload(df)
+    prompt = build_top_story_observation_prompt(entity_name, payload)
+    client = OpenAI(api_key=api_key)
+    response = client.responses.create(
+        model=model,
+        input=[
+            {"role": "system", "content": "You write concise, neutral media-intelligence summaries."},
+            {"role": "user", "content": prompt},
+        ],
+        text={"verbosity": "low"},
+    )
+
+    add_api_usage(response, model)
+    in_tok, out_tok = extract_usage_tokens(response)
+    raw = getattr(response, "output_text", "") or ""
+    parsed = None
+    try:
+        parsed = json.loads(raw) if raw.strip().startswith("{") else None
+    except Exception:
+        parsed = None
+    if not isinstance(parsed, dict):
+        m = re.search(r"\{.*\}", raw, flags=re.S)
+        if m:
+            try:
+                parsed = json.loads(m.group(0))
+            except Exception:
+                parsed = None
+    if not isinstance(parsed, dict):
+        raise ValueError("Model did not return valid JSON for top story observations.")
+    return parsed, in_tok, out_tok

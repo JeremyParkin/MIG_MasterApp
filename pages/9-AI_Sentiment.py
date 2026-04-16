@@ -250,7 +250,7 @@ with step4:
         st.rerun()
 with step5:
     if st.button(
-        "5. Distribution",
+        "5. Insights",
         key="sentiment_nav_distribution",
         use_container_width=True,
         type="primary" if st.session_state.sentiment_section == "Distribution" else "secondary",
@@ -260,7 +260,7 @@ with step5:
         st.rerun()
 
 st.markdown(
-    '<div class="sentiment-step-note">Work left to right: prepare the sentiment dataset, run AI sentiment in batches, run AI pre-review, complete spot checks, then review the final distribution.</div>',
+    '<div class="sentiment-step-note">Work left to right: prepare the sentiment dataset, run AI sentiment in batches, run AI pre-review, complete spot checks, then review the final insights.</div>',
     unsafe_allow_html=True,
 )
 
@@ -672,8 +672,8 @@ if st.session_state.sentiment_section == "Spot Checks":
 
 st.session_state.sentiment_review_embedded = False
 st.session_state.spot_checks_mode = "distribution"
-st.subheader("Step 5: Sentiment Distribution")
-st.caption("Review the current final sentiment mix after AI sentiment and spot-check assignments.")
+st.subheader("Step 5: Sentiment Insights")
+st.caption("Review the current final sentiment mix and generated narrative insights after AI sentiment and spot-check assignments.")
 
 sentiment_type = st.session_state.get("sentiment_type")
 sentiment_dist = build_sentiment_distribution(st.session_state.df_sentiment_unique, sentiment_type)

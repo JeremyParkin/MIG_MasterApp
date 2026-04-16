@@ -790,43 +790,56 @@ def render_author_insights_tab(mode: str = "selection") -> None:
         "Good Outlet Rate",
     ]].copy()
 
-    def render_story_examples_table(df: pd.DataFrame, key_suffix: str) -> None:
+    def build_story_examples_html(
+        df: pd.DataFrame,
+        show_outlet: bool = True,
+        show_media_type: bool = True,
+        show_mentions: bool = True,
+        show_impressions: bool = True,
+        show_effective_reach: bool = True,
+    ) -> str:
         if df.empty:
-            st.info("No example stories available for this author.")
-            return
+            return ""
         html_blocks: list[str] = []
         for _, row in df.iterrows():
             headline = str(row.get("Headline", "") or "").strip()
             url = str(row.get("Representative URL", "") or "").strip()
             outlet = str(row.get("Representative Outlet", "") or "").strip()
+            media_type = str(row.get("Type", "") or "").strip()
             date_val = row.get("Date")
             mentions = int(pd.to_numeric(pd.Series([row.get("Story Mentions", 0)]), errors="coerce").fillna(0).iloc[0])
             impressions = int(pd.to_numeric(pd.Series([row.get("Story Impressions", 0)]), errors="coerce").fillna(0).iloc[0])
+            effective_reach = int(pd.to_numeric(pd.Series([row.get("Story Effective Reach", 0)]), errors="coerce").fillna(0).iloc[0])
 
             if url:
-                headline_line = f'<a href="{url}" target="_blank">{headline}</a>'
+                headline_line = f'<a href="{html.escape(url, quote=True)}" target="_blank">{html.escape(headline)}</a>'
             else:
-                headline_line = headline
+                headline_line = html.escape(headline)
 
             meta_parts = []
-            if outlet:
-                meta_parts.append(f"<em>{outlet}</em>")
-            if pd.notna(date_val):
-                meta_parts.append(pd.to_datetime(date_val).strftime("%B %d, %Y"))
-            meta_line = " - ".join(meta_parts)
-            stats_line = f"Mentions: {mentions:,} | Impressions: {impressions:,}"
+            if show_outlet and outlet:
+                meta_parts.append(outlet)
+            if show_media_type and media_type:
+                meta_parts.append(media_type)
+
+            metric_parts = []
+            if show_mentions:
+                metric_parts.append(f"Mentions: {mentions:,}")
+            if show_impressions:
+                metric_parts.append(f"Impressions: {impressions:,}")
+            if show_effective_reach:
+                metric_parts.append(f"Effective Reach: {effective_reach:,}")
+
+            meta_line = " | ".join(meta_parts + metric_parts)
 
             html_blocks.append(
-                f"""
-                <div style="margin-bottom:0.55rem;">
-                    <div>{headline_line}</div>
-                    <div style="font-size:0.78rem; opacity:0.72; line-height:1.2;">{meta_line}</div>
-                    <div style="font-size:0.78rem; opacity:0.72; line-height:1.2;">{stats_line}</div>
-                </div>
-                """
+                '<div style="margin:0 0 0.7rem 0;">'
+                f'<div style="line-height:1.35;">{headline_line}</div>'
+                f'<div style="font-size:0.84rem; opacity:0.72; letter-spacing:0.01em; margin-top:0.12rem;">{html.escape(meta_line)}</div>'
+                '</div>'
             )
 
-        st.markdown("".join(html_blocks), unsafe_allow_html=True)
+        return "".join(html_blocks)
 
     def render_candidate_selection_table(include_syndication: bool, key_suffix: str) -> None:
         st.subheader("Candidate Authors")
@@ -958,6 +971,7 @@ def render_author_insights_tab(mode: str = "selection") -> None:
         show_unique_mentions: bool,
         show_impressions: bool,
         show_effective_reach: bool,
+        show_headline_examples: bool,
     ) -> str:
         blocks = []
         for _, row in shortlist_df.iterrows():
@@ -989,11 +1003,30 @@ def render_author_insights_tab(mode: str = "selection") -> None:
             )
 
             body_html = html.escape(themes) if themes else ""
+            examples_html = ""
+            if show_headline_examples and author_name:
+                headline_table = build_author_headline_table(author_story_rows, author_name, limit=5)
+                example_items = build_story_examples_html(
+                    headline_table,
+                    show_outlet=True,
+                    show_media_type=True,
+                    show_mentions=show_mentions,
+                    show_impressions=show_impressions,
+                    show_effective_reach=show_effective_reach,
+                )
+                if example_items:
+                    examples_html = (
+                        '<div style="margin-top:0.72rem;">'
+                        '<div style="font-size:0.98rem; font-weight:600; opacity:0.78; margin-bottom:0.45rem;">Representative examples</div>'
+                        f"{example_items}"
+                        '</div>'
+                    )
             block = (
-                '<div style="margin-bottom:1.2rem;">'
+                '<div style="margin-bottom:1.35rem;">'
                 f'<div style="font-size:1.08rem; font-weight:700; margin-bottom:0.2rem;">{header}</div>'
                 f'<div style="line-height:1.55; margin-bottom:0.28rem;">{body_html}</div>'
                 f'{metrics_html}'
+                f'{examples_html}'
                 '</div>'
             )
             blocks.append(block)
@@ -1020,7 +1053,9 @@ def render_author_insights_tab(mode: str = "selection") -> None:
                 f"Mentions: {int(inspect_row.get('Mention_Total', 0)):,} | "
                 f"Impressions: {int(inspect_row.get('Impressions', 0)):,}"
             )
-            render_story_examples_table(headline_table, "split")
+            examples_html = build_story_examples_html(headline_table)
+            if examples_html:
+                st.markdown(examples_html, unsafe_allow_html=True)
         with right_col:
             render_candidate_selection_table(include_syndication=True, key_suffix="split")
 
@@ -1183,7 +1218,7 @@ def render_author_insights_tab(mode: str = "selection") -> None:
             render_generate_button("insights")
         with generate_col2:
             st.caption("Uses shortlisted authors plus representative grouped stories from each author footprint to generate concise, report-ready coverage themes.")
-        metrics_col1, metrics_col2, metrics_col3, metrics_col4 = st.columns(4, gap="small")
+        metrics_col1, metrics_col2, metrics_col3, metrics_col4, metrics_col5 = st.columns(5, gap="small")
         with metrics_col1:
             show_mentions = st.checkbox("Show mentions", value=True, key="authors_report_show_mentions")
         with metrics_col2:
@@ -1192,17 +1227,21 @@ def render_author_insights_tab(mode: str = "selection") -> None:
             show_impressions = st.checkbox("Show impressions", value=True, key="authors_report_show_impressions")
         with metrics_col4:
             show_effective_reach = st.checkbox("Show effective reach", value=True, key="authors_report_show_effective_reach")
+        with metrics_col5:
+            show_headline_examples = st.checkbox("Show headline examples", value=True, key="authors_report_show_examples")
 
         report_html = build_report_html(
             show_mentions=show_mentions,
             show_unique_mentions=show_unique_mentions,
             show_impressions=show_impressions,
             show_effective_reach=show_effective_reach,
+            show_headline_examples=show_headline_examples,
         )
         if report_html:
             st.markdown(report_html, unsafe_allow_html=True)
         else:
             st.info("Save authors to the shortlist to build the report block.")
+            return
         return
 
 

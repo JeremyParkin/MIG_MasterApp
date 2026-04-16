@@ -86,40 +86,51 @@ def rebuild_outlet_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     return metrics_df, story_df, variants_df
 
 
-def render_story_examples(df: pd.DataFrame) -> None:
+def build_story_examples_html(
+    df: pd.DataFrame,
+    show_author: bool = True,
+    show_media_type: bool = True,
+    show_mentions: bool = True,
+    show_impressions: bool = True,
+    show_effective_reach: bool = True,
+) -> str:
     if df.empty:
-        st.info("No example stories available for this outlet.")
-        return
+        return ""
 
     html_blocks: list[str] = []
     for _, row in df.iterrows():
         headline = str(row.get("Headline", "") or "").strip()
         url = str(row.get("Representative URL", "") or "").strip()
         author = str(row.get("Author", "") or "").strip()
-        date_val = row.get("Date")
+        media_type = str(row.get("Type", "") or "").strip()
         mentions = int(pd.to_numeric(pd.Series([row.get("Story Mentions", 0)]), errors="coerce").fillna(0).iloc[0])
         impressions = int(pd.to_numeric(pd.Series([row.get("Story Impressions", 0)]), errors="coerce").fillna(0).iloc[0])
+        effective_reach = int(pd.to_numeric(pd.Series([row.get("Story Effective Reach", 0)]), errors="coerce").fillna(0).iloc[0])
 
         headline_line = f'<a href="{url}" target="_blank">{html.escape(headline)}</a>' if url else html.escape(headline)
         meta_parts = []
-        if author:
-            meta_parts.append(f"<em>{html.escape(author)}</em>")
-        if pd.notna(date_val):
-            meta_parts.append(pd.to_datetime(date_val).strftime("%B %d, %Y"))
-        meta_line = " - ".join(meta_parts)
-        stats_line = f"Mentions: {mentions:,} | Impressions: {impressions:,}"
+        if show_author and author:
+            meta_parts.append(author)
+        if show_media_type and media_type:
+            meta_parts.append(media_type)
+
+        metric_parts = []
+        if show_mentions:
+            metric_parts.append(f"Mentions: {mentions:,}")
+        if show_impressions:
+            metric_parts.append(f"Impressions: {impressions:,}")
+        if show_effective_reach:
+            metric_parts.append(f"Effective Reach: {effective_reach:,}")
+        meta_line = " | ".join(meta_parts + metric_parts)
 
         html_blocks.append(
-            f"""
-            <div style="margin-bottom:0.55rem;">
-                <div>{headline_line}</div>
-                <div style="font-size:0.78rem; opacity:0.72; line-height:1.2;">{meta_line}</div>
-                <div style="font-size:0.78rem; opacity:0.72; line-height:1.2;">{html.escape(stats_line)}</div>
-            </div>
-            """
+            '<div style="margin:0 0 0.7rem 0;">'
+            f'<div style="line-height:1.35;">{headline_line}</div>'
+            f'<div style="font-size:0.84rem; opacity:0.72; letter-spacing:0.01em; margin-top:0.12rem;">{html.escape(meta_line)}</div>'
+            '</div>'
         )
 
-    st.markdown("".join(html_blocks), unsafe_allow_html=True)
+    return "".join(html_blocks)
 
 
 def build_report_html(
@@ -128,6 +139,7 @@ def build_report_html(
     show_unique_mentions: bool,
     show_impressions: bool,
     show_effective_reach: bool,
+    show_headline_examples: bool,
 ) -> str:
     blocks = []
     for _, row in shortlist_df.iterrows():
@@ -158,11 +170,31 @@ def build_report_html(
             if metrics else ""
         )
 
+        examples_html = ""
+        if show_headline_examples and outlet:
+            story_df = build_outlet_headline_table(story_rows, outlet, limit=5)
+            example_items = build_story_examples_html(
+                story_df,
+                show_author=True,
+                show_media_type=True,
+                show_mentions=show_mentions,
+                show_impressions=show_impressions,
+                show_effective_reach=show_effective_reach,
+            )
+            if example_items:
+                examples_html = (
+                    '<div style="margin-top:0.72rem;">'
+                    '<div style="font-size:0.98rem; font-weight:600; opacity:0.78; margin-bottom:0.45rem;">Representative examples</div>'
+                    f"{example_items}"
+                    '</div>'
+                )
+
         block = (
-            '<div style="margin-bottom:1.2rem;">'
+            '<div style="margin-bottom:1.35rem;">'
             f'<div style="font-size:1.08rem; font-weight:700; margin-bottom:0.2rem;">{header}</div>'
             f'<div style="line-height:1.55; margin-bottom:0.28rem;">{html.escape(themes)}</div>'
             f'{metrics_html}'
+            f'{examples_html}'
             '</div>'
         )
         blocks.append(block)
@@ -575,35 +607,6 @@ def render_insights_section() -> None:
         key="outlets_insights_chart_metric",
     )
 
-    if st.button("Generate outlet coverage themes", type="primary", key="generate_outlet_summaries"):
-        summaries = dict(st.session_state.get("outlet_insights_summaries", {}))
-        client_name = str(st.session_state.get("client_name", "")).strip()
-        with st.spinner("Generating outlet theme summaries..."):
-            for outlet_name in selected_outlets:
-                outlet_row = shortlist_df.loc[shortlist_df["Outlet"] == outlet_name].iloc[0]
-                headline_df = build_outlet_headline_table(story_rows, outlet_name, limit=6)
-                author_df = build_outlet_top_authors(
-                    st.session_state.df_traditional,
-                    outlet_name,
-                    limit=5,
-                    outlet_rollup_map=st.session_state.get("outlet_rollup_map", {}),
-                )
-                try:
-                    summary_text, _, _ = generate_outlet_summary(
-                        outlet_name=outlet_name,
-                        client_name=client_name,
-                        outlet_row=outlet_row,
-                        headline_df=headline_df,
-                        top_authors_df=author_df,
-                        api_key=st.secrets["key"],
-                        model=DEFAULT_OUTLET_SUMMARY_MODEL,
-                    )
-                    summaries[outlet_name] = summary_text
-                except Exception as e:
-                    summaries[outlet_name] = f"Could not generate summary: {e}"
-        st.session_state.outlet_insights_summaries = summaries
-        st.rerun()
-
     chart_table = shortlist_df[[
         "Outlet",
         "Top_Types",
@@ -691,7 +694,40 @@ def render_insights_section() -> None:
 
     st.divider()
     st.subheader("Report Copy")
-    metrics_col1, metrics_col2, metrics_col3, metrics_col4 = st.columns(4, gap="small")
+    generate_col1, generate_col2 = st.columns([1.2, 3], gap="medium")
+    with generate_col1:
+        if st.button("Generate outlet coverage themes", type="primary", key="generate_outlet_summaries"):
+            summaries = dict(st.session_state.get("outlet_insights_summaries", {}))
+            client_name = str(st.session_state.get("client_name", "")).strip()
+            with st.spinner("Generating outlet theme summaries..."):
+                for outlet_name in selected_outlets:
+                    outlet_row = shortlist_df.loc[shortlist_df["Outlet"] == outlet_name].iloc[0]
+                    headline_df = build_outlet_headline_table(story_rows, outlet_name, limit=6)
+                    author_df = build_outlet_top_authors(
+                        st.session_state.df_traditional,
+                        outlet_name,
+                        limit=5,
+                        outlet_rollup_map=st.session_state.get("outlet_rollup_map", {}),
+                    )
+                    try:
+                        summary_text, _, _ = generate_outlet_summary(
+                            outlet_name=outlet_name,
+                            client_name=client_name,
+                            outlet_row=outlet_row,
+                            headline_df=headline_df,
+                            top_authors_df=author_df,
+                            api_key=st.secrets["key"],
+                            model=DEFAULT_OUTLET_SUMMARY_MODEL,
+                        )
+                        summaries[outlet_name] = summary_text
+                    except Exception as e:
+                        summaries[outlet_name] = f"Could not generate summary: {e}"
+            st.session_state.outlet_insights_summaries = summaries
+            st.rerun()
+    with generate_col2:
+        st.caption("Uses shortlisted outlets plus representative grouped stories and top contributing authors to generate concise, report-ready coverage themes.")
+
+    metrics_col1, metrics_col2, metrics_col3, metrics_col4, metrics_col5 = st.columns(5, gap="small")
     with metrics_col1:
         show_mentions = st.checkbox("Show mentions", value=True, key="outlets_report_show_mentions")
     with metrics_col2:
@@ -700,6 +736,8 @@ def render_insights_section() -> None:
         show_impressions = st.checkbox("Show impressions", value=True, key="outlets_report_show_impressions")
     with metrics_col4:
         show_effective_reach = st.checkbox("Show effective reach", value=True, key="outlets_report_show_effective_reach")
+    with metrics_col5:
+        show_headline_examples = st.checkbox("Show headline examples", value=True, key="outlets_report_show_examples")
 
     report_html = build_report_html(
         shortlist_df,
@@ -707,11 +745,13 @@ def render_insights_section() -> None:
         show_unique_mentions=show_unique_mentions,
         show_impressions=show_impressions,
         show_effective_reach=show_effective_reach,
+        show_headline_examples=show_headline_examples,
     )
     if report_html:
         st.markdown(report_html, unsafe_allow_html=True)
     else:
-        st.info("Generate outlet coverage themes in Selection to build the narrative block.")
+        st.info("Generate outlet coverage themes to build the narrative block.")
+        return
 
 
 section = st.session_state.get("outlets_section", "Cleanup")

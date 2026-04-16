@@ -14,7 +14,7 @@ from utils.api_meter import add_api_usage, extract_usage_tokens
 DEFAULT_TAGGING_MODEL = "gpt-5.4-nano"
 DEFAULT_TAGGING_OBSERVATION_MODEL = "gpt-5.4-mini"
 DEFAULT_TAGGING_MAX_WORKERS = 8
-DEFAULT_TAGGING_BATCH_SIZE = 25
+DEFAULT_TAGGING_BATCH_SIZE = 50
 MAX_RETRIES = 2
 
 
