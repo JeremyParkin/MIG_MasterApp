@@ -128,10 +128,43 @@ def render_authors_page() -> None:
         for author_name in author_names:
             cache.pop(make_author_cache_key(author_name), None)
 
-    def prefetch_author_outlet_matches(auth_outlet_todo: pd.DataFrame) -> dict:
-        unresolved_authors = auth_outlet_todo["Author"].dropna().astype(str).tolist()
-        prefetch_limit = int(st.session_state.get("author_outlet_prefetch_limit", 20))
-        target_authors = unresolved_authors[:prefetch_limit]
+    def get_prefetch_target_authors(auth_outlet_todo: pd.DataFrame) -> list[str]:
+        if auth_outlet_todo is None or auth_outlet_todo.empty:
+            return []
+
+        working = auth_outlet_todo.copy()
+        for col in ["Author", "Mentions", "Impressions"]:
+            if col not in working.columns:
+                working[col] = 0 if col != "Author" else ""
+
+        working["Author"] = working["Author"].fillna("").astype(str).str.strip()
+        working = working[working["Author"] != ""].copy()
+        if working.empty:
+            return []
+
+        by_mentions = (
+            working.sort_values(["Mentions", "Impressions"], ascending=False)["Author"]
+            .head(25)
+            .tolist()
+        )
+        by_impressions = (
+            working.sort_values(["Impressions", "Mentions"], ascending=False)["Author"]
+            .head(25)
+            .tolist()
+        )
+
+        target_authors = list(dict.fromkeys(by_mentions + by_impressions))
+
+        current_index = int(st.session_state.get("auth_outlet_skipped", 0) or 0)
+        if 0 <= current_index < len(working):
+            current_batch = working.iloc[current_index: current_index + 10]["Author"].tolist()
+            current_batch = [author for author in current_batch if make_author_cache_key(author) not in st.session_state.author_outlet_api_cache]
+            target_authors = list(dict.fromkeys(target_authors + current_batch))
+
+        return target_authors
+
+    def prefetch_author_outlet_matches(auth_outlet_todo: pd.DataFrame, auto_assign: bool = False) -> dict:
+        target_authors = get_prefetch_target_authors(auth_outlet_todo)
         cache = st.session_state.author_outlet_api_cache
         missing_authors = [author for author in target_authors if make_author_cache_key(author) not in cache]
 
@@ -154,7 +187,7 @@ def render_authors_page() -> None:
                     loaded_now += 1
 
         auto_assigned_now = []
-        if st.session_state.get("author_outlet_auto_assign_enabled", False):
+        if auto_assign:
             for author_name in target_authors:
                 if author_name not in set(auth_outlet_todo["Author"].tolist()):
                     continue
@@ -188,7 +221,6 @@ def render_authors_page() -> None:
             st.session_state.author_outlet_auto_assigned_rows = existing_rows
 
         summary = {
-            "prefetch_limit": prefetch_limit,
             "requested": len(target_authors),
             "loaded_now": loaded_now,
             "cached_total": len([author for author in target_authors if make_author_cache_key(author) in cache]),
@@ -391,52 +423,30 @@ def render_authors_page() -> None:
         """
         st.markdown(hide_table_row_index, unsafe_allow_html=True)
 
-        st.session_state.top_auths_by = st.selectbox(
-            "Top Authors by:",
-            ["Mentions", "Impressions", "Effective Reach"],
-            key="authors_outlets_rank_by",
-            on_change=lambda: reset_outlet_skips(st.session_state),
-        )
-
-        prefetch_col1, prefetch_col2, prefetch_col3 = st.columns([1.2, 1.2, 1], gap="medium")
-        with prefetch_col1:
-            st.session_state.author_outlet_prefetch_limit = st.number_input(
-                "Prefetch top unresolved authors",
-                min_value=5,
-                max_value=50,
-                value=int(st.session_state.get("author_outlet_prefetch_limit", 20)),
-                step=5,
-                key="authors_outlets_prefetch_limit",
+        control_col1, control_col2 = st.columns([1, 1], gap="medium")
+        with control_col1:
+            st.session_state.top_auths_by = st.selectbox(
+                "Top Authors by:",
+                ["Mentions", "Impressions", "Effective Reach"],
+                key="authors_outlets_rank_by",
+                on_change=lambda: reset_outlet_skips(st.session_state),
             )
-        with prefetch_col2:
-            st.session_state.author_outlet_auto_assign_enabled = st.checkbox(
-                "Auto-assign perfect CSV/API matches",
-                value=bool(st.session_state.get("author_outlet_auto_assign_enabled", False)),
+        with control_col2:
+            st.write("")
+            auto_assign_requested = st.button(
+                "Auto-assign perfect matches",
                 key="authors_outlets_auto_assign",
-                help="Only auto-assign when there is exactly one clear overlap between coverage outlets and API result outlets.",
+                help="Assign only when there is exactly one clear overlap between coverage outlets and API result outlets in the prefetched author set.",
+                use_container_width=True,
             )
-        with prefetch_col3:
-            if st.button("Refresh prefetched matches", key="authors_outlets_refresh_prefetch"):
-                invalidate_author_outlet_cache()
-                st.session_state.author_outlet_auto_assigned_rows = []
-                st.rerun()
 
         rebuild_author_outlet_state()
         auth_outlet_todo = get_auth_outlet_todo(st.session_state.auth_outlet_table)
-        prefetch_summary = prefetch_author_outlet_matches(auth_outlet_todo)
+        prefetch_summary = prefetch_author_outlet_matches(auth_outlet_todo, auto_assign=auto_assign_requested)
 
         if prefetch_summary.get("auto_assigned_now", 0) > 0:
             st.success(f"Auto-assigned {prefetch_summary['auto_assigned_now']} perfect match(es) from the prefetched author set.")
             st.rerun()
-
-        st.caption(
-            f"Prefetched {prefetch_summary.get('cached_total', 0):,} of {prefetch_summary.get('requested', 0):,} queued authors"
-            + (
-                f" and auto-assigned {prefetch_summary.get('auto_assigned_now', 0):,}."
-                if st.session_state.get("author_outlet_auto_assign_enabled", False)
-                else "."
-            )
-        )
 
         auto_assigned_rows = st.session_state.get("author_outlet_auto_assigned_rows", [])
         if auto_assigned_rows:
@@ -693,6 +703,7 @@ def render_authors_page() -> None:
 
         st.session_state.author_insights_target_count = 10
         candidate_limit = 50
+        st.session_state.setdefault("author_selection_assigned_only", False)
 
         rank_map = {
             "Mentions": ["Mention_Total", "Impressions", "Unique_Stories"],
@@ -720,7 +731,6 @@ def render_authors_page() -> None:
         inspect_row = ranked_df.loc[ranked_df["Author"] == inspect_author].iloc[0]
         headline_table = build_author_headline_table(author_story_rows, inspect_author, limit=5)
 
-        suggested_authors = ranked_df.head(int(st.session_state.author_insights_target_count))["Author"].tolist()
         valid_options = ranked_df["Author"].tolist()
         current_selected = [
             author for author in st.session_state.get("author_insights_selected_authors", [])
@@ -730,6 +740,9 @@ def render_authors_page() -> None:
             st.session_state.author_insights_selected_authors = current_selected
 
         candidate_df = ranked_df[~ranked_df["Author"].isin(current_selected)].copy()
+        if st.session_state.get("author_selection_assigned_only", False):
+            candidate_df = candidate_df[candidate_df["Assigned Outlet"].fillna("").astype(str).str.strip() != ""].copy()
+        suggested_authors = candidate_df.head(int(st.session_state.author_insights_target_count))["Author"].tolist()
         candidate_df = candidate_df.head(candidate_limit)[[
             "Author",
             "Assigned Outlet",
@@ -818,6 +831,11 @@ def render_authors_page() -> None:
             del include_syndication
             st.subheader("Candidate Authors")
             st.caption('Check the "Keep" box for authors you want on the final shortlist, then click "Save Selected".')
+            st.checkbox(
+                "Show only authors with assigned outlets",
+                key="author_selection_assigned_only",
+                help="Hide unassigned authors from the candidate table and make Top Suggestion use only authors with assigned outlets.",
+            )
             working_df = candidate_df.copy()
             working_df["Author Outlet"] = working_df.apply(
                 lambda row: " | ".join(
