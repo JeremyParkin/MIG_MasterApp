@@ -4,6 +4,7 @@ def render_top_story_summaries() -> None:
     # 7-Summaries.py
     
     import warnings
+    import importlib
     
     import streamlit as st
     
@@ -23,11 +24,14 @@ def render_top_story_summaries() -> None:
         generate_top_story_observation,
         DEFAULT_MODEL,
     )
+    import processing.top_stories as top_stories_module
     
     from utils.api_meter import apply_usage_to_session
     
     
     warnings.filterwarnings("ignore")
+    top_stories_module = importlib.reload(top_stories_module)
+    refresh_saved_story_metrics = top_stories_module.refresh_saved_story_metrics
     
     st.subheader("Step 3: Top Story Insights")
     st.caption("Generate the saved top-story outputs and review the overall observations and report copy.")
@@ -53,6 +57,13 @@ def render_top_story_summaries() -> None:
             f"Token usage this batch: input={batch['in_tok']:,} • output={batch['out_tok']:,}"
         )
     
+    source_df = top_stories_module.normalize_top_stories_df(st.session_state.df_ai_grouped.copy())
+    if not st.session_state.added_df.empty:
+        st.session_state.added_df = refresh_saved_story_metrics(
+            st.session_state.added_df,
+            source_df,
+        )
+
     df = normalize_summary_df(st.session_state.added_df.copy())
     df = df.sort_values(by="Date", ascending=True).reset_index(drop=True)
     
@@ -209,20 +220,52 @@ def render_top_story_summaries() -> None:
 
     st.divider()
     st.subheader("Report Copy")
-    st.markdown(":mag: **VIEW OPTIONS**")
-    
-    show_col1, show_col2, show_col3 = st.columns(3, gap="medium")
-    
-    with show_col1:
-        show_mentions = st.checkbox("Show mentions", value=False)
-        show_impressions = st.checkbox("Show impressions", value=False)
-    
-    with show_col2:
-        show_top_story_summary = "Top Story Summary" in df.columns and st.checkbox("Show top story summary", value=True)
-        show_callout = "Chart Callout" in df.columns and st.checkbox("Show chart callout", value=True)
-    
-    with show_col3:
-        show_sentiment = "Entity Sentiment" in df.columns and st.checkbox("Show sentiment", value=True)
+    field_options = []
+    if "Mentions" in df.columns:
+        field_options.append("Mentions")
+    if "Impressions" in df.columns:
+        field_options.append("Impressions")
+    if "Effective Reach" in df.columns:
+        field_options.append("Effective reach")
+    if "Top Story Summary" in df.columns:
+        field_options.append("Summary")
+    if "Chart Callout" in df.columns:
+        field_options.append("Callout")
+    if "Entity Sentiment" in df.columns:
+        field_options.append("Sentiment")
+
+    if "top_story_report_fields" not in st.session_state:
+        st.session_state.top_story_report_fields = field_options.copy()
+
+    preset_col, fields_col = st.columns([0.18, 0.82], gap="small")
+    with preset_col:
+        bulk_col1, bulk_col2 = st.columns(2, gap="small")
+        with bulk_col1:
+            if st.button("All", key="top_story_report_select_all", use_container_width=True):
+                st.session_state.top_story_report_fields = field_options.copy()
+                st.rerun()
+        with bulk_col2:
+            if st.button("None", key="top_story_report_select_none", use_container_width=True):
+                st.session_state.top_story_report_fields = []
+                st.rerun()
+
+    with fields_col:
+        st.pills(
+            "Fields",
+            options=field_options,
+            selection_mode="multi",
+            default=st.session_state.get("top_story_report_fields", field_options),
+            key="top_story_report_fields",
+            label_visibility="collapsed",
+        )
+
+    selected_fields = set(st.session_state.get("top_story_report_fields", []) or [])
+    show_mentions = "Mentions" in selected_fields
+    show_impressions = "Impressions" in selected_fields
+    show_effective_reach = "Effective reach" in selected_fields
+    show_top_story_summary = "Summary" in selected_fields
+    show_callout = "Callout" in selected_fields
+    show_sentiment = "Sentiment" in selected_fields
     
     st.divider()
     
@@ -233,6 +276,7 @@ def render_top_story_summaries() -> None:
         show_sentiment=show_sentiment,
         show_mentions=show_mentions,
         show_impressions=show_impressions,
+        show_effective_reach=show_effective_reach,
     )
     
     st.markdown(markdown_content, unsafe_allow_html=True)

@@ -53,6 +53,7 @@ def normalize_summary_df(df: pd.DataFrame) -> pd.DataFrame:
         "Example Snippet": "",
         "Mentions": 0,
         "Impressions": 0,
+        "Effective Reach": 0,
         "Chart Callout": "",
         "Top Story Summary": "",
         "Entity Sentiment Label": "",
@@ -87,6 +88,8 @@ def normalize_summary_df(df: pd.DataFrame) -> pd.DataFrame:
 
     if "Impressions" in df.columns:
         df["Impressions"] = pd.to_numeric(df["Impressions"], errors="coerce").fillna(0).astype(int)
+    if "Effective Reach" in df.columns:
+        df["Effective Reach"] = pd.to_numeric(df["Effective Reach"], errors="coerce").fillna(0).astype(int)
 
     return df
 
@@ -415,6 +418,7 @@ def build_markdown_output(
     show_sentiment: bool,
     show_mentions: bool,
     show_impressions: bool,
+    show_effective_reach: bool,
 ) -> str:
     markdown_content = ""
 
@@ -457,6 +461,9 @@ def build_markdown_output(
         if show_impressions:
             impressions = row.get("Impressions", 0)
             metric_parts.append(f"Impressions: {int(impressions):,}")
+        if show_effective_reach:
+            effective_reach = row.get("Effective Reach", 0)
+            metric_parts.append(f"Effective Reach: {int(effective_reach):,}")
         if metric_parts:
             metric_line = " | ".join(metric_parts)
             markdown_content += (

@@ -734,40 +734,65 @@ if observation_output:
     if st.session_state.get("sentiment_observation_include_nr", True) != include_not_relevant_final:
         st.info("The current observations were generated with a different Not Relevant setting. Regenerate if you want them aligned to the current distribution view.")
 
-    toggle_keys = [
-        "sentiment_obs_show_outlet",
-        "sentiment_obs_show_type",
-        "sentiment_obs_show_mentions",
-        "sentiment_obs_show_impressions",
-        "sentiment_obs_show_effective_reach",
-        "sentiment_obs_show_examples",
-    ]
+    field_options = ["Outlet", "Date", "Media type", "Mentions", "Impressions", "Effective reach", "Examples"]
+    if "sentiment_obs_selected_fields" not in st.session_state:
+        st.session_state.sentiment_obs_selected_fields = field_options.copy()
+    if "sentiment_obs_previous_fields" not in st.session_state:
+        st.session_state.sentiment_obs_previous_fields = field_options.copy()
 
-    bulk_toggle_col1, bulk_toggle_col2, _ = st.columns([0.12, 0.12, 0.76], gap="small")
-    with bulk_toggle_col1:
-        if st.button("All", key="sentiment_obs_toggle_all", use_container_width=True):
-            for toggle_key in toggle_keys:
-                st.session_state[toggle_key] = True
-            st.rerun()
-    with bulk_toggle_col2:
-        if st.button("None", key="sentiment_obs_toggle_none", use_container_width=True):
-            for toggle_key in toggle_keys:
-                st.session_state[toggle_key] = False
-            st.rerun()
+    child_fields = {"Outlet", "Date", "Media type", "Mentions", "Impressions", "Effective reach"}
 
-    example_meta_col1, example_meta_col2, example_meta_col3, example_meta_col4, example_meta_col5, example_meta_col6 = st.columns(6, gap="small")
-    with example_meta_col1:
-        show_example_outlet = st.checkbox("Outlet", value=True, key="sentiment_obs_show_outlet")
-    with example_meta_col2:
-        show_example_type = st.checkbox("Media type", value=True, key="sentiment_obs_show_type")
-    with example_meta_col3:
-        show_example_mentions = st.checkbox("Mentions", value=True, key="sentiment_obs_show_mentions")
-    with example_meta_col4:
-        show_example_impressions = st.checkbox("Impressions", value=True, key="sentiment_obs_show_impressions")
-    with example_meta_col5:
-        show_example_effective_reach = st.checkbox("Effective reach", value=True, key="sentiment_obs_show_effective_reach")
-    with example_meta_col6:
-        show_examples = st.checkbox("Examples", value=True, key="sentiment_obs_show_examples")
+    def _normalize_sentiment_obs_fields() -> None:
+        current_fields = st.session_state.get("sentiment_obs_selected_fields", []) or []
+        previous_fields = st.session_state.get("sentiment_obs_previous_fields", []) or []
+        current_set = set(current_fields)
+        previous_set = set(previous_fields)
+
+        if "Examples" not in current_set and current_set & child_fields:
+            if "Examples" in previous_set:
+                current_set -= child_fields
+            else:
+                current_set.add("Examples")
+
+        normalized_fields = [field for field in field_options if field in current_set]
+        st.session_state.sentiment_obs_selected_fields = normalized_fields
+        st.session_state.sentiment_obs_previous_fields = normalized_fields.copy()
+
+    preset_col, fields_col = st.columns([0.18, 0.82], gap="small")
+    with preset_col:
+        bulk_col1, bulk_col2 = st.columns(2, gap="small")
+        with bulk_col1:
+            if st.button("All", key="sentiment_obs_select_all", use_container_width=True):
+                st.session_state.sentiment_obs_selected_fields = field_options.copy()
+                st.session_state.sentiment_obs_previous_fields = field_options.copy()
+                st.rerun()
+        with bulk_col2:
+            if st.button("None", key="sentiment_obs_select_none", use_container_width=True):
+                st.session_state.sentiment_obs_selected_fields = []
+                st.session_state.sentiment_obs_previous_fields = []
+                st.rerun()
+
+    with fields_col:
+        st.pills(
+            "Fields",
+            options=field_options,
+            selection_mode="multi",
+            default=st.session_state.get("sentiment_obs_selected_fields", field_options),
+            key="sentiment_obs_selected_fields",
+            on_change=_normalize_sentiment_obs_fields,
+            label_visibility="collapsed",
+        )
+
+    selected_fields = st.session_state.get("sentiment_obs_selected_fields", []) or []
+    st.session_state.sentiment_obs_previous_fields = list(selected_fields)
+    selected_field_set = set(selected_fields)
+    show_example_outlet = "Outlet" in selected_field_set
+    show_example_date = "Date" in selected_field_set
+    show_example_type = "Media type" in selected_field_set
+    show_example_mentions = "Mentions" in selected_field_set
+    show_example_impressions = "Impressions" in selected_field_set
+    show_example_effective_reach = "Effective reach" in selected_field_set
+    show_examples = "Examples" in selected_field_set
 
     overall_observation = str(observation_output.get("overall_observation", "") or "").strip()
     if overall_observation:
@@ -793,6 +818,7 @@ if observation_output:
                 example_blocks = build_linked_example_blocks_html(
                     sentiment_examples[:5],
                     show_outlet=show_example_outlet,
+                    show_date=show_example_date,
                     show_media_type=show_example_type,
                     show_mentions=show_example_mentions,
                     show_impressions=show_example_impressions,

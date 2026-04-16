@@ -20,6 +20,8 @@ def render_top_stories_selection() -> None:
     save_selected_rows = top_stories_module.save_selected_rows
     remove_saved_candidates_from_display = top_stories_module.remove_saved_candidates_from_display
     reset_generated_candidates = top_stories_module.reset_generated_candidates
+    refresh_saved_story_metrics = top_stories_module.refresh_saved_story_metrics
+    refresh_generated_story_metrics = top_stories_module.refresh_generated_story_metrics
     
     title_col, chart_col = st.columns([2, 3], gap="medium")
     
@@ -50,6 +52,16 @@ def render_top_stories_selection() -> None:
         st.session_state.added_df = normalize_top_stories_df(st.session_state.added_df)
     
     source_df = normalize_top_stories_df(st.session_state.df_ai_grouped.copy())
+    if st.session_state.top_stories_generated and not st.session_state.df_grouped.empty:
+        st.session_state.df_grouped = refresh_generated_story_metrics(
+            st.session_state.df_grouped,
+            source_df,
+        )
+    if not st.session_state.added_df.empty:
+        st.session_state.added_df = refresh_saved_story_metrics(
+            st.session_state.added_df,
+            source_df,
+        )
     
     with chart_col:
         trend_df = (
@@ -116,6 +128,7 @@ def render_top_stories_selection() -> None:
         "Date",
         "Mentions",
         "Impressions",
+        "Effective Reach",
         "Type",
         "Outlet",
         "URL",
@@ -297,21 +310,28 @@ def render_top_stories_selection() -> None:
             }
             df_to_display["Top Story"] = df_to_display["Group ID"].astype(str).isin(checked_group_ids)
     
-            # Keep checkbox on the right, but control widths
+            # Keep checkbox on the right, but lock the table to the intended visible/internal columns.
             preferred_order = [
                 "Headline",
                 "Date",
                 "Mentions",
                 "Impressions",
+                "Effective Reach",
                 "Example URL",
-                "Example Snippet",
                 "Top Story",
             ]
-    
-            existing_order = [col for col in preferred_order if col in df_to_display.columns]
-            remaining_cols = [col for col in df_to_display.columns if col not in existing_order]
-    
-            df_to_display = df_to_display[existing_order + remaining_cols]
+            hidden_support_cols = [
+                "Group ID",
+                "Example Outlet",
+                "Example Type",
+                "Example Snippet",
+                "Source Group IDs",
+            ]
+            allowed_cols = [
+                col for col in preferred_order + hidden_support_cols
+                if col in df_to_display.columns
+            ]
+            df_to_display = df_to_display[allowed_cols]
     
             st.subheader(
                 "Possible Top Stories",
@@ -327,11 +347,11 @@ def render_top_stories_selection() -> None:
                     "Date": st.column_config.Column("Date", width="small"),
                     "Mentions": st.column_config.Column("Mentions", width="small"),
                     "Impressions": st.column_config.NumberColumn("Impressions", width="small", format="%,d"),
-    
+                    "Effective Reach": st.column_config.NumberColumn("Effective Reach", width="small", format="%,d"),
+
                     # aggressively shrink these
                     "Example URL": st.column_config.LinkColumn("Example URL", width="small"),
-                    "Example Snippet": st.column_config.Column("Example Snippet", width="small"),
-    
+
                     # keep checkbox visible on right
                     "Top Story": st.column_config.CheckboxColumn("Top Story", width="small"),
     
@@ -339,6 +359,7 @@ def render_top_stories_selection() -> None:
                     "Group ID": None,
                     "Example Outlet": None,
                     "Example Type": None,
+                    "Example Snippet": None,
                     "Source Group IDs": None,
                 },
                 hide_index=True,
@@ -377,7 +398,7 @@ def render_top_stories_selection() -> None:
     
         saved_df_display = saved_df_full.copy()
     
-        saved_columns = ["Headline", "Date", "Mentions", "Impressions", "Example URL"]
+        saved_columns = ["Headline", "Date", "Mentions", "Impressions", "Effective Reach", "Example URL"]
         existing_saved_columns = [col for col in saved_columns if col in saved_df_display.columns]
         saved_df_display = saved_df_display[existing_saved_columns].copy()
     
@@ -396,6 +417,7 @@ def render_top_stories_selection() -> None:
                 "Date": st.column_config.Column("Date", width="small"),
                 "Mentions": st.column_config.Column("Mentions", width="small"),
                 "Impressions": st.column_config.NumberColumn("Impressions", width="small", format="%,d"),
+                "Effective Reach": st.column_config.NumberColumn("Effective Reach", width="small", format="%,d"),
                 "Example URL": st.column_config.LinkColumn("Example URL", width="medium"),
             },
             hide_index=True,
@@ -409,4 +431,8 @@ def render_top_stories_selection() -> None:
                 saved_df_full.drop(index=rows_to_delete)
                 .reset_index(drop=True)
             )
+            st.rerun()
+
+        if st.button("Clear All Saved", key="clear_all_saved_top_stories"):
+            st.session_state.added_df = saved_df_full.iloc[0:0].copy()
             st.rerun()

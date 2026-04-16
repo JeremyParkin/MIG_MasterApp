@@ -604,17 +604,65 @@ with obs_blurb_col:
         "Uses finalized AI tags plus representative grouped stories from each tag bucket. The examples are weighted toward the highest-volume and most syndicated coverage."
     )
 
-meta_col1, meta_col2, meta_col3, meta_col4, meta_col5 = st.columns(5, gap="small")
-with meta_col1:
-    show_example_outlet = st.checkbox("Show outlet", value=True, key="tagging_obs_show_outlet")
-with meta_col2:
-    show_example_type = st.checkbox("Show media type", value=True, key="tagging_obs_show_media_type")
-with meta_col3:
-    show_example_mentions = st.checkbox("Show mentions", value=True, key="tagging_obs_show_mentions")
-with meta_col4:
-    show_example_impressions = st.checkbox("Show impressions", value=True, key="tagging_obs_show_impressions")
-with meta_col5:
-    show_example_effective_reach = st.checkbox("Show effective reach", value=True, key="tagging_obs_show_effective_reach")
+field_options = ["Outlet", "Date", "Media type", "Mentions", "Impressions", "Effective reach", "Examples"]
+if "tagging_obs_selected_fields" not in st.session_state:
+    st.session_state.tagging_obs_selected_fields = field_options.copy()
+if "tagging_obs_previous_fields" not in st.session_state:
+    st.session_state.tagging_obs_previous_fields = field_options.copy()
+
+child_fields = {"Outlet", "Date", "Media type", "Mentions", "Impressions", "Effective reach"}
+
+def _normalize_tagging_obs_fields() -> None:
+    current_fields = st.session_state.get("tagging_obs_selected_fields", []) or []
+    previous_fields = st.session_state.get("tagging_obs_previous_fields", []) or []
+    current_set = set(current_fields)
+    previous_set = set(previous_fields)
+
+    if "Examples" not in current_set and current_set & child_fields:
+        if "Examples" in previous_set:
+            current_set -= child_fields
+        else:
+            current_set.add("Examples")
+
+    normalized_fields = [field for field in field_options if field in current_set]
+    st.session_state.tagging_obs_selected_fields = normalized_fields
+    st.session_state.tagging_obs_previous_fields = normalized_fields.copy()
+
+preset_col, fields_col = st.columns([0.18, 0.82], gap="small")
+with preset_col:
+    bulk_col1, bulk_col2 = st.columns(2, gap="small")
+    with bulk_col1:
+        if st.button("All", key="tagging_obs_select_all", use_container_width=True):
+            st.session_state.tagging_obs_selected_fields = field_options.copy()
+            st.session_state.tagging_obs_previous_fields = field_options.copy()
+            st.rerun()
+    with bulk_col2:
+        if st.button("None", key="tagging_obs_select_none", use_container_width=True):
+            st.session_state.tagging_obs_selected_fields = []
+            st.session_state.tagging_obs_previous_fields = []
+            st.rerun()
+
+with fields_col:
+    st.pills(
+        "Fields",
+        options=field_options,
+        selection_mode="multi",
+        default=st.session_state.get("tagging_obs_selected_fields", field_options),
+        key="tagging_obs_selected_fields",
+        on_change=_normalize_tagging_obs_fields,
+        label_visibility="collapsed",
+    )
+
+selected_fields = st.session_state.get("tagging_obs_selected_fields", []) or []
+st.session_state.tagging_obs_previous_fields = list(selected_fields)
+selected_field_set = set(selected_fields)
+show_example_outlet = "Outlet" in selected_field_set
+show_example_date = "Date" in selected_field_set
+show_example_type = "Media type" in selected_field_set
+show_example_mentions = "Mentions" in selected_field_set
+show_example_impressions = "Impressions" in selected_field_set
+show_example_effective_reach = "Effective reach" in selected_field_set
+show_examples = "Examples" in selected_field_set
 
 observation_output = st.session_state.get("tagging_observation_output")
 if observation_output and observation_output.get("_error"):
@@ -637,10 +685,11 @@ elif observation_output:
             st.write(observation_text)
 
         tag_examples = examples_by_tag.get(tag_label, [])
-        if tag_examples:
+        if tag_examples and show_examples:
             example_blocks = build_linked_example_blocks_html(
                 tag_examples[:5],
                 show_outlet=show_example_outlet,
+                show_date=show_example_date,
                 show_media_type=show_example_type,
                 show_mentions=show_example_mentions,
                 show_impressions=show_example_impressions,
@@ -659,4 +708,4 @@ with st.expander("Grouped tagging dataset preview", expanded=False):
     )
 
 with st.expander("Tag guide", expanded=False):
-    st.code(st.session_state.get("tags_text", ""))
+    st.text(st.session_state.get("tags_text", ""))

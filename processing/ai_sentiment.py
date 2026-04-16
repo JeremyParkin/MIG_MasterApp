@@ -373,7 +373,7 @@ def build_sentiment_observation_payload(
             working[col] = 0
         working[col] = pd.to_numeric(working[col], errors="coerce").fillna(0)
 
-    for col in ["Headline", "AI Sentiment Rationale"]:
+    for col in ["Headline", "AI Sentiment Rationale", "Date"]:
         if col not in working.columns:
             working[col] = ""
         working[col] = _get_text_series(working, col)
@@ -442,6 +442,7 @@ def build_sentiment_observation_payload(
                 "group_id": row.get("Group ID", ""),
                 "headline": row.get("Headline", ""),
                 "outlet": row.get("Display Outlet", ""),
+                "date": row.get("Date", ""),
                 "url": row.get("Display URL", ""),
                 "example_type": row.get("Display Type", ""),
                 "mentions": int(row.get("Mentions", 0) or 0),

@@ -93,6 +93,7 @@ def render_outlets_page() -> None:
     def build_story_examples_html(
         df: pd.DataFrame,
         show_author: bool = True,
+        show_date: bool = False,
         show_media_type: bool = True,
         show_mentions: bool = True,
         show_impressions: bool = True,
@@ -108,6 +109,7 @@ def render_outlets_page() -> None:
                     "headline": row.get("Headline", ""),
                     "url": row.get("Representative URL", ""),
                     "outlet": row.get("Author", ""),
+                    "date": row.get("Date", ""),
                     "example_type": row.get("Type", ""),
                     "mentions": int(pd.to_numeric(pd.Series([row.get("Story Mentions", 0)]), errors="coerce").fillna(0).iloc[0]),
                     "impressions": int(pd.to_numeric(pd.Series([row.get("Story Impressions", 0)]), errors="coerce").fillna(0).iloc[0]),
@@ -118,6 +120,7 @@ def render_outlets_page() -> None:
         return build_linked_example_blocks_html(
             items,
             show_outlet=show_author,
+            show_date=show_date,
             show_media_type=show_media_type,
             show_mentions=show_mentions,
             show_impressions=show_impressions,
@@ -126,8 +129,10 @@ def render_outlets_page() -> None:
 
     def build_report_html(
         shortlist_df: pd.DataFrame,
+        show_author: bool,
+        show_date: bool,
+        show_media_type: bool,
         show_mentions: bool,
-        show_unique_mentions: bool,
         show_impressions: bool,
         show_effective_reach: bool,
         show_headline_examples: bool,
@@ -137,37 +142,19 @@ def render_outlets_page() -> None:
             outlet = str(row.get("Outlet", "") or "").strip()
             top_types = str(row.get("Top_Types", "") or "").strip()
             themes = " ".join(str(row.get("Coverage Themes", "") or "").split())
-            mentions = int(row.get("Mention_Total", 0) or 0)
-            unique_mentions = int(row.get("Unique_Mentions", 0) or 0)
-            impressions = int(row.get("Impressions", 0) or 0)
-            effective_reach = int(row.get("Effective_Reach", 0) or 0)
 
             header = f"<strong>{html.escape(outlet)}</strong>"
             if top_types:
                 header += f' <span style="opacity:0.82;">|</span> <span style="font-style:italic; opacity:0.92;">{html.escape(top_types)}</span>'
-
-            metric_parts = []
-            if show_mentions:
-                metric_parts.append(f"Mentions: {mentions:,}")
-            if show_unique_mentions:
-                metric_parts.append(f"Unique Mentions: {unique_mentions:,}")
-            if show_impressions:
-                metric_parts.append(f"Impressions: {impressions:,}")
-            if show_effective_reach:
-                metric_parts.append(f"Effective Reach: {effective_reach:,}")
-            metrics = " | ".join(metric_parts)
-            metrics_html = (
-                f'<div style="font-size:0.84rem; opacity:0.72; letter-spacing:0.01em;">{html.escape(metrics)}</div>'
-                if metrics else ""
-            )
 
             examples_html = ""
             if show_headline_examples and outlet:
                 story_df = build_outlet_headline_table(story_rows, outlet, limit=5)
                 example_items = build_story_examples_html(
                     story_df,
-                    show_author=True,
-                    show_media_type=True,
+                    show_author=show_author,
+                    show_date=show_date,
+                    show_media_type=show_media_type,
                     show_mentions=show_mentions,
                     show_impressions=show_impressions,
                     show_effective_reach=show_effective_reach,
@@ -183,7 +170,6 @@ def render_outlets_page() -> None:
                 '<div style="margin-bottom:1.35rem;">'
                 f'<div style="font-size:1.08rem; font-weight:700; margin-bottom:0.2rem;">{header}</div>'
                 f'<div style="line-height:1.55; margin-bottom:0.28rem;">{html.escape(themes)}</div>'
-                f"{metrics_html}"
                 f"{examples_html}"
                 "</div>"
             )
@@ -597,7 +583,7 @@ def render_outlets_page() -> None:
         )
 
         metric_label = st.radio(
-            "Chart metric",
+            "Ranking metric",
             ["Mentions", "Impressions", "Effective Reach"],
             horizontal=True,
             key="outlets_insights_chart_metric",
@@ -724,24 +710,74 @@ def render_outlets_page() -> None:
         with generate_col2:
             st.caption("Uses shortlisted outlets plus representative grouped stories and top contributing authors to generate concise, report-ready coverage themes.")
 
-        metrics_col1, metrics_col2, metrics_col3, metrics_col4, metrics_col5 = st.columns(5, gap="small")
-        with metrics_col1:
-            show_mentions = st.checkbox("Show mentions", value=True, key="outlets_report_show_mentions")
-        with metrics_col2:
-            show_unique_mentions = st.checkbox("Show unique mentions", value=True, key="outlets_report_show_unique_mentions")
-        with metrics_col3:
-            show_impressions = st.checkbox("Show impressions", value=True, key="outlets_report_show_impressions")
-        with metrics_col4:
-            show_effective_reach = st.checkbox("Show effective reach", value=True, key="outlets_report_show_effective_reach")
-        with metrics_col5:
-            show_headline_examples = st.checkbox("Examples", value=True, key="outlets_report_show_examples")
+        field_options = ["Author", "Date", "Media type", "Mentions", "Impressions", "Effective reach", "Examples"]
+        if "outlets_report_selected_fields" not in st.session_state:
+            st.session_state.outlets_report_selected_fields = field_options.copy()
+        if "outlets_report_previous_fields" not in st.session_state:
+            st.session_state.outlets_report_previous_fields = field_options.copy()
+
+        child_fields = {"Author", "Date", "Media type", "Mentions", "Impressions", "Effective reach"}
+
+        def _normalize_outlet_report_fields() -> None:
+            current_fields = st.session_state.get("outlets_report_selected_fields", []) or []
+            previous_fields = st.session_state.get("outlets_report_previous_fields", []) or []
+            current_set = set(current_fields)
+            previous_set = set(previous_fields)
+
+            if "Examples" not in current_set and current_set & child_fields:
+                if "Examples" in previous_set:
+                    current_set -= child_fields
+                else:
+                    current_set.add("Examples")
+
+            normalized_fields = [field for field in field_options if field in current_set]
+            st.session_state.outlets_report_selected_fields = normalized_fields
+            st.session_state.outlets_report_previous_fields = normalized_fields.copy()
+
+        preset_col, fields_col = st.columns([0.18, 0.82], gap="small")
+        with preset_col:
+            bulk_col1, bulk_col2 = st.columns(2, gap="small")
+            with bulk_col1:
+                if st.button("All", key="outlets_report_select_all", use_container_width=True):
+                    st.session_state.outlets_report_selected_fields = field_options.copy()
+                    st.session_state.outlets_report_previous_fields = field_options.copy()
+                    st.rerun()
+            with bulk_col2:
+                if st.button("None", key="outlets_report_select_none", use_container_width=True):
+                    st.session_state.outlets_report_selected_fields = []
+                    st.session_state.outlets_report_previous_fields = []
+                    st.rerun()
+
+        with fields_col:
+            st.pills(
+                "Fields",
+                options=field_options,
+                selection_mode="multi",
+                default=st.session_state.get("outlets_report_selected_fields", field_options),
+                key="outlets_report_selected_fields",
+                on_change=_normalize_outlet_report_fields,
+                label_visibility="collapsed",
+            )
+
+        selected_fields = st.session_state.get("outlets_report_selected_fields", []) or []
+        st.session_state.outlets_report_previous_fields = list(selected_fields)
+        selected_field_set = set(selected_fields)
+        show_example_author = "Author" in selected_field_set
+        show_example_date = "Date" in selected_field_set
+        show_example_type = "Media type" in selected_field_set
+        show_example_mentions = "Mentions" in selected_field_set
+        show_example_impressions = "Impressions" in selected_field_set
+        show_example_effective_reach = "Effective reach" in selected_field_set
+        show_headline_examples = "Examples" in selected_field_set
 
         report_html = build_report_html(
             shortlist_df,
-            show_mentions=show_mentions,
-            show_unique_mentions=show_unique_mentions,
-            show_impressions=show_impressions,
-            show_effective_reach=show_effective_reach,
+            show_author=show_example_author,
+            show_date=show_example_date,
+            show_media_type=show_example_type,
+            show_mentions=show_example_mentions,
+            show_impressions=show_example_impressions,
+            show_effective_reach=show_example_effective_reach,
             show_headline_examples=show_headline_examples,
         )
         if report_html:

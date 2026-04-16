@@ -15,6 +15,7 @@ TOP_STORY_DEFAULT_COLUMNS = {
     "Date": pd.NaT,
     "Mentions": 1,
     "Impressions": 0,
+    "Effective Reach": 0,
     "Type": "",
     "Outlet": "",
     "URL": "",
@@ -42,6 +43,8 @@ def normalize_top_stories_df(df: pd.DataFrame) -> pd.DataFrame:
 
     if "Impressions" in df.columns:
         df["Impressions"] = pd.to_numeric(df["Impressions"], errors="coerce").fillna(0)
+    if "Effective Reach" in df.columns:
+        df["Effective Reach"] = pd.to_numeric(df["Effective Reach"], errors="coerce").fillna(0)
 
     if "Date" in df.columns:
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.date
@@ -56,10 +59,12 @@ def _empty_top_story_candidate_df() -> pd.DataFrame:
         "Date",
         "Mentions",
         "Impressions",
+        "Effective Reach",
         "Example Outlet",
         "Example URL",
         "Example Type",
         "Example Snippet",
+        "Source Group IDs",
     ])
 
 
@@ -189,6 +194,7 @@ def build_prime_grouped_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
     for group_id, group in df.groupby("Group ID", dropna=False):
         mentions = pd.to_numeric(group["Mentions"], errors="coerce").fillna(0).sum()
         impressions = pd.to_numeric(group["Impressions"], errors="coerce").fillna(0).sum()
+        effective_reach = pd.to_numeric(group["Effective Reach"], errors="coerce").fillna(0).sum()
 
         prime_group = group[group["Prime Example"] == 1].copy()
         if prime_group.empty:
@@ -203,6 +209,7 @@ def build_prime_grouped_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
             "Date": best_row.get("Date", pd.NaT),
             "Mentions": int(mentions),
             "Impressions": impressions,
+            "Effective Reach": effective_reach,
             "Example Outlet": best_row.get("Outlet", ""),
             "Example URL": best_row.get("URL", ""),
             "Example Type": best_row.get("Type", ""),
@@ -216,6 +223,7 @@ def build_prime_grouped_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
     result = pd.DataFrame(rows)
     result["Date"] = pd.to_datetime(result["Date"], errors="coerce").dt.date
     result["Impressions"] = pd.to_numeric(result["Impressions"], errors="coerce").fillna(0)
+    result["Effective Reach"] = pd.to_numeric(result["Effective Reach"], errors="coerce").fillna(0).astype(int)
     result["Mentions"] = pd.to_numeric(result["Mentions"], errors="coerce").fillna(0).astype(int)
     return result[[
         "Group ID",
@@ -223,6 +231,7 @@ def build_prime_grouped_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
         "Date",
         "Mentions",
         "Impressions",
+        "Effective Reach",
         "Example Outlet",
         "Example URL",
         "Example Type",
@@ -285,6 +294,7 @@ def consolidate_top_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
         merged_row["Group ID"] = f"TOPMERGE::{group_key}"
         merged_row["Mentions"] = int(pd.to_numeric(group["Mentions"], errors="coerce").fillna(0).sum())
         merged_row["Impressions"] = int(pd.to_numeric(group["Impressions"], errors="coerce").fillna(0).sum())
+        merged_row["Effective Reach"] = int(pd.to_numeric(group["Effective Reach"], errors="coerce").fillna(0).sum())
         merged_types = [str(x).strip().upper() for x in group["Example Type"].dropna().astype(str).tolist() if str(x).strip()]
         merged_types = list(dict.fromkeys(merged_types))
         merged_row["Example Type"] = ", ".join(merged_types)
@@ -303,6 +313,7 @@ def consolidate_top_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
     out["Date"] = pd.to_datetime(out["Date"], errors="coerce").dt.date
     out["Mentions"] = pd.to_numeric(out["Mentions"], errors="coerce").fillna(0).astype(int)
     out["Impressions"] = pd.to_numeric(out["Impressions"], errors="coerce").fillna(0).astype(int)
+    out["Effective Reach"] = pd.to_numeric(out["Effective Reach"], errors="coerce").fillna(0).astype(int)
     out["Source Group IDs"] = out["Source Group IDs"].fillna("").astype(str).replace("None", "")
     desired_cols = [
         "Group ID",
@@ -310,6 +321,7 @@ def consolidate_top_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
         "Date",
         "Mentions",
         "Impressions",
+        "Effective Reach",
         "Example Outlet",
         "Example URL",
         "Example Type",
@@ -380,6 +392,7 @@ def build_source_candidate_table(
         "Date",
         "Mentions",
         "Impressions",
+        "Effective Reach",
         "Example Outlet",
         "Example URL",
         "Example Type",
@@ -663,6 +676,116 @@ def remove_saved_candidates_from_display(
     display_working["_group_id_key"] = display_working["Group ID"].astype(str)
     display_working = display_working[~display_working["_group_id_key"].isin(existing_ids)].copy()
     return display_working.drop(columns=["_group_id_key"], errors="ignore")
+
+
+def refresh_saved_story_metrics(
+    saved_df: pd.DataFrame,
+    source_df: pd.DataFrame,
+) -> pd.DataFrame:
+    if saved_df.empty or source_df.empty:
+        return saved_df
+
+    current_candidates = build_grouped_story_candidates(source_df)
+    if current_candidates.empty:
+        return saved_df
+
+    saved_working = normalize_top_stories_df(saved_df.copy())
+    candidate_working = normalize_top_stories_df(current_candidates.copy())
+
+    saved_working["Source Group IDs"] = saved_working.get("Source Group IDs", "").fillna("").astype(str)
+    candidate_working["Source Group IDs"] = candidate_working.get("Source Group IDs", "").fillna("").astype(str)
+
+    saved_working["_source_key"] = saved_working["Source Group IDs"].str.strip()
+    candidate_working["_source_key"] = candidate_working["Source Group IDs"].str.strip()
+    saved_working["_group_key"] = saved_working["Group ID"].fillna("").astype(str).str.strip()
+    candidate_working["_group_key"] = candidate_working["Group ID"].fillna("").astype(str).str.strip()
+
+    candidate_by_source = (
+        candidate_working[candidate_working["_source_key"] != ""]
+        .drop_duplicates(subset=["_source_key"], keep="first")
+        .set_index("_source_key")
+    )
+    candidate_by_group = (
+        candidate_working[candidate_working["_group_key"] != ""]
+        .drop_duplicates(subset=["_group_key"], keep="first")
+        .set_index("_group_key")
+    )
+
+    metric_columns = ["Mentions", "Impressions", "Effective Reach"]
+
+    for idx, row in saved_working.iterrows():
+        match_row = None
+        source_key = row.get("_source_key", "")
+        group_key = row.get("_group_key", "")
+
+        if source_key and source_key in candidate_by_source.index:
+            match_row = candidate_by_source.loc[source_key]
+        elif group_key and group_key in candidate_by_group.index:
+            match_row = candidate_by_group.loc[group_key]
+
+        if match_row is None:
+            continue
+
+        for col in metric_columns:
+            if col in match_row.index:
+                saved_working.at[idx, col] = match_row.get(col, saved_working.at[idx, col])
+
+    return saved_working.drop(columns=["_source_key", "_group_key"], errors="ignore")
+
+
+def refresh_generated_story_metrics(
+    generated_df: pd.DataFrame,
+    source_df: pd.DataFrame,
+) -> pd.DataFrame:
+    if generated_df.empty or source_df.empty:
+        return generated_df
+
+    current_candidates = build_grouped_story_candidates(source_df)
+    if current_candidates.empty:
+        return generated_df
+
+    generated_working = normalize_top_stories_df(generated_df.copy())
+    candidate_working = normalize_top_stories_df(current_candidates.copy())
+
+    generated_working["Source Group IDs"] = generated_working.get("Source Group IDs", "").fillna("").astype(str)
+    candidate_working["Source Group IDs"] = candidate_working.get("Source Group IDs", "").fillna("").astype(str)
+
+    generated_working["_source_key"] = generated_working["Source Group IDs"].str.strip()
+    candidate_working["_source_key"] = candidate_working["Source Group IDs"].str.strip()
+    generated_working["_group_key"] = generated_working["Group ID"].fillna("").astype(str).str.strip()
+    candidate_working["_group_key"] = candidate_working["Group ID"].fillna("").astype(str).str.strip()
+
+    candidate_by_source = (
+        candidate_working[candidate_working["_source_key"] != ""]
+        .drop_duplicates(subset=["_source_key"], keep="first")
+        .set_index("_source_key")
+    )
+    candidate_by_group = (
+        candidate_working[candidate_working["_group_key"] != ""]
+        .drop_duplicates(subset=["_group_key"], keep="first")
+        .set_index("_group_key")
+    )
+
+    metric_columns = ["Mentions", "Impressions", "Effective Reach"]
+
+    for idx, row in generated_working.iterrows():
+        match_row = None
+        source_key = row.get("_source_key", "")
+        group_key = row.get("_group_key", "")
+
+        if source_key and source_key in candidate_by_source.index:
+            match_row = candidate_by_source.loc[source_key]
+        elif group_key and group_key in candidate_by_group.index:
+            match_row = candidate_by_group.loc[group_key]
+
+        if match_row is None:
+            continue
+
+        for col in metric_columns:
+            if col in match_row.index:
+                generated_working.at[idx, col] = match_row.get(col, generated_working.at[idx, col])
+
+    return generated_working.drop(columns=["_source_key", "_group_key"], errors="ignore")
 
 
 def reset_generated_candidates(session_state) -> None:

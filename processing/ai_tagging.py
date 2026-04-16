@@ -330,6 +330,8 @@ def build_tag_observation_payload(
 
     working["_has_url"] = working["URL"].ne("")
     working["_is_online"] = working["Type"].str.upper().eq("ONLINE")
+    if "Date" not in working.columns:
+        working["Date"] = ""
     tagged_rows = tags_expanded.merge(working, on="Group ID", how="left")
 
     examples_by_tag: dict[str, list[dict[str, Any]]] = {}
@@ -348,6 +350,7 @@ def build_tag_observation_payload(
                     "group_id": row.get("Group ID", ""),
                     "headline": headline,
                     "outlet": str(row.get("Outlet", "") or "").strip(),
+                    "date": str(row.get("Date", "") or "").strip(),
                     "url": str(row.get("URL", "") or "").strip(),
                     "example_type": str(row.get("Type", "") or "").strip(),
                     "mentions": int(row.get("Mentions", 0) or 0),

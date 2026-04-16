@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+
 import streamlit as st
 
 st.title("Top Stories")
@@ -9,9 +11,17 @@ if not st.session_state.get("standard_step", False):
     st.error("Please complete Basic Cleaning before trying this step.")
     st.stop()
 
-from ui.top_stories_selection_view import render_top_stories_selection
-from ui.top_stories_validation_view import render_top_stories_validation
-from ui.top_story_summaries_view import render_top_story_summaries
+import ui.top_stories_selection_view as top_stories_selection_view
+import ui.top_stories_validation_view as top_stories_validation_view
+import ui.top_story_summaries_view as top_story_summaries_view
+
+top_stories_selection_view = importlib.reload(top_stories_selection_view)
+top_stories_validation_view = importlib.reload(top_stories_validation_view)
+top_story_summaries_view = importlib.reload(top_story_summaries_view)
+
+render_top_stories_selection = top_stories_selection_view.render_top_stories_selection
+render_top_stories_validation = top_stories_validation_view.render_top_stories_validation
+render_top_story_summaries = top_story_summaries_view.render_top_story_summaries
 
 if st.session_state.get("top_stories_section") == "Summaries":
     st.session_state.top_stories_section = "Insights"

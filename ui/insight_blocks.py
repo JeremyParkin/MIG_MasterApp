@@ -3,6 +3,18 @@ from __future__ import annotations
 import html
 from typing import Iterable, Mapping
 
+import pandas as pd
+
+
+def _format_display_date(value: object) -> str:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return ""
+    parsed = pd.to_datetime(raw_value, errors="coerce")
+    if pd.isna(parsed):
+        return raw_value
+    return f"{parsed.strftime('%B')} {parsed.day}, {parsed.year}"
+
 
 def build_linked_example_blocks_html(
     items: Iterable[Mapping[str, object]],
@@ -10,11 +22,13 @@ def build_linked_example_blocks_html(
     title_key: str = "headline",
     url_key: str = "url",
     outlet_key: str = "outlet",
+    date_key: str = "date",
     type_key: str = "example_type",
     mentions_key: str = "mentions",
     impressions_key: str = "impressions",
     effective_reach_key: str = "effective_reach",
     show_outlet: bool = True,
+    show_date: bool = False,
     show_media_type: bool = True,
     show_mentions: bool = True,
     show_impressions: bool = True,
@@ -29,6 +43,7 @@ def build_linked_example_blocks_html(
 
         url = str(item.get(url_key, "") or "").strip()
         outlet = str(item.get(outlet_key, "") or "").strip()
+        date_value = _format_display_date(item.get(date_key, ""))
         media_type = str(item.get(type_key, "") or "").strip()
         mentions = int(item.get(mentions_key, 0) or 0)
         impressions = int(item.get(impressions_key, 0) or 0)
@@ -37,6 +52,8 @@ def build_linked_example_blocks_html(
         meta_parts: list[str] = []
         if show_outlet and outlet:
             meta_parts.append(outlet)
+        if show_date and date_value:
+            meta_parts.append(date_value)
         if show_media_type and media_type:
             meta_parts.append(media_type)
 
