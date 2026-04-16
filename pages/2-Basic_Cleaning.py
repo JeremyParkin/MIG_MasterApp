@@ -202,6 +202,36 @@ if st.session_state.standard_step:
             reset_basic_cleaning()
             st.rerun()
 
+    original_rows = len(st.session_state.get("df_untouched", pd.DataFrame()))
+    traditional_rows = len(st.session_state.get("df_traditional", pd.DataFrame()))
+    social_rows = len(st.session_state.get("df_social", pd.DataFrame()))
+    duplicate_rows = len(st.session_state.get("df_dupes", pd.DataFrame()))
+    reconciled_total = traditional_rows + social_rows + duplicate_rows
+    reconciliation_matches = reconciled_total == original_rows
+
+    st.subheader("Row Reconciliation")
+    rec1, rec2, rec3, rec4, rec5 = st.columns(5)
+    with rec1:
+        st.metric("Original Rows", f"{original_rows:,}")
+    with rec2:
+        st.metric("Traditional", f"{traditional_rows:,}")
+    with rec3:
+        st.metric("Social", f"{social_rows:,}")
+    with rec4:
+        st.metric("Deleted Duplicates", f"{duplicate_rows:,}")
+    with rec5:
+        st.metric("Reconciled Total", f"{reconciled_total:,}")
+
+    if reconciliation_matches:
+        st.success("Row reconciliation passed: Original Rows match Traditional + Social + Deleted Duplicates.")
+    else:
+        delta = reconciled_total - original_rows
+        delta_text = f"{delta:+,}"
+        st.error(
+            "Row reconciliation failed: Original Rows do not match Traditional + Social + Deleted Duplicates "
+            f"({reconciled_total:,} vs {original_rows:,}, delta {delta_text})."
+        )
+
     traditional_unique_mentions = None
     if not st.session_state.df_ai_unique.empty and "Group Count" in st.session_state.df_ai_unique.columns:
         traditional_unique_mentions = len(st.session_state.df_ai_unique)
