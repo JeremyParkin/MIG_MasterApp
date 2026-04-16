@@ -127,6 +127,7 @@ def _build_outlet_story_rows(df: pd.DataFrame) -> pd.DataFrame:
             "Author": rep.get("Author", ""),
             "Type": rep.get("Type", ""),
             "Representative URL": rep.get("URL", ""),
+            "Representative Snippet": rep.get("Snippet", ""),
             "Representative Flag": rep.get("Coverage Flags", ""),
             "Prime Example Story": int(rep.get("Prime Example", 0) or 0),
             "Story Mentions": int(pd.to_numeric(group["Mentions"], errors="coerce").fillna(0).sum()),
@@ -215,6 +216,7 @@ def build_outlet_headline_table(story_level_df: pd.DataFrame, outlet_name: str, 
         "Story Impressions",
         "Story Effective Reach",
         "Representative URL",
+        "Representative Snippet",
     ]
     return outlet_rows[[c for c in display_cols if c in outlet_rows.columns]].copy()
 
@@ -398,9 +400,12 @@ def build_outlet_prompt(
     for _, row in headline_df.drop_duplicates(subset=["Headline"]).head(6).iterrows():
         story_json.append({
             "headline": row.get("Headline", ""),
+            "date": str(row.get("Date", "") or ""),
             "author": row.get("Author", ""),
+            "type": row.get("Type", ""),
             "mentions": int(row.get("Story Mentions", 0) or 0),
             "impressions": int(row.get("Story Impressions", 0) or 0),
+            "snippet": row.get("Representative Snippet", ""),
         })
 
     top_authors = top_authors_df["Author"].dropna().astype(str).head(5).tolist() if not top_authors_df.empty else []
@@ -412,23 +417,36 @@ You are helping a media intelligence analyst summarize why an outlet matters in 
 Write 1-2 concise sentences, about 35-80 words total.
 
 Requirements:
+- Write in English only, even if the source stories, outlet names, or example authors are in another language.
 - Keep it factual and report-ready.
-- Focus on recurring themes or angles visible in the example stories.
+- Base the summary on the actual substance visible in the representative stories, especially their headlines and snippets.
 - Assume the shared analysis focus above is already understood.
-- Start quickly with the outlet's actual coverage role, topics, or framing style.
+- Do not repeat the outlet name in the response; it is already shown in the UI.
+- Start directly with the outlet's actual coverage role, topics, or framing style.
 - Do not spend opening words explaining that the outlet is "relevant to" or "matters for" the topic.
-- Vary the opening structure across outlets.
-- Keep the emphasis on what the outlet tends to surface, package, or amplify within the analysis focus.
+- Describe observable patterns in the sampled stories, not generic category labels.
+- Vary sentence structure naturally across outlets.
+- Prioritize what is distinctive in the outlet's sample over repeating the broad topic.
+- Use cautious wording when the sample is small or thin.
+- Keep the emphasis on what kinds of stories, angles, and framing patterns the outlet tends to publish within the analysis focus.
 - Mention specific contributing authors only if materially helpful.
 - Do not invent significance, editorial stance, or motives.
 - Do not speculate about whether the outlet originated a story.
+- Do not speculate beyond what is visible in the sample.
 - Do not use bullets.
-- Prefer direct phrasing such as:
-  - "Regularly surfaces..."
-  - "Shows up most around..."
-  - "Packages the topic through..."
-  - "Frames the coverage through..."
+- Be specific about the recurring subject matter, framing, or story formats visible in the examples.
+- Avoid canned openings and repeated opener patterns across entries.
+- Avoid padded prose or empty qualifiers.
+- Favor concrete, analyst-facing phrasing over generic profile language.
+- Do not mention that this is a "sample" or refer to "the sampled stories" explicitly.
+- A concise sentence fragment is acceptable if it reads cleanly and gets to the substance faster.
 - Avoid boilerplate phrasing such as:
+  - "[Outlet name]..."
+  - "Regularly surfaces..."
+  - "Packages [topic] through..."
+  - "Shows up most around..."
+  - "In this sample..."
+  - "The sampled coverage..."
   - "X is relevant because..."
   - "X matters for [topic] because..."
   - "Coverage of [topic] in X..."

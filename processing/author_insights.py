@@ -79,6 +79,7 @@ def _build_story_level_rows(df: pd.DataFrame) -> pd.DataFrame:
             "Type": rep.get("Type", ""),
             "Representative Outlet": rep.get("Outlet", ""),
             "Representative URL": rep.get("URL", ""),
+            "Representative Snippet": rep.get("Snippet", ""),
             "Representative Flag": rep.get("Coverage Flags", ""),
             "Story Mentions": int(pd.to_numeric(group["Mentions"], errors="coerce").fillna(0).sum()),
             "Story Impressions": int(pd.to_numeric(group["Impressions"], errors="coerce").fillna(0).sum()),
@@ -170,6 +171,8 @@ def build_author_headline_table(story_level_df: pd.DataFrame, author_name: str, 
         "Story Effective Reach",
         "Representative Outlet",
         "Representative URL",
+        "Representative Snippet",
+        "Representative Flag",
     ]
     existing = [c for c in display_cols if c in author_rows.columns]
     return author_rows[existing].copy()
@@ -186,9 +189,12 @@ def build_author_prompt(
     for _, row in headline_df.drop_duplicates(subset=["Headline", "Representative Outlet"]).head(8).iterrows():
         story_json.append({
             "headline": row.get("Headline", ""),
+            "date": str(row.get("Date", "") or ""),
+            "type": row.get("Type", ""),
             "mentions": int(row.get("Story Mentions", 0) or 0),
             "impressions": int(row.get("Story Impressions", 0) or 0),
             "outlet": row.get("Representative Outlet", ""),
+            "snippet": row.get("Representative Snippet", ""),
             "flag": row.get("Representative Flag", ""),
         })
 
@@ -199,23 +205,35 @@ You are helping a media intelligence analyst summarize an author's coverage them
 Write 1-2 concise sentences, about 35-80 words total.
 
 Requirements:
+- Write in English only, even if the source stories or author names are in another language.
 - Keep it factual and report-ready.
-- Focus on recurring themes, angles, or beats visible in the headlines and example stories.
+- Base the summary on the actual substance visible in the representative stories, especially their headlines and snippets.
 - Assume the shared analysis focus above is already understood.
-- Start quickly with the author's distinctive beat, angle, or role in the coverage.
+- Do not repeat the author's name in the response; it is already shown in the UI.
+- Start directly with the distinctive beat, angle, or role visible in the stories.
 - Do not waste opening words restating that the author's coverage is "related to" or "focused on" the topic.
-- Vary the opening structure across authors.
+- Describe observable patterns in the sampled stories, not generic category labels.
+- Vary sentence structure naturally across authors.
+- Prioritize what is distinctive in the author's sample over repeating the broad topic.
+- Use cautious wording when the sample is small or thin.
 - Keep the emphasis on the distinctive substance of the author's coverage, not on re-framing the assignment.
 - Mention notable outlets only when they materially help describe the author's footprint.
 - Do not invent expertise, intent, or biography.
+- Do not speculate beyond what is visible in the sample.
 - Do not list raw counts unless they are essential.
 - Do not use bullets.
-- Prefer direct phrasing such as:
-  - "Writes mainly about..."
-  - "Highlights..."
-  - "Shows up most around..."
-  - "Appears mainly in..."
+- Be specific about recurring angles, subjects, or framing patterns visible in the examples.
+- Avoid canned openings and repeated opener patterns across entries.
+- Avoid padded prose or empty qualifiers.
+- Favor concrete, analyst-facing phrasing over generic profile language.
+- Do not mention that this is a "sample" or refer to "the sampled stories" explicitly.
+- A concise sentence fragment is acceptable if it reads cleanly and gets to the substance faster.
 - Avoid boilerplate phrasing such as:
+  - "[Author name]'s coverage..."
+  - "Writes mainly about..."
+  - "In this sample..."
+  - "The sampled coverage..."
+  - "Coverage centers on..." when a more concrete phrasing would work
   - "Quebec-related coverage..."
   - "Coverage of [topic]..."
   - "This author's coverage centers on..." when a more direct opening would work.
