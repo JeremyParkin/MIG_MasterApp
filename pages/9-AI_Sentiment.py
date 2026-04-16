@@ -729,22 +729,45 @@ with generate_obs_col1:
 with generate_obs_col2:
     st.caption("Uses finalized sentiment labels plus representative grouped stories from each sentiment bucket. The examples are weighted toward the most syndicated and highest-volume coverage.")
 
-example_meta_col1, example_meta_col2, example_meta_col3, example_meta_col4, example_meta_col5 = st.columns(5, gap="small")
-with example_meta_col1:
-    show_example_outlet = st.checkbox("Show outlet", value=True, key="sentiment_obs_show_outlet")
-with example_meta_col2:
-    show_example_type = st.checkbox("Show media type", value=True, key="sentiment_obs_show_type")
-with example_meta_col3:
-    show_example_mentions = st.checkbox("Show mentions", value=True, key="sentiment_obs_show_mentions")
-with example_meta_col4:
-    show_example_impressions = st.checkbox("Show impressions", value=True, key="sentiment_obs_show_impressions")
-with example_meta_col5:
-    show_example_effective_reach = st.checkbox("Show effective reach", value=True, key="sentiment_obs_show_effective_reach")
-
 observation_output = st.session_state.get("sentiment_observation_output", {})
 if observation_output:
     if st.session_state.get("sentiment_observation_include_nr", True) != include_not_relevant_final:
         st.info("The current observations were generated with a different Not Relevant setting. Regenerate if you want them aligned to the current distribution view.")
+
+    toggle_keys = [
+        "sentiment_obs_show_outlet",
+        "sentiment_obs_show_type",
+        "sentiment_obs_show_mentions",
+        "sentiment_obs_show_impressions",
+        "sentiment_obs_show_effective_reach",
+        "sentiment_obs_show_examples",
+    ]
+
+    bulk_toggle_col1, bulk_toggle_col2, _ = st.columns([0.12, 0.12, 0.76], gap="small")
+    with bulk_toggle_col1:
+        if st.button("All", key="sentiment_obs_toggle_all", use_container_width=True):
+            for toggle_key in toggle_keys:
+                st.session_state[toggle_key] = True
+            st.rerun()
+    with bulk_toggle_col2:
+        if st.button("None", key="sentiment_obs_toggle_none", use_container_width=True):
+            for toggle_key in toggle_keys:
+                st.session_state[toggle_key] = False
+            st.rerun()
+
+    example_meta_col1, example_meta_col2, example_meta_col3, example_meta_col4, example_meta_col5, example_meta_col6 = st.columns(6, gap="small")
+    with example_meta_col1:
+        show_example_outlet = st.checkbox("Outlet", value=True, key="sentiment_obs_show_outlet")
+    with example_meta_col2:
+        show_example_type = st.checkbox("Media type", value=True, key="sentiment_obs_show_type")
+    with example_meta_col3:
+        show_example_mentions = st.checkbox("Mentions", value=True, key="sentiment_obs_show_mentions")
+    with example_meta_col4:
+        show_example_impressions = st.checkbox("Impressions", value=True, key="sentiment_obs_show_impressions")
+    with example_meta_col5:
+        show_example_effective_reach = st.checkbox("Effective reach", value=True, key="sentiment_obs_show_effective_reach")
+    with example_meta_col6:
+        show_examples = st.checkbox("Examples", value=True, key="sentiment_obs_show_examples")
 
     overall_observation = str(observation_output.get("overall_observation", "") or "").strip()
     if overall_observation:
@@ -766,8 +789,7 @@ if observation_output:
                 st.write(observation_text)
 
             sentiment_examples = examples_by_sentiment.get(sentiment_label, [])
-            if sentiment_examples:
-                st.caption("Representative examples")
+            if sentiment_examples and show_examples:
                 example_blocks = build_linked_example_blocks_html(
                     sentiment_examples[:5],
                     show_outlet=show_example_outlet,

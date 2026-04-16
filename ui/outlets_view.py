@@ -175,7 +175,6 @@ def render_outlets_page() -> None:
                 if example_items:
                     examples_html = (
                         '<div style="margin-top:0.72rem;">'
-                        '<div style="font-size:0.98rem; font-weight:600; opacity:0.78; margin-bottom:0.45rem;">Representative examples</div>'
                         f"{example_items}"
                         "</div>"
                     )
@@ -735,7 +734,7 @@ def render_outlets_page() -> None:
         with metrics_col4:
             show_effective_reach = st.checkbox("Show effective reach", value=True, key="outlets_report_show_effective_reach")
         with metrics_col5:
-            show_headline_examples = st.checkbox("Show headline examples", value=True, key="outlets_report_show_examples")
+            show_headline_examples = st.checkbox("Examples", value=True, key="outlets_report_show_examples")
 
         report_html = build_report_html(
             shortlist_df,

@@ -638,7 +638,6 @@ elif observation_output:
 
         tag_examples = examples_by_tag.get(tag_label, [])
         if tag_examples:
-            st.caption("Representative examples")
             example_blocks = build_linked_example_blocks_html(
                 tag_examples[:5],
                 show_outlet=show_example_outlet,
