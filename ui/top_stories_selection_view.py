@@ -43,6 +43,8 @@ def render_top_stories_selection() -> None:
     
     if "top_stories_generated" not in st.session_state:
         st.session_state.top_stories_generated = False
+    st.session_state.setdefault("top_stories_checked_group_ids", [])
+    st.session_state.setdefault("top_stories_editor_version", 0)
     
     if not st.session_state.added_df.empty:
         st.session_state.added_df = normalize_top_stories_df(st.session_state.added_df)
@@ -290,7 +292,10 @@ def render_top_stories_selection() -> None:
         if df_to_display.empty:
             st.info("No story candidates matched the selected filters.")
         else:
-            df_to_display["Top Story"] = False
+            checked_group_ids = {
+                str(x) for x in st.session_state.get("top_stories_checked_group_ids", []) if str(x).strip()
+            }
+            df_to_display["Top Story"] = df_to_display["Group ID"].astype(str).isin(checked_group_ids)
     
             # Keep checkbox on the right, but control widths
             preferred_order = [
@@ -315,7 +320,7 @@ def render_top_stories_selection() -> None:
     
             updated_data_custom = st.data_editor(
                 df_to_display,
-                key="df_by_custom",
+                key=f"df_by_custom_{st.session_state.get('top_stories_editor_version', 0)}",
                 use_container_width=True,
                 column_config={
                     "Headline": st.column_config.Column("Headline", width="large"),
@@ -338,16 +343,30 @@ def render_top_stories_selection() -> None:
                 },
                 hide_index=True,
             )
+
+            action1, action2 = st.columns([1, 2], gap="small")
+            with action1:
+                if st.button("Check Top 10", key="top_stories_check_top_10"):
+                    st.session_state.top_stories_checked_group_ids = (
+                        df_to_display.head(10)["Group ID"].dropna().astype(str).tolist()
+                    )
+                    st.session_state.top_stories_editor_version += 1
+                    st.rerun()
+            with action2:
+                if st.button("Save Selected", key="by_custom", type="primary"):
+                    st.session_state.top_stories_checked_group_ids = (
+                        updated_data_custom.loc[updated_data_custom["Top Story"], "Group ID"]
+                        .dropna()
+                        .astype(str)
+                        .tolist()
+                    )
+                    st.session_state.added_df = save_selected_rows(
+                        updated_data_custom,
+                        df_to_display,
+                        st.session_state.added_df,
+                    )
     
-    
-            if st.button("Save Selected", key="by_custom", type="primary"):
-                st.session_state.added_df = save_selected_rows(
-                    updated_data_custom,
-                    df_to_display,
-                    st.session_state.added_df,
-                )
-    
-                st.rerun()
+                    st.rerun()
     
     if len(st.session_state.added_df) > 0:
         st.subheader("Saved Top Stories")

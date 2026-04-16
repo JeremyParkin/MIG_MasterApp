@@ -501,20 +501,27 @@ def save_selected_rows(
     selected_ids = (
         updated_data.loc[updated_data["Top Story"] == True, "Group ID"]
         .dropna()
+        .astype(str)
         .tolist()
     )
 
     if not selected_ids:
         return added_df
 
+    full_candidate_df = full_candidate_df.copy()
+    full_candidate_df["_group_id_key"] = full_candidate_df["Group ID"].astype(str)
+
     selected_rows = full_candidate_df.loc[
-        full_candidate_df["Group ID"].isin(selected_ids)
+        full_candidate_df["_group_id_key"].isin(selected_ids)
     ].copy()
+    selected_rows = selected_rows.drop(columns=["_group_id_key"], errors="ignore")
 
     new_added_df = pd.concat([added_df, selected_rows], ignore_index=True)
 
     if not new_added_df.empty and "Group ID" in new_added_df.columns:
-        new_added_df.drop_duplicates(subset=["Group ID"], keep="last", inplace=True)
+        new_added_df["_group_id_key"] = new_added_df["Group ID"].astype(str)
+        new_added_df.drop_duplicates(subset=["_group_id_key"], keep="last", inplace=True)
+        new_added_df.drop(columns=["_group_id_key"], errors="ignore", inplace=True)
         new_added_df.reset_index(drop=True, inplace=True)
 
     return new_added_df
@@ -527,11 +534,16 @@ def remove_saved_candidates_from_display(
     if display_df.empty or added_df.empty or "Group ID" not in display_df.columns or "Group ID" not in added_df.columns:
         return display_df
 
-    existing_ids = set(added_df["Group ID"].dropna().tolist())
-    return display_df[~display_df["Group ID"].isin(existing_ids)].copy()
+    existing_ids = set(added_df["Group ID"].dropna().astype(str).tolist())
+    display_working = display_df.copy()
+    display_working["_group_id_key"] = display_working["Group ID"].astype(str)
+    display_working = display_working[~display_working["_group_id_key"].isin(existing_ids)].copy()
+    return display_working.drop(columns=["_group_id_key"], errors="ignore")
 
 
 def reset_generated_candidates(session_state) -> None:
     session_state.df_grouped = pd.DataFrame()
     session_state.filtered_df = pd.DataFrame()
     session_state.top_stories_generated = False
+    session_state.top_stories_checked_group_ids = []
+    session_state.top_stories_editor_version = int(session_state.get("top_stories_editor_version", 0) or 0) + 1

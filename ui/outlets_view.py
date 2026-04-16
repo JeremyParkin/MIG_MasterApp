@@ -64,6 +64,8 @@ def render_outlets_page() -> None:
 
     init_outlet_workflow_state(st.session_state)
     init_analysis_context_state(st.session_state)
+    st.session_state.setdefault("outlet_selection_checked_outlets", [])
+    st.session_state.setdefault("outlet_selection_editor_version", 0)
 
     def rebuild_outlet_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         df_traditional = st.session_state.df_traditional.copy()
@@ -482,11 +484,17 @@ def render_outlets_page() -> None:
         with right_col:
             st.subheader("Candidate Outlets")
             st.caption('Check the "Keep" box for outlets you want on the final shortlist, then click "Save Selected".')
+            checked_outlets = [
+                outlet for outlet in st.session_state.get("outlet_selection_checked_outlets", [])
+                if outlet in set(candidate_df["Outlet"].astype(str).tolist())
+            ]
+            candidate_df = candidate_df.copy()
+            candidate_df["Keep"] = candidate_df["Outlet"].isin(checked_outlets)
             candidate_editor = st.data_editor(
                 candidate_df[["Outlet", "Mention_Total", "Impressions", "Effective_Reach", "Keep"]],
                 use_container_width=True,
                 hide_index=True,
-                key="outlet_candidate_editor",
+                key=f"outlet_candidate_editor_{st.session_state.get('outlet_selection_editor_version', 0)}",
                 column_config={
                     "Mention_Total": st.column_config.NumberColumn("Mentions", width="small", format="%d"),
                     "Impressions": st.column_config.NumberColumn("Impressions", width="small", format="%,d"),
@@ -497,18 +505,17 @@ def render_outlets_page() -> None:
 
             action1, action2, action3 = st.columns([1, 1, 2], gap="small")
             with action1:
-                if st.button("Use Top Suggestion", key="outlet_use_suggestion"):
+                if st.button("Check Top Suggestion", key="outlet_use_suggestion"):
                     st.session_state.outlets_section = "Selection"
-                    st.session_state.outlet_insights_selected_outlets = suggested_outlets
-                    st.session_state.outlet_insights_summaries = {
-                        k: v for k, v in st.session_state.get("outlet_insights_summaries", {}).items()
-                        if k in suggested_outlets
-                    }
+                    st.session_state.outlet_selection_checked_outlets = suggested_outlets
+                    st.session_state.outlet_selection_editor_version += 1
                     st.rerun()
             with action2:
                 if st.button("Clear Selected", key="outlet_clear_selected"):
                     st.session_state.outlets_section = "Selection"
                     st.session_state.outlet_insights_selected_outlets = []
+                    st.session_state.outlet_selection_checked_outlets = []
+                    st.session_state.outlet_selection_editor_version += 1
                     st.session_state.outlet_insights_summaries = {}
                     st.rerun()
             with action3:
@@ -517,6 +524,7 @@ def render_outlets_page() -> None:
                     newly_selected = candidate_editor.loc[candidate_editor["Keep"], "Outlet"].tolist()
                     selected = list(dict.fromkeys(current_selected + newly_selected))
                     st.session_state.outlet_insights_selected_outlets = selected
+                    st.session_state.outlet_selection_checked_outlets = selected
                     st.session_state.outlet_insights_summaries = {
                         k: v for k, v in st.session_state.get("outlet_insights_summaries", {}).items()
                         if k in selected

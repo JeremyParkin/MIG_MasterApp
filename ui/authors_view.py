@@ -89,6 +89,8 @@ def render_authors_page() -> None:
     init_author_insights_state(st.session_state)
     init_analysis_context_state(st.session_state)
     st.session_state.setdefault("authors_section", "Missing")
+    st.session_state.setdefault("author_selection_checked_authors", [])
+    st.session_state.setdefault("author_selection_editor_version", 0)
 
     if st.session_state.get("pickle_load", False) is True and len(st.session_state.get("auth_outlet_table", [])) > 0:
         st.session_state.auth_outlet_table = st.session_state.auth_outlet_table.copy()
@@ -856,6 +858,11 @@ def render_authors_page() -> None:
                 help="Hide unassigned authors from the candidate table and make Top Suggestion use only authors with assigned outlets.",
             )
             working_df = candidate_df.copy()
+            checked_authors = [
+                author for author in st.session_state.get("author_selection_checked_authors", [])
+                if author in set(working_df["Author"].astype(str).tolist())
+            ]
+            working_df["Keep"] = working_df["Author"].isin(checked_authors)
             working_df["Author Outlet"] = working_df.apply(
                 lambda row: " | ".join(
                     [part for part in [str(row.get("Author", "") or "").strip(), str(row.get("Assigned Outlet", "") or "").strip()] if part]
@@ -871,7 +878,7 @@ def render_authors_page() -> None:
             display_df = working_df[[col for col in preferred_order if col in working_df.columns]].copy()
             candidate_editor = st.data_editor(
                 display_df,
-                key=f"authors_candidate_editor_{key_suffix}",
+                key=f"authors_candidate_editor_{key_suffix}_{st.session_state.get('author_selection_editor_version', 0)}",
                 use_container_width=True,
                 hide_index=True,
                 column_config={
@@ -884,18 +891,17 @@ def render_authors_page() -> None:
 
             candidate_action1, candidate_action2, candidate_action3 = st.columns([1, 1, 2], gap="small")
             with candidate_action1:
-                if st.button("Use Top Suggestion", key=f"authors_insights_use_suggestion_{key_suffix}"):
+                if st.button("Check Top Suggestion", key=f"authors_insights_use_suggestion_{key_suffix}"):
                     st.session_state.authors_section = "Selection"
-                    st.session_state.author_insights_selected_authors = suggested_authors
-                    st.session_state.author_insights_summaries = {
-                        k: v for k, v in st.session_state.get("author_insights_summaries", {}).items()
-                        if k in suggested_authors
-                    }
+                    st.session_state.author_selection_checked_authors = suggested_authors
+                    st.session_state.author_selection_editor_version += 1
                     st.rerun()
             with candidate_action2:
                 if st.button("Clear Selected", key=f"authors_insights_clear_shortlist_{key_suffix}"):
                     st.session_state.authors_section = "Selection"
                     st.session_state.author_insights_selected_authors = []
+                    st.session_state.author_selection_checked_authors = []
+                    st.session_state.author_selection_editor_version += 1
                     st.session_state.author_insights_summaries = {}
                     st.rerun()
             with candidate_action3:
@@ -912,6 +918,7 @@ def render_authors_page() -> None:
                     newly_selected = [name for name in newly_selected if name]
                     selected = list(dict.fromkeys(current_selected + newly_selected))
                     st.session_state.author_insights_selected_authors = selected
+                    st.session_state.author_selection_checked_authors = selected
                     st.session_state.author_insights_summaries = {
                         k: v for k, v in st.session_state.get("author_insights_summaries", {}).items()
                         if k in selected
