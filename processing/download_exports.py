@@ -8,8 +8,9 @@ from typing import Any
 
 import pandas as pd
 
-from processing.author_insights import build_author_metrics
-from processing.outlet_insights import build_outlet_metrics
+from processing.author_insights import build_author_headline_table, build_author_metrics
+from processing.outlet_insights import build_outlet_headline_table, build_outlet_metrics
+from processing.top_story_summaries import normalize_summary_df
 
 
 # ---------- Core helpers ----------
@@ -463,9 +464,9 @@ def build_export_metadata_sheet(session_state) -> pd.DataFrame:
 
     sent_processed_groups = 0
     if isinstance(sent_unique, pd.DataFrame) and not sent_unique.empty:
-        has_ai = "AI Sentiment" in sent_unique.columns and sent_unique["AI Sentiment"].notna()
-        has_assigned = "Assigned Sentiment" in sent_unique.columns and sent_unique["Assigned Sentiment"].notna()
-        sent_processed_groups = int((has_ai if isinstance(has_ai, pd.Series) else False) | (has_assigned if isinstance(has_assigned, pd.Series) else False)).sum() if isinstance(has_ai, pd.Series) and isinstance(has_assigned, pd.Series) else int(has_ai.sum() if isinstance(has_ai, pd.Series) else 0)
+        has_ai = sent_unique["AI Sentiment"].notna() if "AI Sentiment" in sent_unique.columns else pd.Series(False, index=sent_unique.index)
+        has_assigned = sent_unique["Assigned Sentiment"].notna() if "Assigned Sentiment" in sent_unique.columns else pd.Series(False, index=sent_unique.index)
+        sent_processed_groups = int((has_ai | has_assigned).sum())
 
     rows = [
         ("Export Timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
@@ -534,6 +535,405 @@ def add_final_sentiment_columns(df: pd.DataFrame) -> pd.DataFrame:
         out.loc[assigned_clean != "", "Hybrid Sentiment Confidence"] = pd.NA
 
     return out
+
+
+def _docx_add_hyperlink(paragraph, text: str, url: str) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    part = paragraph.part
+    r_id = part.relate_to(url, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink", is_external=True)
+
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), r_id)
+
+    new_run = OxmlElement("w:r")
+    r_pr = OxmlElement("w:rPr")
+
+    color = OxmlElement("w:color")
+    color.set(qn("w:val"), "0563C1")
+    r_pr.append(color)
+
+    underline = OxmlElement("w:u")
+    underline.set(qn("w:val"), "single")
+    r_pr.append(underline)
+
+    new_run.append(r_pr)
+    text_element = OxmlElement("w:t")
+    text_element.text = text
+    new_run.append(text_element)
+    hyperlink.append(new_run)
+    paragraph._p.append(hyperlink)
+
+
+def _docx_add_example_block(
+    document,
+    headline: str,
+    url: str = "",
+    metrics_line: str = "",
+) -> None:
+    headline = str(headline or "").strip()
+    metrics_line = str(metrics_line or "").strip()
+    url = str(url or "").strip()
+    if not headline:
+        return
+
+    p = document.add_paragraph()
+    p.paragraph_format.space_after = 0
+    if url:
+        _docx_add_hyperlink(p, headline, url)
+    else:
+        p.add_run(headline)
+
+    if metrics_line:
+        m = document.add_paragraph(metrics_line)
+        m.paragraph_format.space_before = 0
+        m.paragraph_format.space_after = 0
+
+
+def _format_metric_parts(parts: list[tuple[str, Any]]) -> str:
+    formatted: list[str] = []
+    for label, value in parts:
+        if value is None or value == "":
+            continue
+        if isinstance(value, float):
+            if pd.isna(value):
+                continue
+            if value.is_integer():
+                value = int(value)
+        formatted.append(f"{label}: {value:,}" if isinstance(value, int) else f"{label}: {value}")
+    return " | ".join(formatted)
+
+
+def _safe_string(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _iter_author_report_blocks(session_state) -> list[dict[str, Any]]:
+    df_traditional = session_state.get("df_traditional", pd.DataFrame()).copy()
+    auth_outlet_table = session_state.get("auth_outlet_table", pd.DataFrame()).copy()
+    auth_outlet_table = auth_outlet_table if isinstance(auth_outlet_table, pd.DataFrame) and not auth_outlet_table.empty else None
+    summary_df, story_level_df = build_author_metrics(df_traditional, auth_outlet_table=auth_outlet_table)
+    if summary_df.empty:
+        return []
+
+    selected_authors = [
+        _safe_string(author)
+        for author in session_state.get("author_insights_selected_authors", [])
+        if _safe_string(author)
+    ]
+    summaries = dict(session_state.get("author_insights_summaries", {}))
+    authors = selected_authors or [_safe_string(author) for author in summaries.keys() if _safe_string(author)]
+    blocks: list[dict[str, Any]] = []
+
+    for author in authors:
+        author_row_df = summary_df[summary_df["Author"] == author]
+        if author_row_df.empty:
+            continue
+        author_row = author_row_df.iloc[0]
+        examples_df = build_author_headline_table(story_level_df, author, limit=5)
+        blocks.append(
+            {
+                "title": author,
+                "subtitle": _safe_string(author_row.get("Assigned Outlet", "")),
+                "summary": _safe_string(summaries.get(author, "")),
+                "metrics": _format_metric_parts(
+                    [
+                        ("Mentions", int(author_row.get("Mention_Total", 0) or 0)),
+                        ("Unique Mentions", int(author_row.get("Unique_Stories", 0) or 0)),
+                        ("Impressions", int(author_row.get("Impressions", 0) or 0)),
+                        ("Effective Reach", int(author_row.get("Effective_Reach", 0) or 0)),
+                    ]
+                ),
+                "examples": [
+                    {
+                        "headline": _safe_string(row.get("Headline", "")),
+                        "url": _safe_string(row.get("Representative URL", "")),
+                        "metrics": _format_metric_parts(
+                            [
+                                ("Outlet", _safe_string(row.get("Representative Outlet", ""))),
+                                ("Media Type", _safe_string(row.get("Type", ""))),
+                                ("Mentions", int(row.get("Story Mentions", 0) or 0)),
+                                ("Impressions", int(row.get("Story Impressions", 0) or 0)),
+                                ("Effective Reach", int(row.get("Story Effective Reach", 0) or 0)),
+                            ]
+                        ),
+                    }
+                    for _, row in examples_df.iterrows()
+                    if _safe_string(row.get("Headline", ""))
+                ],
+            }
+        )
+
+    return blocks
+
+
+def _iter_outlet_report_blocks(session_state) -> list[dict[str, Any]]:
+    df_traditional = session_state.get("df_traditional", pd.DataFrame()).copy()
+    summary_df, story_level_df = build_outlet_metrics(
+        df_traditional,
+        outlet_rollup_map=session_state.get("outlet_rollup_map", {}),
+    )
+    if summary_df.empty:
+        return []
+
+    selected_outlets = [
+        _safe_string(outlet)
+        for outlet in session_state.get("outlet_insights_selected_outlets", [])
+        if _safe_string(outlet)
+    ]
+    summaries = dict(session_state.get("outlet_insights_summaries", {}))
+    outlets = selected_outlets or [_safe_string(outlet) for outlet in summaries.keys() if _safe_string(outlet)]
+    blocks: list[dict[str, Any]] = []
+
+    for outlet in outlets:
+        outlet_row_df = summary_df[summary_df["Outlet"] == outlet]
+        if outlet_row_df.empty:
+            continue
+        outlet_row = outlet_row_df.iloc[0]
+        examples_df = build_outlet_headline_table(story_level_df, outlet, limit=5)
+        blocks.append(
+            {
+                "title": outlet,
+                "subtitle": _safe_string(outlet_row.get("Top_Types", "")),
+                "summary": _safe_string(summaries.get(outlet, "")),
+                "metrics": _format_metric_parts(
+                    [
+                        ("Mentions", int(outlet_row.get("Mention_Total", 0) or 0)),
+                        ("Unique Mentions", int(outlet_row.get("Unique_Mentions", 0) or 0)),
+                        ("Impressions", int(outlet_row.get("Impressions", 0) or 0)),
+                        ("Effective Reach", int(outlet_row.get("Effective_Reach", 0) or 0)),
+                    ]
+                ),
+                "examples": [
+                    {
+                        "headline": _safe_string(row.get("Headline", "")),
+                        "url": _safe_string(row.get("Representative URL", "")),
+                        "metrics": _format_metric_parts(
+                            [
+                                ("Author", _safe_string(row.get("Author", ""))),
+                                ("Media Type", _safe_string(row.get("Type", ""))),
+                                ("Mentions", int(row.get("Story Mentions", 0) or 0)),
+                                ("Impressions", int(row.get("Story Impressions", 0) or 0)),
+                                ("Effective Reach", int(row.get("Story Effective Reach", 0) or 0)),
+                            ]
+                        ),
+                    }
+                    for _, row in examples_df.iterrows()
+                    if _safe_string(row.get("Headline", ""))
+                ],
+            }
+        )
+
+    return blocks
+
+
+def _iter_sentiment_report_sections(session_state) -> tuple[str, list[dict[str, Any]]]:
+    observation_output = session_state.get("sentiment_observation_output", {}) or {}
+    overall = _safe_string(observation_output.get("overall_observation", ""))
+    sections = []
+    for section in observation_output.get("sentiment_sections", []) or []:
+        label = _safe_string(section.get("sentiment", ""))
+        if not label:
+            continue
+        examples = []
+        for item in (observation_output.get("_examples_by_sentiment", {}) or {}).get(label, []):
+            examples.append(
+                {
+                    "headline": _safe_string(item.get("headline", "")),
+                    "url": _safe_string(item.get("url", "")),
+                    "metrics": _format_metric_parts(
+                        [
+                            ("Outlet", _safe_string(item.get("outlet", ""))),
+                            ("Media Type", _safe_string(item.get("example_type", ""))),
+                            ("Mentions", int(item.get("mentions", 0) or 0)),
+                            ("Impressions", int(item.get("impressions", 0) or 0)),
+                            ("Effective Reach", int(item.get("effective_reach", 0) or 0)),
+                        ]
+                    ),
+                }
+            )
+        sections.append(
+            {
+                "title": label,
+                "summary": _safe_string(section.get("observation", "")),
+                "examples": examples,
+            }
+        )
+    return overall, sections
+
+
+def _iter_tag_report_sections(session_state) -> tuple[str, list[dict[str, Any]]]:
+    observation_output = session_state.get("tagging_observation_output", {}) or {}
+    overall = _safe_string(observation_output.get("overall_observation", ""))
+    sections = []
+    for section in observation_output.get("tag_sections", []) or []:
+        label = _safe_string(section.get("tag", ""))
+        if not label:
+            continue
+        examples = []
+        for item in (observation_output.get("_examples_by_tag", {}) or {}).get(label, []):
+            examples.append(
+                {
+                    "headline": _safe_string(item.get("headline", "")),
+                    "url": _safe_string(item.get("url", "")),
+                    "metrics": _format_metric_parts(
+                        [
+                            ("Outlet", _safe_string(item.get("outlet", ""))),
+                            ("Media Type", _safe_string(item.get("example_type", ""))),
+                            ("Mentions", int(item.get("mentions", 0) or 0)),
+                            ("Impressions", int(item.get("impressions", 0) or 0)),
+                            ("Effective Reach", int(item.get("effective_reach", 0) or 0)),
+                        ]
+                    ),
+                }
+            )
+        sections.append(
+            {
+                "title": label,
+                "summary": _safe_string(section.get("observation", "")),
+                "examples": examples,
+            }
+        )
+    return overall, sections
+
+
+def _iter_top_story_blocks(session_state) -> tuple[str, list[dict[str, Any]]]:
+    top_stories = normalize_summary_df(session_state.get("added_df", pd.DataFrame()).copy())
+    if top_stories.empty:
+        return "", []
+
+    overall = _safe_string((session_state.get("top_story_observation_output", {}) or {}).get("overall_observation", ""))
+    top_stories = top_stories.sort_values(["Mentions", "Impressions"], ascending=False)
+    blocks = []
+    for _, row in top_stories.iterrows():
+        headline = _safe_string(row.get("Headline", ""))
+        summary = _safe_string(row.get("Top Story Summary", "")) or _safe_string(row.get("Chart Callout", ""))
+        if not headline:
+            continue
+        blocks.append(
+            {
+                "title": headline,
+                "url": _safe_string(row.get("Example URL", "")),
+                "summary": summary,
+                "metrics": _format_metric_parts(
+                    [
+                        ("Outlet", _safe_string(row.get("Example Outlet", ""))),
+                        ("Media Type", _safe_string(row.get("Example Type", ""))),
+                        ("Mentions", int(row.get("Mentions", 0) or 0)),
+                        ("Impressions", int(row.get("Impressions", 0) or 0)),
+                    ]
+                ),
+            }
+        )
+    return overall, blocks
+
+
+def build_report_copy_docx_bytes(session_state) -> bytes:
+    try:
+        from docx import Document
+    except ImportError as exc:
+        raise RuntimeError("python-docx is required to build the report copy document.") from exc
+
+    document = Document()
+    document.add_heading("Report Copy", level=0)
+    client_name = _safe_string(session_state.get("client_name", "")) or "Client"
+    document.add_paragraph(f"{client_name} report copy export")
+    document.add_paragraph(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+    has_content = False
+
+    author_blocks = _iter_author_report_blocks(session_state)
+    if author_blocks:
+        has_content = True
+        document.add_heading("Top Authors", level=1)
+        for block in author_blocks:
+            title = block["title"]
+            subtitle = _safe_string(block.get("subtitle", ""))
+            document.add_heading(f"{title} | {subtitle}" if subtitle else title, level=2)
+            if block.get("summary"):
+                document.add_paragraph(block["summary"])
+            if block.get("metrics"):
+                document.add_paragraph(block["metrics"])
+            if block.get("examples"):
+                p = document.add_paragraph()
+                p.add_run("Representative examples").bold = True
+                for example in block["examples"]:
+                    _docx_add_example_block(document, example["headline"], example.get("url", ""), example.get("metrics", ""))
+
+    outlet_blocks = _iter_outlet_report_blocks(session_state)
+    if outlet_blocks:
+        has_content = True
+        document.add_heading("Top Outlets", level=1)
+        for block in outlet_blocks:
+            title = block["title"]
+            subtitle = _safe_string(block.get("subtitle", ""))
+            document.add_heading(f"{title} | {subtitle}" if subtitle else title, level=2)
+            if block.get("summary"):
+                document.add_paragraph(block["summary"])
+            if block.get("metrics"):
+                document.add_paragraph(block["metrics"])
+            if block.get("examples"):
+                p = document.add_paragraph()
+                p.add_run("Representative examples").bold = True
+                for example in block["examples"]:
+                    _docx_add_example_block(document, example["headline"], example.get("url", ""), example.get("metrics", ""))
+
+    top_story_overall, top_story_blocks = _iter_top_story_blocks(session_state)
+    if top_story_overall or top_story_blocks:
+        has_content = True
+        document.add_heading("Top Stories", level=1)
+        if top_story_overall:
+            document.add_heading("Overall Observations", level=2)
+            document.add_paragraph(top_story_overall)
+        for block in top_story_blocks:
+            document.add_heading(block["title"], level=2)
+            if block.get("summary"):
+                document.add_paragraph(block["summary"])
+            if block.get("metrics"):
+                document.add_paragraph(block["metrics"])
+
+    sentiment_overall, sentiment_sections = _iter_sentiment_report_sections(session_state)
+    if sentiment_overall or sentiment_sections:
+        has_content = True
+        document.add_heading("Sentiment Insights", level=1)
+        if sentiment_overall:
+            document.add_heading("Overall Observations", level=2)
+            document.add_paragraph(sentiment_overall)
+        for section in sentiment_sections:
+            document.add_heading(section["title"], level=2)
+            if section.get("summary"):
+                document.add_paragraph(section["summary"])
+            if section.get("examples"):
+                p = document.add_paragraph()
+                p.add_run("Representative examples").bold = True
+                for example in section["examples"]:
+                    _docx_add_example_block(document, example["headline"], example.get("url", ""), example.get("metrics", ""))
+
+    tag_overall, tag_sections = _iter_tag_report_sections(session_state)
+    if tag_overall or tag_sections:
+        has_content = True
+        document.add_heading("Tag Insights", level=1)
+        if tag_overall:
+            document.add_heading("Overall Observations", level=2)
+            document.add_paragraph(tag_overall)
+        for section in tag_sections:
+            document.add_heading(section["title"], level=2)
+            if section.get("summary"):
+                document.add_paragraph(section["summary"])
+            if section.get("examples"):
+                p = document.add_paragraph()
+                p.add_run("Representative examples").bold = True
+                for example in section["examples"]:
+                    _docx_add_example_block(document, example["headline"], example.get("url", ""), example.get("metrics", ""))
+
+    if not has_content:
+        raise ValueError("No report-copy content is available yet. Generate at least one set of insights or observations first.")
+
+    output = io.BytesIO()
+    document.save(output)
+    output.seek(0)
+    return output.getvalue()
 
 
 # ---------- Workbook builder ----------

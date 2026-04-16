@@ -7,7 +7,7 @@ import warnings
 import pandas as pd
 import streamlit as st
 
-from processing.download_exports import build_clean_workbook_bytes
+from processing.download_exports import build_clean_workbook_bytes, build_report_copy_docx_bytes
 from processing.notebooklm_exports import build_notebooklm_zip
 
 warnings.filterwarnings("ignore")
@@ -47,6 +47,39 @@ if "clean_excel_bytes" in st.session_state:
 
     if "clean_excel_built_at" in st.session_state:
         st.caption(f"Current workbook built: {st.session_state.clean_excel_built_at}")
+
+st.divider()
+st.subheader("Report copy document")
+
+had_report_copy = "report_copy_docx_bytes" in st.session_state
+
+build_report_copy = st.button(
+    "Build report copy document",
+    key="build_report_copy_document",
+    help="Creates a lightly formatted Word document with the current narrative insights and representative linked examples.",
+)
+if build_report_copy:
+    try:
+        with st.spinner("Building report copy document..."):
+            st.session_state.report_copy_docx_bytes = build_report_copy_docx_bytes(st.session_state)
+            st.session_state.report_copy_built_at = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+            action_word = "rebuilt" if had_report_copy else "built"
+            st.success(f"Report copy document {action_word} at {st.session_state.report_copy_built_at}")
+    except Exception as e:
+        st.error(f"Error building report copy document: {e}")
+
+if "report_copy_docx_bytes" in st.session_state:
+    export_name = f"{st.session_state.export_name} - report_copy.docx"
+    st.download_button(
+        "Download report copy document",
+        st.session_state.report_copy_docx_bytes,
+        file_name=export_name,
+        type="primary",
+        key="download_report_copy_document",
+    )
+
+    if "report_copy_built_at" in st.session_state:
+        st.caption(f"Current report copy document built: {st.session_state.report_copy_built_at}")
 
 st.divider()
 st.subheader("NotebookLM bundle")
@@ -120,8 +153,131 @@ Focus on high-level concepts rather than specific facts and figures.
 ---
 
 ### High-level coverage summary
+
 You are analyzing media coverage for **{client_name}**.  
 Summarize the overall coverage tone, key themes, and notable storylines across this dataset.  
 Highlight the most influential outlets and authors, and note any spikes in volume, sentiment shifts, or recurring issues.
+
+---
+
+### Coverage Themes
+What are the 5–7 key themes in the coverage that would be pertinent to **{client_name}**, and the communications and public relations professionals who work there?  
+For each theme, include **5 example headlines** of where that topic was found. For each headline, also include the **date and outlet**.
+
+---
+
+### Competitive Comparison
+Are any of **{client_name}**’s competitors mentioned in any of the stories?  
+If so, how does the media tend to characterize them? How are they compared to **{client_name}**?
+
+---
+
+### SWOT Analysis (Media Coverage Perspective)
+
+Task  
+Analyze the news articles and broadcast transcripts related to **{client_name}** contained in this notebook.  
+Generate a media-coverage-driven SWOT analysis that reflects how **{client_name}** is positioned through earned media, based solely on observable patterns, themes, and narratives in the coverage.
+
+Audience & Perspective  
+Write for communications and PR professionals responsible for understanding how organizational reputation is shaped in the media.  
+Act strictly as a **media analyst**, not as a strategist or advisor.
+
+Do not:
+- Recommend actions, tactics, messaging, or strategy  
+- Suggest what the organization “should” do  
+- Speculate beyond what is supported by coverage evidence  
+
+Analytical Framing Rules  
+- Base all points on **coverage patterns**, not assumptions about operations or intent  
+- Use neutral analytical phrasing such as:
+- “coverage reflects…”
+- “media frequently positions…”
+- “reporting emphasizes…”  
+- Avoid consulting or marketing jargon (e.g., “own the narrative,” “optimize messaging,” “capitalize on”)  
+- Where relevant, distinguish between:
+- **Story volume**
+- **Story type**
+- **Audience reach / outlet credibility**
+as drivers of reputational impact  
+
+SWOT Structure  
+
+Provide **4–5 concise bullets per quadrant**, written in clear, plain language and consistent in specificity.
+
+**Strengths**  
+Positive reputational signals conveyed through coverage (e.g., authority positioning, association with innovation or leadership, visibility in high-credibility outlets, trusted expert commentary).
+
+**Weaknesses**  
+Reputational vulnerabilities or negative associations reflected in coverage (e.g., incident-driven reporting, legal or safety narratives, uneven sub-brand perception, contextual linkage to negative events).
+
+**Opportunities**  
+Gaps, under-developed narratives, or emerging themes suggesting potential for broader or more balanced reputational positioning — without implying recommended action.
+
+**Threats**  
+External or category-level narratives present in coverage that may pose reputational risk (e.g., regulatory scrutiny, cybersecurity issues, political framing, sector instability).
+
+Observations Section  
+
+After the SWOT bullets, write a brief **“SWOT Analysis Observations”** section.  
+Include **one short paragraph per quadrant** synthesizing what the coverage patterns suggest at a higher level.
+
+These observations should:
+- Explain why the patterns matter from a media-analysis standpoint  
+- Not repeat bullets verbatim  
+- Not introduce new unsupported claims  
+
+Tone & Constraints  
+- Analytical, neutral, evidence-based  
+- No prescriptive or advisory language  
+- No operational judgments  
+- No generalized industry claims unless clearly reflected in the sources  
+
+---
+
+### Issues and Risk Monitoring
+Review the coverage of {client_name} and describe any emerging or ongoing issues or risks that could affect the organization’s reputation.
+Present your findings as concise, clearly structured text (not tables).
+For each issue, include:
+- A brief summary of what the issue is about
+- An estimate of how common it is in the dataset (frequent / occasional / rare)
+- The general sentiment or framing of the coverage (positive / neutral / negative)
+- A few representative headlines or short quotes that illustrate the tone or context
+- A sentence or two on whether the issue appears to be growing, stable, or fading in prominence
+
+---
+
+### Implications and Recommendations for Comms
+Based on the coverage patterns for {client_name}, outline observations and cautious considerations that might inform communications planning — without prescribing strategy.
+Write your response as concise, clearly structured text (not tables).
+For example, you might note:
+- Which narratives appear most influential or persistent
+- Any patterns that might warrant closer monitoring or further validation
+- Possible areas where proactive engagement or clarification could help manage perceptions
+- Observations that may be useful for future reporting or research focus
+
+---
+
+### Misinformation & False Claims
+Search the coverage of {client_name} for any mentions of false, misleading, or unverified information about the brand itself.
+Exclude stories where {client_name} is the one accused of misleading others.
+For each example, describe the nature of the misinformation, its origin (if known), and how the media handled it — corrected, ignored, or amplified it.
+Present your findings as structured text sections, not as a table.
+
+---
+
+### Negative Message Discovery
+You are analyzing media coverage of {client_name}.
+Ignore any existing sentiment labels or numerical scores in the data.
+Your goal is to identify and describe any negative messages or narratives about {client_name} that appear across the coverage, from the obvious to the more burried.
+
+For each distinct negative message you find:
+- Start a new short section with a clear heading naming the message (e.g., “Concerns about Product Safety”, “Leadership Controversies”).
+- Summarize what the message is and how it is expressed in the media (2–3 sentences).
+- Explain what aspect of {client_name} it relates to (e.g., reputation, products, financials, operations, ethics, customer experience, etc.).
+- Include one or two short quotes or paraphrased examples, with outlet names and dates mentioned inline where available.
+- Indicate whether the message appears isolated (few stories) or recurring (multiple outlets, ongoing).
+
+At the end, include a short paragraph summarizing what these negative messages collectively suggest about how {client_name} is being portrayed, without speculating about motives or offering recommendations.
+Present your findings as structured text sections, not as a table.
 """
     )
