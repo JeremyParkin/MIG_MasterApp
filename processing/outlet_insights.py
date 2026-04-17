@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from urllib.parse import urlparse
 from typing import Any
 
 import pandas as pd
@@ -25,6 +26,8 @@ def init_outlet_workflow_state(session_state) -> None:
     session_state.setdefault("outlet_cleanup_rule_mode", "Contains")
     session_state.setdefault("outlet_cleanup_rule_pattern", "")
     session_state.setdefault("outlet_cleanup_rule_target", "")
+    session_state.setdefault("outlet_cleanup_cluster_index", 0)
+    session_state.setdefault("outlet_cleanup_selected_candidates", {})
 
 
 def _normalize_outlet_key(text: str) -> str:
@@ -43,6 +46,7 @@ def _clean_outlet_df(df: pd.DataFrame) -> pd.DataFrame:
         "Author": "",
         "URL": "",
         "Type": "",
+        "Country": "",
         "Coverage Flags": "",
         "Mentions": 0,
         "Impressions": 0,
@@ -53,7 +57,7 @@ def _clean_outlet_df(df: pd.DataFrame) -> pd.DataFrame:
         if col not in working.columns:
             working[col] = default
 
-    text_cols = ["Outlet", "Headline", "Author", "URL", "Type", "Coverage Flags"]
+    text_cols = ["Outlet", "Headline", "Author", "URL", "Type", "Country", "Coverage Flags"]
     for col in text_cols:
         working[col] = working[col].fillna("").astype(str).str.strip()
 
@@ -76,21 +80,66 @@ def _clean_outlet_df(df: pd.DataFrame) -> pd.DataFrame:
 
 def _normalize_network_canonical(text: str) -> str | None:
     key = _normalize_outlet_key(text)
-    rules = [
-        ("ctv", "CTV"),
-        ("cbc", "CBC"),
-        ("global news", "Global News"),
-        ("global", "Global News"),
-        ("citynews", "CityNews"),
-        ("the canadian press", "The Canadian Press"),
-        ("canadian press", "The Canadian Press"),
-        ("radio canada", "Radio-Canada"),
-        ("bnn bloomberg", "BNN Bloomberg"),
+    if not key:
+        return None
+
+    direct_rules: list[tuple[str, str]] = [
+        (r"\byahoo\b", "Yahoo!"),
+        (r"\bmsn\b", "MSN"),
+        (r"\bassociated press\b", "Associated Press"),
+        (r"\bap planner\b", "Associated Press"),
+        (r"\bap state local wire\b", "Associated Press"),
+        (r"\bassociated press international\b", "Associated Press"),
+        (r"\breuters\b", "Reuters"),
+        (r"\bthe canadian press\b", "The Canadian Press"),
+        (r"\bcanadian press\b", "The Canadian Press"),
+        (r"\bcp newsalert\b", "The Canadian Press"),
+        (r"\bradio canada\b", "Radio-Canada"),
+        (r"\bcbc\b", "CBC"),
+        (r"\bctv\b", "CTV"),
+        (r"\bcitynews\b", "CityNews"),
+        (r"\bcity news\b", "CityNews"),
+        (r"\bglobal news\b", "Global"),
+        (r"\bbbc\b", "BBC"),
+        (r"\bcnn\b", "CNN"),
+        (r"\bsky news\b", "Sky News"),
+        (r"\bfrance 24\b", "France 24"),
+        (r"\bbnn bloomberg\b", "BNN Bloomberg"),
     ]
-    for needle, canonical in rules:
-        if needle in key:
+    for pattern, canonical in direct_rules:
+        if re.search(pattern, key):
             return canonical
+
+    broadcast_indicators = r"\b(news|tv|radio|fm|am|channel|eyewitness|newsradio)\b"
+    broadcast_family_rules: list[tuple[str, str]] = [
+        (r"\babc(?:\d{1,2})?\b", "ABC"),
+        (r"\bcbs(?:\d{1,2})?\b", "CBS"),
+        (r"\bnbc(?:\d{1,2})?\b", "NBC"),
+        (r"\bfox(?:\d{1,2})?\b", "FOX"),
+    ]
+    for pattern, canonical in broadcast_family_rules:
+        if re.search(pattern, key) and re.search(broadcast_indicators, key):
+            return canonical
+
+    if re.search(r"\bglobal\b", key) and re.search(broadcast_indicators, key):
+        return "Global"
+
     return None
+
+
+def _extract_domain(url: str) -> str:
+    text = str(url or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = urlparse(text if "://" in text else f"https://{text}")
+        domain = (parsed.netloc or "").lower().strip()
+        domain = re.sub(r"^www\.", "", domain)
+        if "tveyes" in domain or "tvey" in domain:
+            return ""
+        return domain
+    except Exception:
+        return ""
 
 
 def build_outlet_workflow_df(df_traditional: pd.DataFrame, outlet_rollup_map: dict[str, str] | None = None) -> pd.DataFrame:
@@ -324,6 +373,154 @@ def build_rollup_suggestions(df_traditional: pd.DataFrame, outlet_rollup_map: di
         return pd.DataFrame()
 
     return pd.DataFrame(rows).sort_values(["Mentions", "Impressions"], ascending=False).reset_index(drop=True)
+
+
+def build_outlet_cleanup_clusters(
+    df_traditional: pd.DataFrame,
+    outlet_rollup_map: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    working = _clean_outlet_df(df_traditional)
+    if working.empty:
+        return []
+
+    rollup_map = {
+        str(k).strip(): str(v).strip()
+        for k, v in (outlet_rollup_map or {}).items()
+        if str(k).strip() and str(v).strip()
+    }
+
+    raw_outlets = (
+        working.groupby("Outlet", as_index=False)
+        .agg(
+            Mentions=("Mentions", "sum"),
+            Impressions=("Impressions", "sum"),
+            Effective_Reach=("Effective Reach", "sum"),
+        )
+    )
+    if raw_outlets.empty:
+        return []
+
+    url_ranked = working.copy()
+    url_ranked["_domain"] = url_ranked["URL"].apply(_extract_domain)
+    url_ranked = url_ranked[url_ranked["_domain"] != ""].copy()
+    if not url_ranked.empty:
+        top_domains = (
+            url_ranked.sort_values(
+                ["Mentions", "Impressions", "Date"],
+                ascending=[False, False, False],
+                na_position="last",
+            )
+            .drop_duplicates(subset=["Outlet"], keep="first")
+            .rename(columns={"_domain": "Domain"})
+        )[["Outlet", "Domain"]]
+        raw_outlets = raw_outlets.merge(top_domains, on="Outlet", how="left")
+    else:
+        raw_outlets["Domain"] = ""
+
+    type_rollup = (
+        working[working["Type"] != ""]
+        .groupby(["Outlet", "Type"], as_index=False)["Mentions"]
+        .sum()
+        .sort_values(["Outlet", "Mentions", "Type"], ascending=[True, False, True])
+    )
+    if not type_rollup.empty:
+        top_type = (
+            type_rollup.drop_duplicates(subset=["Outlet"], keep="first")
+            .rename(columns={"Type": "Media Type"})
+        )[["Outlet", "Media Type"]]
+        raw_outlets = raw_outlets.merge(top_type, on="Outlet", how="left")
+    else:
+        raw_outlets["Media Type"] = ""
+
+    country_rollup = (
+        working[working["Country"] != ""]
+        .groupby(["Outlet", "Country"], as_index=False)["Mentions"]
+        .sum()
+        .sort_values(["Outlet", "Mentions", "Country"], ascending=[True, False, True])
+    )
+    if not country_rollup.empty:
+        top_country = (
+            country_rollup.drop_duplicates(subset=["Outlet"], keep="first")
+        )[["Outlet", "Country"]]
+        raw_outlets = raw_outlets.merge(top_country, on="Outlet", how="left")
+    else:
+        raw_outlets["Country"] = ""
+
+    raw_outlets["_normalized_key"] = raw_outlets["Outlet"].apply(_normalize_outlet_key)
+
+    clusters: list[dict[str, Any]] = []
+    seen_member_sets: set[tuple[str, ...]] = set()
+
+    def _add_cluster(cluster_id: str, reason: str, members: list[str], suggested_master: str) -> None:
+        unique_members = sorted({str(member).strip() for member in members if str(member).strip()})
+        if len(unique_members) < 2:
+            return
+
+        member_key = tuple(unique_members)
+        if member_key in seen_member_sets:
+            return
+
+        current_targets = {rollup_map.get(member, member) for member in unique_members}
+        if len(current_targets) == 1:
+            return
+
+        subset = raw_outlets[raw_outlets["Outlet"].isin(unique_members)].copy()
+        if subset.empty:
+            return
+
+        ranked_subset = subset.sort_values(
+            ["Mentions", "Impressions", "Effective_Reach", "Outlet"],
+            ascending=[False, False, False, True],
+        ).reset_index(drop=True)
+
+        clusters.append(
+            {
+                "cluster_id": cluster_id,
+                "reason": reason,
+                "suggested_master": suggested_master or str(ranked_subset.iloc[0]["Outlet"]).strip(),
+                "candidate_count": len(unique_members),
+                "mentions": int(subset["Mentions"].sum()),
+                "impressions": int(subset["Impressions"].sum()),
+                "effective_reach": int(subset["Effective_Reach"].sum()),
+                "candidates": ranked_subset[["Outlet", "Media Type", "Country", "Domain", "Mentions", "Impressions", "Effective_Reach"]]
+                .rename(columns={"Effective_Reach": "Effective Reach"})
+                .to_dict("records"),
+            }
+        )
+        seen_member_sets.add(member_key)
+
+    network_groups: dict[str, list[str]] = {}
+    for outlet in raw_outlets["Outlet"].tolist():
+        canonical = _normalize_network_canonical(outlet)
+        if canonical and canonical != outlet:
+            network_groups.setdefault(canonical, []).append(outlet)
+
+    for canonical, members in network_groups.items():
+        _add_cluster(
+            cluster_id=f"network::{_normalize_outlet_key(canonical)}",
+            reason="Suggested network rollup",
+            members=members,
+            suggested_master=canonical,
+        )
+
+    for normalized_key, group in raw_outlets.groupby("_normalized_key", dropna=False):
+        members = group["Outlet"].astype(str).tolist()
+        if len(members) < 2:
+            continue
+        ranked_group = group.sort_values(
+            ["Mentions", "Impressions", "Effective_Reach", "Outlet"],
+            ascending=[False, False, False, True],
+        ).reset_index(drop=True)
+        suggested_master = str(ranked_group.iloc[0]["Outlet"]).strip()
+        _add_cluster(
+            cluster_id=f"variant::{normalized_key}",
+            reason="Possible naming variants",
+            members=members,
+            suggested_master=suggested_master,
+        )
+
+    clusters.sort(key=lambda row: (row["mentions"], row["impressions"], row["candidate_count"]), reverse=True)
+    return clusters
 
 
 def build_outlet_rollup_preview(df_traditional: pd.DataFrame, outlet_rollup_map: dict[str, str] | None = None) -> pd.DataFrame:

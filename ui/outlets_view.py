@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import importlib
 import re
+from urllib.parse import urlparse
 import warnings
 
 import pandas as pd
@@ -21,6 +22,7 @@ apply_outlet_rollup_map = outlet_insights.apply_outlet_rollup_map
 build_outlet_headline_table = outlet_insights.build_outlet_headline_table
 build_outlet_metrics = outlet_insights.build_outlet_metrics
 build_outlet_rollup_preview = outlet_insights.build_outlet_rollup_preview
+build_outlet_cleanup_clusters = outlet_insights.build_outlet_cleanup_clusters
 build_rollup_suggestions = outlet_insights.build_rollup_suggestions
 build_outlet_top_authors = outlet_insights.build_outlet_top_authors
 build_outlet_variant_candidates = outlet_insights.build_outlet_variant_candidates
@@ -48,6 +50,23 @@ def format_compact_integer(num: float | int) -> str:
     if n >= 1_000:
         return f"{n / 1_000:.0f}K"
     return str(int(n)) if n.is_integer() else str(round(n))
+
+
+def extract_domain(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if not re.match(r"^[a-z]+://", raw, flags=re.IGNORECASE):
+        raw = f"https://{raw}"
+    try:
+        host = (urlparse(raw).netloc or "").lower()
+    except Exception:
+        return ""
+    if host.startswith("www."):
+        host = host[4:]
+    if "tveyes" in host or "tvey" in host:
+        return ""
+    return host
 
 
 def render_outlets_page() -> None:
@@ -89,6 +108,125 @@ def render_outlets_page() -> None:
             "variants_df": variants_df,
         }
         return metrics_df, story_df, variants_df
+
+    def rebuild_outlet_cleanup_data() -> tuple[pd.DataFrame, list[dict[str, object]], pd.DataFrame]:
+        df_traditional = st.session_state.df_traditional.copy()
+        outlet_map = st.session_state.get("outlet_rollup_map", {})
+        cache_key = (
+            "outlet_cleanup_cache",
+            5,
+            len(df_traditional),
+            tuple(df_traditional.columns.tolist()),
+            tuple(sorted((str(k), str(v)) for k, v in outlet_map.items())),
+        )
+        cached = st.session_state.get("outlet_cleanup_cache")
+        if cached and cached.get("key") == cache_key:
+            return cached["rollup_preview"], cached["cleanup_clusters"], cached["current_entities"]
+
+        rollup_preview = build_outlet_rollup_preview(df_traditional, outlet_map)
+        cleanup_clusters = build_outlet_cleanup_clusters(df_traditional, outlet_map)
+        if rollup_preview.empty:
+            current_entities = pd.DataFrame(
+                columns=["Outlet", "Country", "Domain", "Media Type", "Source_Count", "Mentions", "Impressions", "Effective Reach"]
+            )
+        else:
+            current_entities = (
+                rollup_preview.groupby("Canonical Outlet", as_index=False)
+                .agg(
+                    Source_Count=("Outlet", "nunique"),
+                    Mentions=("Mentions", "sum"),
+                    Impressions=("Impressions", "sum"),
+                    Effective_Reach=("Effective_Reach", "sum"),
+                )
+                .rename(columns={"Canonical Outlet": "Outlet", "Effective_Reach": "Effective Reach"})
+            )
+
+            domain_working = df_traditional.copy()
+            domain_working["Outlet"] = domain_working.get("Outlet", "").fillna("").astype(str).str.strip()
+            domain_working["URL"] = domain_working.get("URL", "").fillna("").astype(str).str.strip()
+            domain_working["Canonical Outlet"] = domain_working["Outlet"].map(
+                lambda name: outlet_map.get(str(name).strip(), str(name).strip())
+            )
+            domain_working["_domain"] = domain_working["URL"].apply(extract_domain)
+            domain_working = domain_working[domain_working["_domain"] != ""].copy()
+            if not domain_working.empty:
+                top_domain = (
+                    domain_working.sort_values(
+                        ["Mentions", "Impressions", "Date"],
+                        ascending=[False, False, False],
+                        na_position="last",
+                    )
+                    .drop_duplicates(subset=["Canonical Outlet"], keep="first")
+                )[["Canonical Outlet", "_domain"]].rename(
+                    columns={"Canonical Outlet": "Outlet", "_domain": "Domain"}
+                )
+                current_entities = current_entities.merge(top_domain, on="Outlet", how="left")
+            else:
+                current_entities["Domain"] = ""
+
+            type_working = df_traditional.copy()
+            type_working["Outlet"] = type_working.get("Outlet", "").fillna("").astype(str).str.strip()
+            type_working["Type"] = type_working.get("Type", "").fillna("").astype(str).str.strip()
+            type_working["Canonical Outlet"] = type_working["Outlet"].map(
+                lambda name: outlet_map.get(str(name).strip(), str(name).strip())
+            )
+            type_rollup = (
+                type_working[type_working["Type"] != ""]
+                .groupby(["Canonical Outlet", "Type"], as_index=False)["Mentions"]
+                .sum()
+                .sort_values(["Canonical Outlet", "Mentions", "Type"], ascending=[True, False, True])
+            )
+            if not type_rollup.empty:
+                top_type = (
+                    type_rollup.drop_duplicates(subset=["Canonical Outlet"], keep="first")
+                    .rename(columns={"Canonical Outlet": "Outlet", "Type": "Media Type"})
+                )[["Outlet", "Media Type"]]
+                current_entities = current_entities.merge(top_type, on="Outlet", how="left")
+            else:
+                current_entities["Media Type"] = ""
+
+            country_working = df_traditional.copy()
+            country_working["Outlet"] = country_working.get("Outlet", "").fillna("").astype(str).str.strip()
+            country_working["Country"] = country_working.get("Country", "").fillna("").astype(str).str.strip()
+            country_working["Canonical Outlet"] = country_working["Outlet"].map(
+                lambda name: outlet_map.get(str(name).strip(), str(name).strip())
+            )
+            country_rollup = (
+                country_working[country_working["Country"] != ""]
+                .groupby(["Canonical Outlet", "Country"], as_index=False)["Mentions"]
+                .sum()
+                .sort_values(["Canonical Outlet", "Mentions", "Country"], ascending=[True, False, True])
+            )
+            if not country_rollup.empty:
+                top_country = (
+                    country_rollup.drop_duplicates(subset=["Canonical Outlet"], keep="first")
+                    .rename(columns={"Canonical Outlet": "Outlet"})
+                )[["Outlet", "Country"]]
+                current_entities = current_entities.merge(top_country, on="Outlet", how="left")
+            else:
+                current_entities["Country"] = ""
+
+            current_entities["Country"] = current_entities["Country"].fillna("")
+            current_entities["Domain"] = current_entities["Domain"].fillna("")
+            current_entities["Media Type"] = current_entities["Media Type"].fillna("")
+            current_entities = current_entities[[
+                "Outlet",
+                "Country",
+                "Domain",
+                "Media Type",
+                "Source_Count",
+                "Mentions",
+                "Impressions",
+                "Effective Reach",
+            ]].sort_values(["Outlet"], ascending=[True]).reset_index(drop=True)
+
+        st.session_state.outlet_cleanup_cache = {
+            "key": cache_key,
+            "rollup_preview": rollup_preview,
+            "cleanup_clusters": cleanup_clusters,
+            "current_entities": current_entities,
+        }
+        return rollup_preview, cleanup_clusters, current_entities
 
     def build_story_examples_html(
         df: pd.DataFrame,
@@ -149,7 +287,7 @@ def render_outlets_page() -> None:
 
             examples_html = ""
             if show_headline_examples and outlet:
-                story_df = build_outlet_headline_table(story_rows, outlet, limit=5)
+                story_df = build_outlet_headline_table(get_story_rows(), outlet, limit=5)
                 example_items = build_story_examples_html(
                     story_df,
                     show_author=show_author,
@@ -177,10 +315,23 @@ def render_outlets_page() -> None:
 
         return f'<div style="display:block;">{"".join(blocks)}</div>' if blocks else ""
 
-    metrics_df, story_rows, variants_df = rebuild_outlet_data()
-    if metrics_df.empty:
-        st.info("No outlet-level data available.")
-        st.stop()
+    outlet_runtime_cache: dict[str, pd.DataFrame | tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]] = {}
+
+    def get_outlet_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        cached = outlet_runtime_cache.get("outlet_data")
+        if cached is None:
+            cached = rebuild_outlet_data()
+            outlet_runtime_cache["outlet_data"] = cached
+        return cached  # type: ignore[return-value]
+
+    def get_metrics_df() -> pd.DataFrame:
+        return get_outlet_data()[0]
+
+    def get_story_rows() -> pd.DataFrame:
+        return get_outlet_data()[1]
+
+    def get_variants_df() -> pd.DataFrame:
+        return get_outlet_data()[2]
 
     st.markdown(
         """
@@ -240,151 +391,433 @@ def render_outlets_page() -> None:
         rank_by = st.session_state.get("outlets_rank_by", "Mentions")
         metric_col = METRIC_FIELD_MAP.get(rank_by, "Mention_Total")
         sort_cols = [metric_col, "Impressions", "Mention_Total", "Unique_Mentions"]
+        metrics_df = get_metrics_df()
         return metrics_df.sort_values(sort_cols, ascending=False).reset_index(drop=True)
 
     def render_cleanup_section() -> None:
-        st.session_state.outlets_section = "Cleanup"
-        st.subheader("Outlet Cleanup")
-        st.info("Cleanup does not overwrite raw outlet names in your cleaned data. It creates a reporting rollup map used by this Outlets workflow and downstream exports.")
+        def render_cleanup_section_legacy() -> None:
+            st.session_state.outlets_section = "Cleanup"
+            st.subheader("Outlet Cleanup")
+            st.info("Cleanup does not overwrite raw outlet names in your cleaned data. It creates a reporting rollup map used by this Outlets workflow and downstream exports.")
 
-        rank_by = st.radio(
-            "Rank outlets by",
-            ["Mentions", "Impressions", "Effective Reach"],
-            horizontal=True,
-            key="outlets_rank_by_cleanup",
+            rank_by = st.radio(
+                "Rank outlets by",
+                ["Mentions", "Impressions", "Effective Reach"],
+                horizontal=True,
+                key="outlets_rank_by_cleanup_legacy",
+            )
+            st.session_state.outlets_rank_by = rank_by
+            ranked = get_ranked_outlet_metrics()
+            raw_rollup_preview = build_outlet_rollup_preview(st.session_state.df_traditional.copy(), st.session_state.get("outlet_rollup_map", {}))
+            raw_outlet_options = raw_rollup_preview["Outlet"].tolist()
+            suggestion_df = build_rollup_suggestions(st.session_state.df_traditional.copy(), st.session_state.get("outlet_rollup_map", {}))
+
+            stats1, stats2, stats3 = st.columns(3)
+            with stats1:
+                st.metric("Canonical outlets", f"{len(ranked):,}")
+            with stats2:
+                st.metric("Mapped source outlets", f"{int(raw_rollup_preview['Rollup Applied'].sum()):,}" if not raw_rollup_preview.empty else "0")
+            with stats3:
+                st.metric("Rollup rules applied", f"{len(st.session_state.get('outlet_rollup_map', {})):,}")
+
+            st.write("**Suggested rollups**")
+            if suggestion_df.empty:
+                st.info("No obvious network rollups detected from the current outlet list.")
+            else:
+                for idx, row in suggestion_df.head(8).iterrows():
+                    canonical_name = str(row.get("Suggested Rollup", "") or "").strip()
+                    source_outlets = [part.strip() for part in str(row.get("Source Outlets", "") or "").split("|") if part.strip()]
+                    source_count = int(row.get("Source Outlet Count", 0) or 0)
+                    with st.container(border=True):
+                        top_row1, top_row2 = st.columns([3, 1], gap="small")
+                        with top_row1:
+                            st.write(f"**{canonical_name}**")
+                            st.caption(
+                                f"Showing {min(len(source_outlets), 8):,} of {source_count:,} source outlets. "
+                                f"This creates a reporting rollup only; it does not overwrite raw outlet names."
+                            )
+                            st.caption(str(row.get("Source Outlets", "")))
+                        with top_row2:
+                            st.metric("Source outlets", f"{source_count:,}")
+                        metric1, metric2, metric3 = st.columns(3)
+                        with metric1:
+                            st.metric("Mentions", f"{int(row.get('Mentions', 0)):,}")
+                        with metric2:
+                            st.metric("Impressions", f"{int(row.get('Impressions', 0)):,}")
+                        with metric3:
+                            st.metric("Effective Reach", f"{int(row.get('Effective Reach', 0)):,}")
+                        if st.button(f"Apply rollup to {canonical_name}", key=f"apply_outlet_rollup_{idx}", type="primary"):
+                            apply_outlet_rollup_map(st.session_state, source_outlets, canonical_name)
+                            st.rerun()
+
+            st.divider()
+            st.write("**Bulk rule**")
+            st.caption("Use this when many outlets share a pattern and should roll up to the same reporting record.")
+            with st.form("outlet_cleanup_bulk_rule_form"):
+                rule_col1, rule_col2, rule_col3 = st.columns([1, 1.25, 1.25], gap="small")
+                with rule_col1:
+                    rule_mode = st.selectbox("Match mode", ["Contains", "Starts with", "Regex"], key="outlet_cleanup_rule_mode")
+                with rule_col2:
+                    rule_pattern = st.text_input("Pattern", key="outlet_cleanup_rule_pattern")
+                with rule_col3:
+                    rule_target = st.text_input("Canonical outlet name", key="outlet_cleanup_rule_target")
+                apply_bulk_rule = st.form_submit_button("Apply bulk rule", type="primary")
+
+            matches: list[str] = []
+            if raw_outlet_options and st.session_state.get("outlet_cleanup_rule_pattern", "").strip():
+                pattern = st.session_state.get("outlet_cleanup_rule_pattern", "").strip()
+                mode = st.session_state.get("outlet_cleanup_rule_mode", "Contains")
+                for outlet in raw_outlet_options:
+                    outlet_text = str(outlet)
+                    if mode == "Contains" and pattern.lower() in outlet_text.lower():
+                        matches.append(outlet)
+                    elif mode == "Starts with" and outlet_text.lower().startswith(pattern.lower()):
+                        matches.append(outlet)
+                    elif mode == "Regex":
+                        try:
+                            if re.search(pattern, outlet_text, flags=re.IGNORECASE):
+                                matches.append(outlet)
+                        except Exception:
+                            matches = []
+                            break
+
+            if st.session_state.get("outlet_cleanup_rule_pattern", "").strip():
+                st.caption(f"Bulk rule preview: {len(matches):,} source outlet(s) match.")
+                if matches:
+                    st.caption(" | ".join(matches[:12]))
+
+            if apply_bulk_rule:
+                target = st.session_state.get("outlet_cleanup_rule_target", "").strip()
+                if not target or not matches:
+                    st.warning("Enter a canonical outlet name and a pattern that matches at least one source outlet.")
+                else:
+                    apply_outlet_rollup_map(st.session_state, matches, target)
+                    st.rerun()
+
+            st.divider()
+            st.write("**Manual exceptions**")
+            st.caption("Use this for one-off source outlets that weren’t covered by a suggested rollup or bulk rule.")
+            with st.form("outlet_cleanup_manual_form"):
+                manual_col1, manual_col2 = st.columns([1.4, 1], gap="small")
+                with manual_col1:
+                    manual_sources = st.multiselect(
+                        "Source outlets to roll up",
+                        options=raw_outlet_options,
+                        key="outlet_cleanup_manual_selection",
+                    )
+                with manual_col2:
+                    manual_target = st.text_input(
+                        "Canonical outlet name",
+                        key="outlet_cleanup_manual_target",
+                    )
+                apply_manual = st.form_submit_button("Apply manual rollup", type="primary")
+
+            if apply_manual:
+                if not manual_sources or not manual_target.strip():
+                    st.warning("Choose one or more source outlets and enter a canonical outlet name.")
+                else:
+                    apply_outlet_rollup_map(st.session_state, manual_sources, manual_target.strip())
+                    st.rerun()
+
+            st.divider()
+            preview_col1, preview_col2 = st.columns([1.15, 0.85], gap="large")
+            with preview_col1:
+                st.write("**Rollup preview**")
+                st.caption("This shows how source outlet names will roll up inside the Outlets workflow and export outputs.")
+                preview_df = raw_rollup_preview[["Outlet", "Canonical Outlet", "Rollup Applied", "Mentions", "Impressions", "Effective_Reach"]].head(30).copy()
+                preview_df = preview_df.rename(columns={"Effective_Reach": "Effective Reach"})
+                st.dataframe(preview_df.style.format(NUMERIC_FORMAT_DICT, na_rep=" "), use_container_width=True, hide_index=True)
+            with preview_col2:
+                with st.expander("Possible naming variants", expanded=False):
+                    st.caption("Optional reference only. These are simple normalized-name clusters that might suggest additional cleanup opportunities.")
+                    variants_df = get_variants_df()
+                    if variants_df.empty:
+                        st.info("No obvious duplicate outlet variants were detected from simple name normalization.")
+                    else:
+                        st.dataframe(variants_df.style.format(NUMERIC_FORMAT_DICT, na_rep=" "), use_container_width=True, hide_index=True)
+
+            current_mappings = st.session_state.get("outlet_rollup_map", {})
+            if current_mappings:
+                st.divider()
+                with st.expander("Current rollup mappings", expanded=False):
+                    mapping_df = pd.DataFrame(
+                        [{"Source Outlet": source, "Canonical Outlet": target} for source, target in current_mappings.items()]
+                    ).sort_values(["Canonical Outlet", "Source Outlet"]).reset_index(drop=True)
+                    mapping_df["Remove"] = False
+                    mapping_editor = st.data_editor(
+                        mapping_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        key="outlet_mapping_editor",
+                        column_config={"Remove": st.column_config.CheckboxColumn("Remove", width="small")},
+                    )
+                    remove_rows = mapping_editor[mapping_editor["Remove"]].index.tolist()
+                    if remove_rows:
+                        remove_sources = mapping_df.iloc[remove_rows]["Source Outlet"].tolist()
+                        remove_outlet_rollup_map(st.session_state, remove_sources)
+                        st.rerun()
+
+        st.session_state.outlets_section = "Cleanup"
+        raw_rollup_preview, cleanup_clusters, current_entities = rebuild_outlet_cleanup_data()
+        cleanup_clusters = sorted(
+            cleanup_clusters,
+            key=lambda row: (
+                row.get("candidate_count", 0),
+                row.get("mentions", 0),
+                row.get("impressions", 0),
+                row.get("effective_reach", 0),
+            ),
+            reverse=True,
         )
-        st.session_state.outlets_rank_by = rank_by
-        ranked = get_ranked_outlet_metrics()
-        raw_rollup_preview = build_outlet_rollup_preview(st.session_state.df_traditional.copy(), st.session_state.get("outlet_rollup_map", {}))
-        raw_outlet_options = raw_rollup_preview["Outlet"].tolist()
-        suggestion_df = build_rollup_suggestions(st.session_state.df_traditional.copy(), st.session_state.get("outlet_rollup_map", {}))
 
         stats1, stats2, stats3 = st.columns(3)
         with stats1:
-            st.metric("Canonical outlets", f"{len(ranked):,}")
+            st.metric("Reporting outlets", f"{len(current_entities):,}")
         with stats2:
-            st.metric("Mapped source outlets", f"{int(raw_rollup_preview['Rollup Applied'].sum()):,}" if not raw_rollup_preview.empty else "0")
+            st.metric("Source outlets mapped", f"{int(raw_rollup_preview['Rollup Applied'].sum()):,}" if not raw_rollup_preview.empty else "0")
         with stats3:
-            st.metric("Rollup rules applied", f"{len(st.session_state.get('outlet_rollup_map', {})):,}")
+            st.metric("Mappings saved", f"{len(st.session_state.get('outlet_rollup_map', {})):,}")
 
-        st.write("**Suggested rollups**")
-        if suggestion_df.empty:
-            st.info("No obvious network rollups detected from the current outlet list.")
+        st.subheader("Suggested merge review")
+        if not cleanup_clusters:
+            st.success("No unresolved outlet merge clusters remain.")
         else:
-            for idx, row in suggestion_df.head(8).iterrows():
-                canonical_name = str(row.get("Suggested Rollup", "") or "").strip()
-                source_outlets = [part.strip() for part in str(row.get("Source Outlets", "") or "").split("|") if part.strip()]
-                source_count = int(row.get("Source Outlet Count", 0) or 0)
-                with st.container(border=True):
-                    top_row1, top_row2 = st.columns([3, 1], gap="small")
-                    with top_row1:
-                        st.write(f"**{canonical_name}**")
-                        st.caption(
-                            f"Showing {min(len(source_outlets), 8):,} of {source_count:,} source outlets. "
-                            f"This creates a reporting rollup only; it does not overwrite raw outlet names."
-                        )
-                        st.caption(str(row.get("Source Outlets", "")))
-                    with top_row2:
-                        st.metric("Source outlets", f"{source_count:,}")
-                    metric1, metric2, metric3 = st.columns(3)
-                    with metric1:
-                        st.metric("Mentions", f"{int(row.get('Mentions', 0)):,}")
-                    with metric2:
-                        st.metric("Impressions", f"{int(row.get('Impressions', 0)):,}")
-                    with metric3:
-                        st.metric("Effective Reach", f"{int(row.get('Effective Reach', 0)):,}")
-                    if st.button(f"Apply rollup to {canonical_name}", key=f"apply_outlet_rollup_{idx}", type="primary"):
-                        apply_outlet_rollup_map(st.session_state, source_outlets, canonical_name)
-                        st.rerun()
+            cluster_index = int(st.session_state.get("outlet_cleanup_cluster_index", 0) or 0)
+            cluster_index = max(0, min(cluster_index, len(cleanup_clusters) - 1))
+            st.session_state.outlet_cleanup_cluster_index = cluster_index
+            cluster = cleanup_clusters[cluster_index]
 
-        st.divider()
-        st.write("**Bulk rule**")
-        st.caption("Use this when many outlets share a pattern and should roll up to the same reporting record.")
-        with st.form("outlet_cleanup_bulk_rule_form"):
-            rule_col1, rule_col2, rule_col3 = st.columns([1, 1.25, 1.25], gap="small")
-            with rule_col1:
-                rule_mode = st.selectbox("Match mode", ["Contains", "Starts with", "Regex"], key="outlet_cleanup_rule_mode")
-            with rule_col2:
-                rule_pattern = st.text_input("Pattern", key="outlet_cleanup_rule_pattern")
-            with rule_col3:
-                rule_target = st.text_input("Canonical outlet name", key="outlet_cleanup_rule_target")
-            apply_bulk_rule = st.form_submit_button("Apply bulk rule", type="primary")
-
-        matches: list[str] = []
-        if raw_outlet_options and st.session_state.get("outlet_cleanup_rule_pattern", "").strip():
-            pattern = st.session_state.get("outlet_cleanup_rule_pattern", "").strip()
-            mode = st.session_state.get("outlet_cleanup_rule_mode", "Contains")
-            for outlet in raw_outlet_options:
-                outlet_text = str(outlet)
-                if mode == "Contains" and pattern.lower() in outlet_text.lower():
-                    matches.append(outlet)
-                elif mode == "Starts with" and outlet_text.lower().startswith(pattern.lower()):
-                    matches.append(outlet)
-                elif mode == "Regex":
-                    try:
-                        if re.search(pattern, outlet_text, flags=re.IGNORECASE):
-                            matches.append(outlet)
-                    except Exception:
-                        matches = []
-                        break
-
-        if st.session_state.get("outlet_cleanup_rule_pattern", "").strip():
-            st.caption(f"Bulk rule preview: {len(matches):,} source outlet(s) match.")
-            if matches:
-                st.caption(" | ".join(matches[:12]))
-
-        if apply_bulk_rule:
-            target = st.session_state.get("outlet_cleanup_rule_target", "").strip()
-            if not target or not matches:
-                st.warning("Enter a canonical outlet name and a pattern that matches at least one source outlet.")
-            else:
-                apply_outlet_rollup_map(st.session_state, matches, target)
-                st.rerun()
-
-        st.divider()
-        st.write("**Manual exceptions**")
-        st.caption("Use this for one-off source outlets that weren’t covered by a suggested rollup or bulk rule.")
-        with st.form("outlet_cleanup_manual_form"):
-            manual_col1, manual_col2 = st.columns([1.4, 1], gap="small")
-            with manual_col1:
-                manual_sources = st.multiselect(
-                    "Source outlets to roll up",
-                    options=raw_outlet_options,
-                    key="outlet_cleanup_manual_selection",
+            anchor_col, cluster_nav1, cluster_nav2, cluster_nav3, cluster_nav4 = st.columns([2.2, 1, 1, 1, 1.5], gap="small")
+            with anchor_col:
+                st.markdown(
+                    f'<div style="font-size:2rem; font-weight:800; color:#d4a72c; line-height:1.1; margin:0.1rem 0 0.2rem 0;">'
+                    f'{html.escape(str(cluster["suggested_master"]))}</div>',
+                    unsafe_allow_html=True,
                 )
-            with manual_col2:
-                manual_target = st.text_input(
-                    "Canonical outlet name",
-                    key="outlet_cleanup_manual_target",
+
+            with cluster_nav1:
+                if st.button("Previous", key="outlet_cleanup_prev", use_container_width=True, disabled=cluster_index <= 0):
+                    st.session_state.outlet_cleanup_cluster_index = max(cluster_index - 1, 0)
+                    st.rerun()
+            with cluster_nav2:
+                if st.button("Next", key="outlet_cleanup_next", use_container_width=True, disabled=cluster_index >= len(cleanup_clusters) - 1):
+                    st.session_state.outlet_cleanup_cluster_index = min(cluster_index + 1, len(cleanup_clusters) - 1)
+                    st.rerun()
+            with cluster_nav3:
+                if st.button("Back to Start", key="outlet_cleanup_reset_cluster", use_container_width=True):
+                    st.session_state.outlet_cleanup_cluster_index = 0
+                    st.rerun()
+            with cluster_nav4:
+                remaining_clusters = len(cleanup_clusters) - cluster_index
+                st.caption(f"Reviewing cluster {cluster_index + 1} of {len(cleanup_clusters)} • {remaining_clusters} left in queue")
+
+            selected_candidates_map = dict(st.session_state.get("outlet_cleanup_selected_candidates", {}))
+            default_selected = selected_candidates_map.get(
+                cluster["cluster_id"],
+                [row["Outlet"] for row in cluster["candidates"]],
+            )
+
+            candidate_df = pd.DataFrame(cluster["candidates"]).copy()
+            for col in ["Media Type", "Country", "Domain", "Mentions", "Impressions", "Effective Reach"]:
+                if col not in candidate_df.columns:
+                    candidate_df[col] = "" if col in {"Media Type", "Country", "Domain"} else 0
+            candidate_sort_cols = ["Mentions", "Impressions", "Effective Reach", "Outlet"]
+            candidate_df = candidate_df.sort_values(candidate_sort_cols, ascending=[False, False, False, True]).reset_index(drop=True)
+            candidate_df["Merge"] = candidate_df["Outlet"].isin(default_selected)
+
+            with st.form(key=f"outlet_cleanup_cluster_form_{cluster['cluster_id']}"):
+                candidate_editor = st.data_editor(
+                    candidate_df[["Outlet", "Media Type", "Country", "Domain", "Mentions", "Impressions", "Effective Reach", "Merge"]],
+                    use_container_width=True,
+                    hide_index=True,
+                    key=f"outlet_cleanup_cluster_editor_{cluster['cluster_id']}",
+                    column_config={
+                        "Media Type": st.column_config.Column("Media Type", width="small"),
+                        "Country": st.column_config.Column("Country", width="small"),
+                        "Domain": st.column_config.Column("Domain", width="medium"),
+                        "Mentions": st.column_config.NumberColumn("Mentions", width="small", format="%d"),
+                        "Impressions": st.column_config.NumberColumn("Impressions", width="small", format="%,d"),
+                        "Effective Reach": st.column_config.NumberColumn("Effective Reach", width="small", format="%,d"),
+                        "Merge": st.column_config.CheckboxColumn("Merge", width="small"),
+                    },
                 )
-            apply_manual = st.form_submit_button("Apply manual rollup", type="primary")
+                selected_sources = candidate_editor.loc[candidate_editor["Merge"], "Outlet"].astype(str).tolist()
+                master_col1, master_col2 = st.columns([1, 1], gap="small")
+                master_options = list(dict.fromkeys([cluster["suggested_master"]] + selected_sources)) if selected_sources else [cluster["suggested_master"]]
+                with master_col1:
+                    master_selection = st.selectbox(
+                        "Master name",
+                        options=master_options,
+                        index=0,
+                        key=f"outlet_cleanup_master_choice_{cluster['cluster_id']}",
+                    )
+                with master_col2:
+                    master_override = st.text_input(
+                        "Or write your own master",
+                        value="",
+                        key=f"outlet_cleanup_master_override_{cluster['cluster_id']}",
+                    )
 
-        if apply_manual:
-            if not manual_sources or not manual_target.strip():
-                st.warning("Choose one or more source outlets and enter a canonical outlet name.")
-            else:
-                apply_outlet_rollup_map(st.session_state, manual_sources, manual_target.strip())
-                st.rerun()
+                action_col1, action_col2 = st.columns([1, 3], gap="small")
+                with action_col1:
+                    apply_merge = st.form_submit_button("Apply merge", type="primary", use_container_width=True)
+                with action_col2:
+                    st.caption("Check the outlets that belong together, then choose the master name from the checked set or write your own.")
 
-        st.divider()
-        preview_col1, preview_col2 = st.columns([1.15, 0.85], gap="large")
-        with preview_col1:
-            st.write("**Rollup preview**")
-            st.caption("This shows how source outlet names will roll up inside the Outlets workflow and export outputs.")
-            preview_df = raw_rollup_preview[["Outlet", "Canonical Outlet", "Rollup Applied", "Mentions", "Impressions", "Effective_Reach"]].head(30).copy()
-            preview_df = preview_df.rename(columns={"Effective_Reach": "Effective Reach"})
-            st.dataframe(preview_df.style.format(NUMERIC_FORMAT_DICT, na_rep=" "), use_container_width=True, hide_index=True)
-        with preview_col2:
-            with st.expander("Possible naming variants", expanded=False):
-                st.caption("Optional reference only. These are simple normalized-name clusters that might suggest additional cleanup opportunities.")
-                if variants_df.empty:
-                    st.info("No obvious duplicate outlet variants were detected from simple name normalization.")
+            st.session_state.outlet_cleanup_selected_candidates[cluster["cluster_id"]] = selected_sources
+            if apply_merge:
+                canonical_target = str(master_override or master_selection or "").strip()
+                if len(selected_sources) < 2:
+                    st.warning("Check at least two outlets before applying a merge.")
+                elif not canonical_target:
+                    st.warning("Choose or enter a master outlet name.")
                 else:
-                    st.dataframe(variants_df.style.format(NUMERIC_FORMAT_DICT, na_rep=" "), use_container_width=True, hide_index=True)
+                    apply_outlet_rollup_map(st.session_state, selected_sources, canonical_target)
+                    selected_candidates_map.pop(cluster["cluster_id"], None)
+                    st.session_state.outlet_cleanup_selected_candidates = selected_candidates_map
+                    st.session_state.outlet_cleanup_cluster_index = min(cluster_index + 1, max(len(cleanup_clusters) - 1, 0))
+                    st.rerun()
+
+        st.divider()
+        with st.expander("Advanced merging", expanded=False):
+            st.caption("Filter the current outlet/reporting-name list, review the matches, uncheck where needed, then assign a shared reporting name.")
+            if st.session_state.pop("outlet_cleanup_advanced_filter_reset_pending", False):
+                st.session_state.outlet_cleanup_advanced_filter = ""
+            if st.session_state.pop("outlet_cleanup_advanced_override_reset_pending", False):
+                st.session_state.outlet_cleanup_advanced_override = ""
+            filter_col1, filter_col2 = st.columns([5, 1], gap="small")
+            with filter_col1:
+                advanced_filter = st.text_input(
+                    "Filter outlet names",
+                    key="outlet_cleanup_advanced_filter",
+                    placeholder="Type part of an outlet name...",
+                ).strip()
+            previous_filter = str(st.session_state.get("outlet_cleanup_advanced_filter_last_seen", "") or "")
+            current_override = str(st.session_state.get("outlet_cleanup_advanced_override", "") or "")
+            if advanced_filter != previous_filter:
+                if advanced_filter and (not current_override.strip() or current_override.strip() == previous_filter.strip()):
+                    st.session_state.outlet_cleanup_advanced_override = advanced_filter
+                st.session_state.outlet_cleanup_advanced_filter_last_seen = advanced_filter
+            with filter_col2:
+                st.write("")
+                if st.button("Clear filter", key="outlet_cleanup_advanced_clear_filter", use_container_width=True):
+                    st.session_state.outlet_cleanup_advanced_filter_reset_pending = True
+                    st.rerun()
+
+            canonical_to_sources = (
+                raw_rollup_preview.groupby("Canonical Outlet")["Outlet"]
+                .agg(lambda s: list(dict.fromkeys(str(x) for x in s)))
+                .to_dict()
+            )
+
+            if advanced_filter:
+                filtered_entities = current_entities[
+                    current_entities["Outlet"].astype(str).str.contains(advanced_filter, case=False, na=False)
+                ].copy()
+            else:
+                filtered_entities = current_entities.copy()
+
+            metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+            with metric_col1:
+                st.metric("Outlets", f"{len(filtered_entities):,}")
+            with metric_col2:
+                st.metric("Mentions", f"{int(filtered_entities['Mentions'].sum()) if not filtered_entities.empty else 0:,}")
+            with metric_col3:
+                st.metric("Impressions", f"{int(filtered_entities['Impressions'].sum()) if not filtered_entities.empty else 0:,}")
+            with metric_col4:
+                st.metric("Effective Reach", f"{int(filtered_entities['Effective Reach'].sum()) if not filtered_entities.empty else 0:,}")
+
+            if filtered_entities.empty:
+                st.info("No current outlet/reporting names match that filter.")
+            else:
+                for col in ["Country", "Domain", "Media Type", "Mentions", "Impressions", "Effective Reach"]:
+                    if col not in filtered_entities.columns:
+                        filtered_entities[col] = "" if col in {"Country", "Domain", "Media Type"} else 0
+                filtered_entities["Merge"] = bool(advanced_filter)
+                advanced_slice_key = abs(hash(tuple(filtered_entities["Outlet"].astype(str).tolist())))
+
+                with st.form("outlet_cleanup_advanced_form"):
+                    advanced_editor = st.data_editor(
+                        filtered_entities[["Outlet", "Country", "Domain", "Media Type", "Mentions", "Impressions", "Effective Reach", "Merge"]],
+                        use_container_width=True,
+                        hide_index=True,
+                        key=f"outlet_cleanup_advanced_editor_{advanced_slice_key}",
+                        column_config={
+                            "Country": st.column_config.Column("Country", width="small"),
+                            "Domain": st.column_config.Column("Domain", width="medium"),
+                            "Media Type": st.column_config.Column("Media Type", width="small"),
+                            "Mentions": st.column_config.NumberColumn("Mentions", width="small", format="%d"),
+                            "Impressions": st.column_config.NumberColumn("Impressions", width="small", format="%,d"),
+                            "Effective Reach": st.column_config.NumberColumn("Effective Reach", width="small", format="%,d"),
+                            "Merge": st.column_config.CheckboxColumn("Merge", width="small"),
+                        },
+                    )
+                    selected_entities = advanced_editor.loc[advanced_editor["Merge"], "Outlet"].astype(str).tolist()
+                    adv_col1, adv_col2 = st.columns([1, 1], gap="small")
+                    with adv_col1:
+                        suggested_reporting_name = selected_entities[0] if selected_entities else ""
+                        reporting_name_options = selected_entities if selected_entities else ([suggested_reporting_name] if suggested_reporting_name else [""])
+                        advanced_master = st.selectbox(
+                            "Reporting name",
+                            options=reporting_name_options,
+                            index=0,
+                            key=f"outlet_cleanup_advanced_master_{advanced_slice_key}",
+                        )
+                    with adv_col2:
+                        advanced_override = st.text_input(
+                            "Or write your own reporting name",
+                            key="outlet_cleanup_advanced_override",
+                        )
+
+                    apply_advanced = st.form_submit_button("Apply filtered merge", type="primary")
+
+                if apply_advanced:
+                    reporting_name = str(advanced_override or advanced_master or "").strip()
+                    if len(selected_entities) < 2:
+                        st.warning("Check at least two outlets/reporting names before applying a merge.")
+                    elif not reporting_name:
+                        st.warning("Enter a reporting name.")
+                    else:
+                        source_outlets_to_merge: list[str] = []
+                        for entity in selected_entities:
+                            matching_sources = canonical_to_sources.get(entity, [])
+                            source_outlets_to_merge.extend(matching_sources if matching_sources else [entity])
+                        apply_outlet_rollup_map(
+                            st.session_state,
+                            list(dict.fromkeys(source_outlets_to_merge)),
+                            reporting_name,
+                        )
+                        st.session_state.outlet_cleanup_advanced_filter_reset_pending = True
+                        st.session_state.outlet_cleanup_advanced_override_reset_pending = True
+                        st.session_state.outlet_cleanup_cluster_index = 0
+                        st.rerun()
 
         current_mappings = st.session_state.get("outlet_rollup_map", {})
         if current_mappings:
             st.divider()
+            with st.expander("Reporting rollups", expanded=False):
+                grouped_rollups = (
+                    pd.DataFrame(
+                        [{"Source Outlet": source, "Reporting Name": target} for source, target in current_mappings.items()]
+                    )
+                    .groupby("Reporting Name", as_index=False)
+                    .agg(
+                        Source_Count=("Source Outlet", "count"),
+                        Source_Outlets=("Source Outlet", lambda s: " | ".join(sorted(str(x) for x in s.head(8)))),
+                    )
+                    .sort_values(["Source_Count", "Reporting Name"], ascending=[False, True])
+                    .reset_index(drop=True)
+                )
+                st.dataframe(
+                    grouped_rollups,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Source_Count": st.column_config.NumberColumn("Source Outlets", width="small", format="%d"),
+                        "Source_Outlets": st.column_config.Column("Examples", width="large"),
+                    },
+                )
+
             with st.expander("Current rollup mappings", expanded=False):
                 mapping_df = pd.DataFrame(
                     [{"Source Outlet": source, "Canonical Outlet": target} for source, target in current_mappings.items()]
@@ -402,9 +835,19 @@ def render_outlets_page() -> None:
                     remove_sources = mapping_df.iloc[remove_rows]["Source Outlet"].tolist()
                     remove_outlet_rollup_map(st.session_state, remove_sources)
                     st.rerun()
+                if st.button("Clear all mappings", key="outlet_clear_all_mappings"):
+                    remove_outlet_rollup_map(st.session_state, mapping_df["Source Outlet"].tolist())
+                    st.session_state.outlet_cleanup_cluster_index = 0
+                    st.rerun()
+        elif not get_variants_df().empty:
+            st.divider()
+            with st.expander("Possible naming variants", expanded=False):
+                st.caption("Optional reference only. These are simple normalized-name clusters that might suggest additional cleanup opportunities.")
+                st.dataframe(get_variants_df().style.format(NUMERIC_FORMAT_DICT, na_rep=" "), use_container_width=True, hide_index=True)
 
     def render_selection_section() -> None:
         st.session_state.outlets_section = "Selection"
+        previous_rank_by = str(st.session_state.get("outlets_rank_by", "Mentions") or "Mentions")
         st.session_state.outlets_rank_by = st.radio(
             "Rank outlets by",
             ["Mentions", "Impressions", "Effective Reach"],
@@ -416,6 +859,17 @@ def render_outlets_page() -> None:
         if not valid_outlets:
             st.info("No outlets available.")
             return
+
+        active_outlet = str(st.session_state.get("outlet_insights_active_outlet", "") or "")
+        pending_active_outlet = str(st.session_state.pop("outlet_insights_pending_active_outlet", "") or "")
+        if pending_active_outlet:
+            active_outlet = pending_active_outlet
+        if st.session_state.outlets_rank_by != previous_rank_by:
+            active_outlet = valid_outlets[0]
+        elif active_outlet not in valid_outlets:
+            active_outlet = valid_outlets[0]
+
+        st.session_state.outlet_insights_active_outlet = active_outlet
 
         if st.session_state.get("outlet_insights_active_outlet", "") not in valid_outlets:
             st.session_state.outlet_insights_active_outlet = valid_outlets[0]
@@ -433,32 +887,69 @@ def render_outlets_page() -> None:
         left_col, right_col = st.columns([0.9, 1.25], gap="large")
         with left_col:
             st.subheader("Outlet Inspector")
+            inspect_outlet = st.session_state["outlet_insights_active_outlet"]
+            inspect_index = valid_outlets.index(inspect_outlet) if inspect_outlet in valid_outlets else 0
             st.selectbox(
                 "Inspect outlet",
                 options=valid_outlets,
                 key="outlet_insights_active_outlet",
             )
             inspect_outlet = st.session_state["outlet_insights_active_outlet"]
+            inspect_index = valid_outlets.index(inspect_outlet) if inspect_outlet in valid_outlets else 0
+            nav_col1, nav_col2, nav_col3 = st.columns([1, 1, 1.3], gap="small")
+            with nav_col1:
+                if st.button("Previous", key="outlet_inspector_prev", use_container_width=True, disabled=inspect_index <= 0):
+                    st.session_state.outlet_insights_pending_active_outlet = valid_outlets[inspect_index - 1]
+                    st.rerun()
+            with nav_col2:
+                if st.button("Next", key="outlet_inspector_next", use_container_width=True, disabled=inspect_index >= len(valid_outlets) - 1):
+                    st.session_state.outlet_insights_pending_active_outlet = valid_outlets[inspect_index + 1]
+                    st.rerun()
+            with nav_col3:
+                save_label = "Already saved" if inspect_outlet in current_selected else "Save this outlet"
+                if st.button(
+                    save_label,
+                    key="outlet_save_inspected",
+                    type="primary" if inspect_outlet not in current_selected else "secondary",
+                    use_container_width=True,
+                    disabled=inspect_outlet in current_selected,
+                ):
+                    selected = list(dict.fromkeys(current_selected + [inspect_outlet]))
+                    st.session_state.outlets_section = "Selection"
+                    st.session_state.outlet_insights_selected_outlets = selected
+                    st.session_state.outlet_selection_checked_outlets = selected
+                    st.session_state.outlet_insights_summaries = {
+                        k: v for k, v in st.session_state.get("outlet_insights_summaries", {}).items()
+                        if k in selected
+                    }
+                    current_index = valid_outlets.index(inspect_outlet) if inspect_outlet in valid_outlets else 0
+                    next_index = min(current_index + 1, len(valid_outlets) - 1)
+                    st.session_state.outlet_insights_pending_active_outlet = valid_outlets[next_index]
+                    st.rerun()
+            st.caption(f"{inspect_index + 1} of {len(valid_outlets)} by {st.session_state.outlets_rank_by}")
             inspect_row = ranked.loc[ranked["Outlet"] == inspect_outlet].iloc[0]
-            story_df = build_outlet_headline_table(story_rows, inspect_outlet, limit=5)
+            story_df = build_outlet_headline_table(get_story_rows(), inspect_outlet, limit=5)
             top_authors_df = build_outlet_top_authors(
                 st.session_state.df_traditional,
                 inspect_outlet,
                 limit=5,
                 outlet_rollup_map=st.session_state.get("outlet_rollup_map", {}),
             )
-            st.caption(
-                f"Top types: {inspect_row.get('Top_Types', '') or 'Unknown'} | "
-                f"Mentions: {int(inspect_row.get('Mention_Total', 0)):,} | "
-                f"Impressions: {int(inspect_row.get('Impressions', 0)):,}"
+            st.markdown(
+                (
+                    '<div style="font-size:0.92rem; color:#9aa0aa; margin:0.15rem 0 0.65rem 0;">'
+                    f"Top types: {html.escape(str(inspect_row.get('Top_Types', '') or 'Unknown'))} | "
+                    f"Mentions: {int(inspect_row.get('Mention_Total', 0)):,} | "
+                    f"Impressions: {int(inspect_row.get('Impressions', 0)):,}"
+                    "</div>"
+                ),
+                unsafe_allow_html=True,
             )
             examples_html = build_story_examples_html(story_df)
             if examples_html:
                 st.markdown(examples_html, unsafe_allow_html=True)
-            st.write("**Top authors in this outlet**")
-            if top_authors_df.empty:
-                st.info("No attributed authors available for this outlet.")
-            else:
+            if not top_authors_df.empty:
+                st.write("**Top authors in this outlet**")
                 st.dataframe(
                     top_authors_df,
                     use_container_width=True,
@@ -493,7 +984,7 @@ def render_outlets_page() -> None:
 
             action1, action2, action3 = st.columns([1, 1, 2], gap="small")
             with action1:
-                if st.button("Check Top Suggestion", key="outlet_use_suggestion"):
+                if st.button("Check Top 10", key="outlet_use_suggestion"):
                     st.session_state.outlets_section = "Selection"
                     st.session_state.outlet_selection_checked_outlets = suggested_outlets
                     st.session_state.outlet_selection_editor_version += 1
@@ -684,7 +1175,7 @@ def render_outlets_page() -> None:
                 with st.spinner("Generating outlet theme summaries..."):
                     for outlet_name in selected_outlets:
                         outlet_row = shortlist_df.loc[shortlist_df["Outlet"] == outlet_name].iloc[0]
-                        headline_df = build_outlet_headline_table(story_rows, outlet_name, limit=6)
+                        headline_df = build_outlet_headline_table(get_story_rows(), outlet_name, limit=6)
                         author_df = build_outlet_top_authors(
                             st.session_state.df_traditional,
                             outlet_name,

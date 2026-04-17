@@ -63,6 +63,31 @@ def explode_tags(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def add_mapped_outlet_column(df: pd.DataFrame, outlet_rollup_map: dict[str, str] | None = None) -> pd.DataFrame:
+    """Insert a derived Mapped Outlet column immediately after Outlet when available."""
+    if df is None or not isinstance(df, pd.DataFrame):
+        return pd.DataFrame() if df is None else df
+
+    out = df.copy()
+    if "Outlet" not in out.columns:
+        return out
+
+    mapping = {
+        str(k).strip(): str(v).strip()
+        for k, v in (outlet_rollup_map or {}).items()
+        if str(k).strip()
+    }
+    mapped = out["Outlet"].fillna("").astype(str).map(lambda value: mapping.get(value.strip(), value.strip()))
+
+    if "Mapped Outlet" in out.columns:
+        out["Mapped Outlet"] = mapped
+        return out
+
+    insert_at = out.columns.get_loc("Outlet") + 1
+    out.insert(insert_at, "Mapped Outlet", mapped)
+    return out
+
+
 def build_authors_export_table(
     df: pd.DataFrame,
     existing_assignments: pd.DataFrame | None = None,
@@ -235,6 +260,7 @@ def apply_sheet_column_formats(
         "Date": {"width": 18},
         "Author": {"width": 24},
         "Outlet": {"width": 28},
+        "Mapped Outlet": {"width": 28},
         "Headline": {"width": 40},
         "Title": {"width": 40},
         "Type": {"width": 14},
@@ -944,6 +970,7 @@ def build_clean_workbook_bytes(session_state) -> bytes:
     top_stories = session_state.get("added_df", pd.DataFrame()).copy()
     dupes = session_state.get("df_dupes", pd.DataFrame()).copy()
     raw = session_state.get("df_untouched", pd.DataFrame()).copy()
+    outlet_rollup_map = session_state.get("outlet_rollup_map", {})
 
     for df in [traditional, social, dupes]:
         if isinstance(df, pd.DataFrame) and "Published Date" in df.columns:
@@ -970,6 +997,7 @@ def build_clean_workbook_bytes(session_state) -> bytes:
         # CLEAN TRAD
         if len(traditional) > 0:
             trad_export = rename_ave(traditional.copy(), original_ave_col=original_ave_col)
+            trad_export = add_mapped_outlet_column(trad_export, outlet_rollup_map=outlet_rollup_map)
             if "Impressions" in trad_export.columns:
                 trad_export = trad_export.sort_values(by=["Impressions"], ascending=False)
             trad_export.to_excel(writer, sheet_name="CLEAN TRAD", startrow=1, header=False, index=False)
@@ -980,6 +1008,7 @@ def build_clean_workbook_bytes(session_state) -> bytes:
         # CLEAN SOCIAL
         if len(social) > 0:
             social_export = rename_ave(social.copy(), original_ave_col=original_ave_col)
+            social_export = add_mapped_outlet_column(social_export, outlet_rollup_map=outlet_rollup_map)
             if "Impressions" in social_export.columns:
                 social_export = social_export.sort_values(by=["Impressions"], ascending=False)
             social_export.to_excel(writer, sheet_name="CLEAN SOCIAL", startrow=1, header=False, index=False)
@@ -1072,6 +1101,7 @@ def build_clean_workbook_bytes(session_state) -> bytes:
         # DLTD DUPES
         if len(dupes) > 0:
             dupes_export = rename_ave(dupes.copy(), original_ave_col=original_ave_col)
+            dupes_export = add_mapped_outlet_column(dupes_export, outlet_rollup_map=outlet_rollup_map)
             dupes_export.to_excel(writer, sheet_name="DLTD DUPES", header=True, index=False)
             ws = writer.sheets["DLTD DUPES"]
             ws.set_tab_color("#c26f4f")
@@ -1079,6 +1109,7 @@ def build_clean_workbook_bytes(session_state) -> bytes:
 
         # RAW
         raw_export = rename_ave(raw.copy(), original_ave_col=original_ave_col)
+        raw_export = add_mapped_outlet_column(raw_export, outlet_rollup_map=outlet_rollup_map)
         raw_export.drop(["Mentions"], axis=1, inplace=True, errors="ignore")
         raw_export.to_excel(writer, sheet_name="RAW", header=True, index=False)
         ws = writer.sheets["RAW"]

@@ -23,7 +23,6 @@ from processing.missing_authors import (
     apply_author_fix,
     build_fixable_headline_table,
     build_last_author_fix_payload,
-    fixable_headline_stats,
     get_available_visible_flags,
     get_headline_authors,
     get_possible_authors,
@@ -91,6 +90,8 @@ def render_authors_page() -> None:
     st.session_state.setdefault("authors_section", "Missing")
     st.session_state.setdefault("author_selection_checked_authors", [])
     st.session_state.setdefault("author_selection_editor_version", 0)
+    st.session_state.setdefault("author_outlet_state_dirty", True)
+    st.session_state.setdefault("author_outlet_state_last_sort", None)
 
     if st.session_state.get("pickle_load", False) is True and len(st.session_state.get("auth_outlet_table", [])) > 0:
         st.session_state.auth_outlet_table = st.session_state.auth_outlet_table.copy()
@@ -105,8 +106,17 @@ def render_authors_page() -> None:
             st.session_state.get("top_auths_by", "Mentions"),
             existing_assignments=existing,
         )
+        st.session_state.author_outlet_state_dirty = False
+        st.session_state.author_outlet_state_last_sort = st.session_state.get("top_auths_by", "Mentions")
 
-    rebuild_author_outlet_state()
+    def ensure_author_outlet_state() -> None:
+        needs_rebuild = (
+            st.session_state.get("author_outlet_state_dirty", True)
+            or len(st.session_state.get("auth_outlet_table", [])) == 0
+            or st.session_state.get("author_outlet_state_last_sort") != st.session_state.get("top_auths_by", "Mentions")
+        )
+        if needs_rebuild:
+            rebuild_author_outlet_state()
 
     def get_cached_author_outlet_entry(author_name: str, force_refresh: bool = False) -> dict:
         cache = st.session_state.author_outlet_api_cache
@@ -307,6 +317,8 @@ def render_authors_page() -> None:
                     disabled=st.session_state.get("last_author_fix") is None,
                 ):
                     undo_last_author_fix(st.session_state)
+                    invalidate_author_outlet_cache()
+                    st.session_state.author_outlet_state_dirty = True
                     st.rerun()
 
             col1, col2, col3 = st.columns([12, 1, 9])
@@ -324,7 +336,29 @@ def render_authors_page() -> None:
 
             with col3:
                 st.subheader("Authors in CSV")
-                st.table(headline_authors_df)
+                if len(headline_authors_df) > 0 and "In Signal" in headline_authors_df.columns:
+                    highlight_color = "color: goldenrod"
+                    low_signal_color = "color: #985331;"
+                    authors_display = headline_authors_df[["Possible Author(s)", "Count"]].copy()
+                    signal_mask = headline_authors_df["In Signal"].tolist()
+                    max_count = int(authors_display["Count"].max()) if len(authors_display) > 0 else 0
+                    use_signal_coloring = len(authors_display) > 1 or max_count > 1
+                    styled_authors = (
+                        authors_display.style
+                        .apply(
+                            lambda col: [
+                                (
+                                    highlight_color if in_signal else low_signal_color
+                                ) if use_signal_coloring else ""
+                                for in_signal in signal_mask
+                            ],
+                            axis=0,
+                            subset=["Possible Author(s)"],
+                        )
+                    )
+                    st.dataframe(styled_authors, use_container_width=True, hide_index=True)
+                else:
+                    st.table(headline_authors_df)
 
             with st.form("authors_missing_fix_form", clear_on_submit=True):
                 col1, col2, col3 = st.columns([8, 1, 8])
@@ -365,7 +399,7 @@ def render_authors_page() -> None:
                     )
                     invalidate_author_outlet_cache()
                     st.session_state.auth_reviewed_count = reviewed + 1
-                    rebuild_author_outlet_state()
+                    st.session_state.author_outlet_state_dirty = True
                     st.rerun()
         else:
             st.info("You've reached the end of the list!")
@@ -384,6 +418,8 @@ def render_authors_page() -> None:
                     disabled=st.session_state.get("last_author_fix") is None,
                 ):
                     undo_last_author_fix(st.session_state)
+                    invalidate_author_outlet_cache()
+                    st.session_state.author_outlet_state_dirty = True
                     st.rerun()
 
             if counter == 0:
@@ -406,15 +442,10 @@ def render_authors_page() -> None:
             st.dataframe(top_x_by_mentions(author_working_df, "Author"), use_container_width=True, hide_index=True)
         with col3:
             st.write("**Fixable Author Stats**")
-            remaining = fixable_headline_stats(
-                author_working_df,
-                counter=st.session_state.auth_skip_counter,
-                primary="Headline",
-                secondary="Author",
-            )
-            st.metric("Reviewed", len(headline_table) - remaining["remaining"] + reviewed if len(headline_table) > 0 else reviewed)
+            remaining_count = max(len(headline_table) - st.session_state.auth_skip_counter, 0)
+            st.metric("Reviewed", len(headline_table) - remaining_count + reviewed if len(headline_table) > 0 else reviewed)
             st.metric("Updated", reviewed)
-            st.metric("Remaining in this view", remaining["remaining"])
+            st.metric("Remaining in this view", remaining_count)
 
     def render_author_outlets_tab() -> None:
         st.session_state.authors_section = "Outlets"
@@ -444,7 +475,7 @@ def render_authors_page() -> None:
                 use_container_width=True,
             )
 
-        rebuild_author_outlet_state()
+        ensure_author_outlet_state()
         auth_outlet_todo = get_auth_outlet_todo(st.session_state.auth_outlet_table)
         prefetch_summary = prefetch_author_outlet_matches(auth_outlet_todo, auto_assign=auto_assign_requested)
 
@@ -712,7 +743,7 @@ def render_authors_page() -> None:
 
     def render_author_insights_tab(mode: str = "selection") -> None:
         st.session_state.authors_section = "Selection" if mode == "selection" else "Insights"
-        rebuild_author_outlet_state()
+        ensure_author_outlet_state()
         author_metrics, author_story_rows = build_author_metrics(
             st.session_state.df_traditional,
             auth_outlet_table=st.session_state.auth_outlet_table,

@@ -91,6 +91,23 @@ This file is a lightweight parking lot for product and workflow ideas that are w
   - possibly other output-readiness checks
 - This should stay lightweight and optional unless real analyst usage proves it saves time.
 
+### Two-Pass Narrative Editing For Authors / Outlets
+- Consider moving Author and Outlet insight generation to a two-pass model:
+  - first pass: generate richer, evidence-grounded per-author / per-outlet summaries
+  - second pass: send the whole set through an editorial rewrite pass
+- Goal:
+  - preserve factual substance and distinctiveness
+  - reduce repeated sentence patterns across the full set
+  - tighten entries for report use without losing important detail
+- Key idea:
+  - the first pass should optimize for fidelity to the sampled stories
+  - the second pass should optimize for cross-entry variety, brevity, and polish
+- Important guardrails:
+  - keep the first-pass text available for QA / fallback
+  - do not let the editor pass add new claims
+  - keep the editor pass in English only
+  - preserve differences between entries instead of smoothing them into one voice
+
 ### Geography Insights Module
 - Consider a future geography insights workflow or module that helps analysts understand where coverage is concentrated by:
   - country
