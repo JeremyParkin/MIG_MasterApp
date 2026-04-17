@@ -744,6 +744,29 @@ def render_authors_page() -> None:
     def render_author_insights_tab(mode: str = "selection") -> None:
         st.session_state.authors_section = "Selection" if mode == "selection" else "Insights"
         ensure_author_outlet_state()
+        if mode == "selection":
+            previous_rank_by = str(st.session_state.get("top_auths_by", "Mentions") or "Mentions")
+            current_assigned_only = bool(st.session_state.get("author_selection_assigned_only", False))
+            control_col1, control_col2 = st.columns([1.3, 1.2], gap="large")
+            with control_col1:
+                st.session_state.top_auths_by = st.radio(
+                    "Rank authors by",
+                    ["Mentions", "Impressions", "Effective Reach"],
+                    horizontal=True,
+                    key="authors_selection_rank_by",
+                )
+            with control_col2:
+                show_authors_mode = st.radio(
+                    "Show authors",
+                    ["All", "With outlet"],
+                    horizontal=True,
+                    index=1 if current_assigned_only else 0,
+                    key="authors_selection_show_mode",
+                    help="Apply the outlet-assignment filter to both the inspector and the candidate table.",
+                )
+                st.session_state.author_selection_assigned_only = show_authors_mode == "With outlet"
+        else:
+            previous_rank_by = str(st.session_state.get("top_auths_by", "Mentions") or "Mentions")
         author_metrics, author_story_rows = build_author_metrics(
             st.session_state.df_traditional,
             auth_outlet_table=st.session_state.auth_outlet_table,
@@ -760,17 +783,44 @@ def render_authors_page() -> None:
         rank_map = {
             "Mentions": ["Mention_Total", "Impressions", "Unique_Stories"],
             "Impressions": ["Impressions", "Mention_Total", "Unique_Stories"],
+            "Effective Reach": ["Effective_Reach", "Impressions", "Mention_Total"],
         }
         sort_cols = rank_map.get(st.session_state.get("top_auths_by", "Mentions"), rank_map["Mentions"])
         ranked_df = author_metrics.copy().sort_values(sort_cols, ascending=False).reset_index(drop=True)
+        selection_ranked_df = ranked_df.copy()
+        if mode == "selection" and st.session_state.get("author_selection_assigned_only", False):
+            selection_ranked_df = selection_ranked_df[
+                selection_ranked_df["Assigned Outlet"].fillna("").astype(str).str.strip() != ""
+            ].copy()
+        if selection_ranked_df.empty:
+            if mode == "selection" and st.session_state.get("author_selection_assigned_only", False):
+                st.info("No authors with assigned outlets match the current selection view.")
+            else:
+                st.info("No author data available yet.")
+            return
 
-        valid_authors = ranked_df["Author"].tolist()
-        if "authors_insights_active_author" not in st.session_state or st.session_state["authors_insights_active_author"] not in valid_authors:
-            st.session_state["authors_insights_active_author"] = valid_authors[0]
-        if "authors_insights_inspect_author_current" not in st.session_state or st.session_state["authors_insights_inspect_author_current"] not in valid_authors:
-            st.session_state["authors_insights_inspect_author_current"] = st.session_state["authors_insights_active_author"]
-        if "authors_insights_inspect_author_split" not in st.session_state or st.session_state["authors_insights_inspect_author_split"] not in valid_authors:
-            st.session_state["authors_insights_inspect_author_split"] = st.session_state["authors_insights_active_author"]
+        valid_authors = selection_ranked_df["Author"].tolist()
+        active_author = str(st.session_state.get("authors_insights_active_author", "") or "")
+        pending_active_author = str(st.session_state.pop("authors_insights_pending_active_author", "") or "")
+        if pending_active_author:
+            active_author = pending_active_author
+        if st.session_state.get("top_auths_by", "Mentions") != previous_rank_by:
+            active_author = valid_authors[0]
+        elif active_author not in valid_authors:
+            active_author = valid_authors[0]
+        st.session_state["authors_insights_active_author"] = active_author
+        if (
+            "authors_insights_inspect_author_current" not in st.session_state
+            or st.session_state["authors_insights_inspect_author_current"] not in valid_authors
+            or st.session_state["authors_insights_inspect_author_current"] != active_author
+        ):
+            st.session_state["authors_insights_inspect_author_current"] = active_author
+        if (
+            "authors_insights_inspect_author_split" not in st.session_state
+            or st.session_state["authors_insights_inspect_author_split"] not in valid_authors
+            or st.session_state["authors_insights_inspect_author_split"] != active_author
+        ):
+            st.session_state["authors_insights_inspect_author_split"] = active_author
 
         def sync_active_author(widget_key: str) -> None:
             selected = st.session_state.get(widget_key)
@@ -792,8 +842,8 @@ def render_authors_page() -> None:
             st.session_state.author_insights_selected_authors = current_selected
 
         candidate_df = ranked_df[~ranked_df["Author"].isin(current_selected)].copy()
-        if st.session_state.get("author_selection_assigned_only", False):
-            candidate_df = candidate_df[candidate_df["Assigned Outlet"].fillna("").astype(str).str.strip() != ""].copy()
+        if mode == "selection":
+            candidate_df = selection_ranked_df[~selection_ranked_df["Author"].isin(current_selected)].copy()
         suggested_authors = candidate_df.head(int(st.session_state.author_insights_target_count))["Author"].tolist()
         candidate_df = candidate_df.head(candidate_limit)[[
             "Author",
@@ -886,11 +936,6 @@ def render_authors_page() -> None:
             del include_syndication
             st.subheader("Candidate Authors")
             st.caption('Check the "Keep" box for authors you want on the final shortlist, then click "Save Selected".')
-            st.checkbox(
-                "Show only authors with assigned outlets",
-                key="author_selection_assigned_only",
-                help="Hide unassigned authors from the candidate table and make Top Suggestion use only authors with assigned outlets.",
-            )
             working_df = candidate_df.copy()
             checked_authors = [
                 author for author in st.session_state.get("author_selection_checked_authors", [])
@@ -925,7 +970,7 @@ def render_authors_page() -> None:
 
             candidate_action1, candidate_action2, candidate_action3 = st.columns([1, 1, 2], gap="small")
             with candidate_action1:
-                if st.button("Check Top Suggestion", key=f"authors_insights_use_suggestion_{key_suffix}"):
+                if st.button("Check Top 10", key=f"authors_insights_use_suggestion_{key_suffix}"):
                     st.session_state.authors_section = "Selection"
                     st.session_state.author_selection_checked_authors = suggested_authors
                     st.session_state.author_selection_editor_version += 1
@@ -1074,6 +1119,8 @@ def render_authors_page() -> None:
             left_col, right_col = st.columns([0.9, 1.35], gap="large")
             with left_col:
                 st.subheader("Author Inspector")
+                inspect_author = st.session_state["authors_insights_active_author"]
+                inspect_index = valid_authors.index(inspect_author) if inspect_author in valid_authors else 0
                 st.selectbox(
                     "Inspect author",
                     options=valid_authors,
@@ -1082,12 +1129,48 @@ def render_authors_page() -> None:
                     args=("authors_insights_inspect_author_split",),
                 )
                 inspect_author = st.session_state["authors_insights_active_author"]
-                inspect_row = ranked_df.loc[ranked_df["Author"] == inspect_author].iloc[0]
+                inspect_index = valid_authors.index(inspect_author) if inspect_author in valid_authors else 0
+                nav_col1, nav_col2, nav_col3 = st.columns([1, 1, 1.3], gap="small")
+                with nav_col1:
+                    if st.button("Previous", key="authors_inspector_prev", use_container_width=True, disabled=inspect_index <= 0):
+                        st.session_state["authors_insights_pending_active_author"] = valid_authors[inspect_index - 1]
+                        st.rerun()
+                with nav_col2:
+                    if st.button("Next", key="authors_inspector_next", use_container_width=True, disabled=inspect_index >= len(valid_authors) - 1):
+                        st.session_state["authors_insights_pending_active_author"] = valid_authors[inspect_index + 1]
+                        st.rerun()
+                with nav_col3:
+                    save_label = "Already saved" if inspect_author in current_selected else "Save this author"
+                    if st.button(
+                        save_label,
+                        key="authors_save_inspected",
+                        type="primary" if inspect_author not in current_selected else "secondary",
+                        use_container_width=True,
+                        disabled=inspect_author in current_selected,
+                    ):
+                        selected = list(dict.fromkeys(current_selected + [inspect_author]))
+                        st.session_state.authors_section = "Selection"
+                        st.session_state.author_insights_selected_authors = selected
+                        st.session_state.author_selection_checked_authors = selected
+                        st.session_state.author_insights_summaries = {
+                            k: v for k, v in st.session_state.get("author_insights_summaries", {}).items()
+                            if k in selected
+                        }
+                        next_index = min(inspect_index + 1, len(valid_authors) - 1)
+                        st.session_state["authors_insights_pending_active_author"] = valid_authors[next_index]
+                        st.rerun()
+                st.caption(f"{inspect_index + 1} of {len(valid_authors)} by {st.session_state.get('top_auths_by', 'Mentions')}")
+                inspect_row = selection_ranked_df.loc[selection_ranked_df["Author"] == inspect_author].iloc[0]
                 headline_table = build_author_headline_table(author_story_rows, inspect_author, limit=5)
-                st.caption(
-                    f"Assigned outlet: {inspect_row.get('Assigned Outlet', '') or 'Unassigned'} | "
-                    f"Mentions: {int(inspect_row.get('Mention_Total', 0)):,} | "
-                    f"Impressions: {int(inspect_row.get('Impressions', 0)):,}"
+                st.markdown(
+                    (
+                        '<div style="font-size:0.92rem; color:#9aa0aa; margin:0.15rem 0 0.65rem 0;">'
+                        f"Assigned outlet: {html.escape(str(inspect_row.get('Assigned Outlet', '') or 'Unassigned'))} | "
+                        f"Mentions: {int(inspect_row.get('Mention_Total', 0)):,} | "
+                        f"Impressions: {int(inspect_row.get('Impressions', 0)):,}"
+                        "</div>"
+                    ),
+                    unsafe_allow_html=True,
                 )
                 examples_html = build_story_examples_html(headline_table)
                 if examples_html:
