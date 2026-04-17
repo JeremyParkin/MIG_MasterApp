@@ -108,6 +108,19 @@ This file is a lightweight parking lot for product and workflow ideas that are w
   - keep the editor pass in English only
   - preserve differences between entries instead of smoothing them into one voice
 
+### Author / Outlet Reconciliation
+- Consider a future reconciliation layer between:
+  - author-assigned outlet labels
+  - outlet reporting-name rollups
+- Open question:
+  - should author outlet labels remain independent analyst-facing labels
+  - or should they optionally align to the outlet reporting-name layer for consistency across workflows and exports
+- Important caution:
+  - do not tightly couple the Author workflow to Outlet cleanup too early unless the analyst benefit is clear
+- Safer future directions may include:
+  - a derived mapped-outlet field for authors
+  - or a lightweight later-step reconciliation / review pass rather than forcing a workflow reordering
+
 ### Geography Insights Module
 - Consider a future geography insights workflow or module that helps analysts understand where coverage is concentrated by:
   - country

@@ -4,8 +4,11 @@ import streamlit as st
 from streamlit_tags import st_tags
 
 from processing.analysis_context import (
-    build_analysis_context_caption,
+    apply_analysis_context_suggestions,
     build_analysis_context_text,
+    build_analysis_context_discovery_prompt,
+    DEFAULT_ANALYSIS_CONTEXT_MODEL,
+    generate_analysis_context_suggestions,
     get_analysis_context_payload,
     init_analysis_context_state,
     save_analysis_context,
@@ -20,49 +23,92 @@ if not st.session_state.get("standard_step", False):
     st.stop()
 
 init_analysis_context_state(st.session_state)
-payload = get_analysis_context_payload(st.session_state)
 if "analysis_context_save_success" not in st.session_state:
     st.session_state.analysis_context_save_success = False
+if "analysis_context_suggestion_success" not in st.session_state:
+    st.session_state.analysis_context_suggestion_success = False
+if "analysis_context_tag_widget_version" not in st.session_state:
+    st.session_state.analysis_context_tag_widget_version = 0
+pending_suggestions = st.session_state.pop("analysis_context_pending_suggestions", None)
+if pending_suggestions:
+    apply_analysis_context_suggestions(st.session_state, pending_suggestions)
+    st.session_state.analysis_context_tag_widget_version += 1
+    st.session_state.analysis_context_suggestion_success = True
 
-if payload["client_name"]:
-    st.info(f"Client from Getting Started: {payload['client_name']}")
-else:
-    st.info("No client name is set yet. You can still define the analysis focus below.")
+payload = get_analysis_context_payload(st.session_state)
 
-st.write("**Shared analysis context**")
 col1, col2 = st.columns(2, gap="medium")
 with col1:
+    client_name = st.text_input(
+        "Client name",
+        value=payload["client_name"],
+        help="Usually carried over from Getting Started, but you can adjust it here if needed.",
+    )
+with col2:
     primary_name = st.text_input(
         "Primary topic or entity of interest",
         value=payload["primary_name"],
         help="This can be the client itself, or a broader topic you want the AI to focus on instead.",
     )
-with col2:
-    st.caption("This shared context is reused by Top Stories, Sentiment, Authors, and Outlets.")
-    context_caption = build_analysis_context_caption(st.session_state)
-    if context_caption:
-        st.caption(context_caption)
 
+helper_col1, helper_col2, helper_col3 = st.columns([1, 0.55, 1.85], gap="small")
+with helper_col1:
+    if st.button("Suggest context items with AI", type="primary", key="analysis_context_ai_suggest", use_container_width=True):
+        try:
+            with st.spinner("Generating context suggestions..."):
+                suggestions, _, _ = generate_analysis_context_suggestions(
+                    client_name=client_name,
+                    primary_name=primary_name,
+                    alternate_names=payload["alternate_names"],
+                    spokespeople=payload["spokespeople"],
+                    products=payload["products"],
+                    guidance=payload["guidance"],
+                    api_key=st.secrets["key"],
+                    model=DEFAULT_ANALYSIS_CONTEXT_MODEL,
+                )
+            st.session_state.analysis_context_pending_suggestions = suggestions
+            st.rerun()
+        except Exception as e:
+            st.error(f"Could not generate context suggestions: {e}")
+with helper_col2:
+    if st.button("Clear all below", key="analysis_context_clear_below", use_container_width=True):
+        st.session_state.analysis_alternate_names = []
+        st.session_state.analysis_spokespeople = []
+        st.session_state.analysis_products = []
+        st.session_state.analysis_guidance = ""
+        st.session_state.ui_alternate_names = []
+        st.session_state.ui_spokespeople = []
+        st.session_state.ui_products = []
+        st.session_state.ui_toning_rationale = ""
+        st.session_state.analysis_context_suggestion_payload = None
+        st.session_state.analysis_context_tag_widget_version += 1
+        st.rerun()
+
+if st.session_state.get("analysis_context_suggestion_success"):
+    st.success("AI context suggestions added to the fields above.")
+    st.session_state.analysis_context_suggestion_success = False
+
+tag_key_suffix = st.session_state.analysis_context_tag_widget_version
 alternate_names = st_tags(
     label="Alternate names / aliases",
     text="Press enter to add more",
     maxtags=20,
     value=payload["alternate_names"],
-    key="analysis_context_aliases_tags",
+    key=f"analysis_context_aliases_tags_{tag_key_suffix}",
 )
 spokespeople = st_tags(
     label="Key spokespeople",
     text="Press enter to add more",
     maxtags=20,
     value=payload["spokespeople"],
-    key="analysis_context_spokespeople_tags",
+    key=f"analysis_context_spokespeople_tags_{tag_key_suffix}",
 )
 products = st_tags(
     label="Products / sub-brands / initiatives",
     text="Press enter to add more",
     maxtags=20,
     value=payload["products"],
-    key="analysis_context_products_tags",
+    key=f"analysis_context_products_tags_{tag_key_suffix}",
 )
 guidance = st.text_area(
     "Additional rationale, context, or guidance (optional)",
@@ -71,9 +117,36 @@ guidance = st.text_area(
     help="Use this for analytical framing, nuances, or focus that should shape AI-generated summaries and observations.",
 )
 
+with st.expander("AI suggestion rationale", expanded=False):
+    suggestion_payload = st.session_state.get("analysis_context_suggestion_payload")
+    if suggestion_payload:
+        assessment = str(suggestion_payload.get("assessment", "") or "").strip()
+        if assessment:
+            st.write("**Assessment**")
+            st.write(assessment)
+
+        section_map = [
+            ("Alternate names / aliases", suggestion_payload.get("aliases", [])),
+            ("Key spokespeople", suggestion_payload.get("spokespeople", [])),
+            ("Products / sub-brands / initiatives", suggestion_payload.get("products", [])),
+        ]
+        for heading, items in section_map:
+            if not items:
+                continue
+            st.write(f"**{heading}**")
+            for item in items:
+                name = str(item.get("name", "") or "").strip()
+                detail = str(item.get("detail", "") or "").strip()
+                if not name:
+                    continue
+                st.markdown(f"- `{name}`" + (f": {detail}" if detail else ""))
+    else:
+        st.info("No AI suggestions have been generated yet.")
+
 if st.button("Save Analysis Context", type="primary"):
     save_analysis_context(
         st.session_state,
+        client_name=client_name,
         primary_name=primary_name,
         alternate_names=alternate_names,
         spokespeople=spokespeople,
@@ -91,3 +164,16 @@ with st.expander("Current shared context preview", expanded=False):
         st.code(preview, language="text")
     else:
         st.info("No analysis context has been saved yet.")
+
+with st.expander("AI prompt preview", expanded=False):
+    st.code(
+        build_analysis_context_discovery_prompt(
+            client_name=client_name,
+            primary_name=primary_name,
+            alternate_names=payload["alternate_names"],
+            spokespeople=payload["spokespeople"],
+            products=payload["products"],
+            guidance=payload["guidance"],
+        ),
+        language="text",
+    )
