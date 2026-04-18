@@ -13,7 +13,6 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
     
     import pandas as pd
     import streamlit as st
-    from streamlit_extras.stylable_container import stylable_container
     from processing.ai_sentiment import build_sentiment_distribution
     from processing.spot_checks import (
         DEFAULT_CONF_THRESH,
@@ -42,7 +41,93 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
     
     warnings.filterwarnings("ignore")
     
-    st.markdown("<style>.block-container{padding-top:2.75rem !important;}</style>", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <style>
+        .block-container{padding-top:2.75rem !important;}
+        [class*="spot_btn_positive"] button,
+        [class*="spot_btn_very_positive"] button,
+        [class*="spot_btn_somewhat_positive"] button,
+        [class*="spot_btn_neutral"] button,
+        [class*="spot_btn_somewhat_negative"] button,
+        [class*="spot_btn_negative"] button,
+        [class*="spot_btn_very_negative"] button,
+        [class*="spot_btn_not_relevant"] button {
+            width: 100%;
+            color: black !important;
+            border: 0 !important;
+            padding: 0.16rem 0.6rem !important;
+            font-weight: 700 !important;
+            font-size: 14px !important;
+            border-radius: 5px !important;
+            margin-bottom: 0 !important;
+            box-shadow: none !important;
+        }
+        [class*="spot_btn_positive"],
+        [class*="spot_btn_very_positive"],
+        [class*="spot_btn_somewhat_positive"],
+        [class*="spot_btn_neutral"],
+        [class*="spot_btn_somewhat_negative"],
+        [class*="spot_btn_negative"],
+        [class*="spot_btn_very_negative"],
+        [class*="spot_btn_not_relevant"] {
+            margin-bottom: 0 !important;
+            margin-bottom: -5px !important;
+        }
+        [class*="spot_btn_positive"] div[data-testid="stButton"],
+        [class*="spot_btn_very_positive"] div[data-testid="stButton"],
+        [class*="spot_btn_somewhat_positive"] div[data-testid="stButton"],
+        [class*="spot_btn_neutral"] div[data-testid="stButton"],
+        [class*="spot_btn_somewhat_negative"] div[data-testid="stButton"],
+        [class*="spot_btn_negative"] div[data-testid="stButton"],
+        [class*="spot_btn_very_negative"] div[data-testid="stButton"],
+        [class*="spot_btn_not_relevant"] div[data-testid="stButton"] {
+            margin: 0 !important;
+        }
+        [class*="spot_btn_positive"] div[data-testid="stVerticalBlock"],
+        [class*="spot_btn_very_positive"] div[data-testid="stVerticalBlock"],
+        [class*="spot_btn_somewhat_positive"] div[data-testid="stVerticalBlock"],
+        [class*="spot_btn_neutral"] div[data-testid="stVerticalBlock"],
+        [class*="spot_btn_somewhat_negative"] div[data-testid="stVerticalBlock"],
+        [class*="spot_btn_negative"] div[data-testid="stVerticalBlock"],
+        [class*="spot_btn_very_negative"] div[data-testid="stVerticalBlock"],
+        [class*="spot_btn_not_relevant"] div[data-testid="stVerticalBlock"] {
+            gap: 0 !important;
+        }
+        [class*="spot_btn_positive"] button { background-color: #2ecc71 !important; }
+        [class*="spot_btn_very_positive"] button { background-color: #10ad82 !important; }
+        [class*="spot_btn_somewhat_positive"] button { background-color: #72cc4a !important; }
+        [class*="spot_btn_neutral"] button { background-color: #f1c40f !important; }
+        [class*="spot_btn_somewhat_negative"] button { background-color: #e67e22 !important; }
+        [class*="spot_btn_negative"] button { background-color: #e74c3c !important; }
+        [class*="spot_btn_very_negative"] button { background-color: #c0392b !important; }
+        [class*="spot_btn_not_relevant"] button { background-color: #7f8c8d !important; }
+        [class*="spot_btn_positive"] button:hover,
+        [class*="spot_btn_very_positive"] button:hover,
+        [class*="spot_btn_somewhat_positive"] button:hover,
+        [class*="spot_btn_neutral"] button:hover,
+        [class*="spot_btn_somewhat_negative"] button:hover,
+        [class*="spot_btn_negative"] button:hover,
+        [class*="spot_btn_very_negative"] button:hover,
+        [class*="spot_btn_not_relevant"] button:hover {
+            color: black !important;
+            filter: brightness(0.98);
+        }
+        [class*="spot_btn_positive"] div[data-testid="element-container"],
+        [class*="spot_btn_very_positive"] div[data-testid="element-container"],
+        [class*="spot_btn_somewhat_positive"] div[data-testid="element-container"],
+        [class*="spot_btn_neutral"] div[data-testid="element-container"],
+        [class*="spot_btn_somewhat_negative"] div[data-testid="element-container"],
+        [class*="spot_btn_negative"] div[data-testid="element-container"],
+        [class*="spot_btn_very_negative"] div[data-testid="element-container"],
+        [class*="spot_btn_not_relevant"] div[data-testid="element-container"] {
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     embedded_review = bool(st.session_state.get("sentiment_review_embedded", False))
     spot_checks_mode = str(st.session_state.get("spot_checks_mode", "full") or "full")
     if embedded_review:
@@ -68,22 +153,10 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
     init_api_meter()
     
     
-    def colored_button(label: str, color: str) -> bool:
-        css = f"""
-        button {{
-            width: 100%;
-            background-color: {color} !important;
-            color: black !important;
-            border: 0;
-            padding: 0.2rem 0.6rem;
-            font-weight: bold !important;
-            font-size: 14px;
-            border-radius: 5px;
-            margin-bottom: 10px;
-        }}
-        """
+    def colored_button(label: str) -> bool:
         stable_key = f"spot_manual_{label.replace(' ', '_')}"
-        with stylable_container(key=f"wrap_{stable_key}", css_styles=css):
+        style_key = stable_key.replace("spot_manual_", "spot_btn_").replace(" ", "_").lower()
+        with st.container(key=style_key):
             return st.button(label, key=stable_key, use_container_width=True)
     
     
@@ -650,32 +723,18 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
                 "VERY NEGATIVE",
                 "NOT RELEVANT",
             ]
-            palette = {
-                "VERY POSITIVE": "#10ad82",
-                "SOMEWHAT POSITIVE": "#72cc4a",
-                "NEUTRAL": "#f1c40f",
-                "SOMEWHAT NEGATIVE": "#e67e22",
-                "VERY NEGATIVE": "#c0392b",
-                "NOT RELEVANT": "#7f8c8d",
-            }
         else:
             manual_labels = ["POSITIVE", "NEUTRAL", "NEGATIVE", "NOT RELEVANT"]
-            palette = {
-                "POSITIVE": "#2ecc71",
-                "NEUTRAL": "#f1c40f",
-                "NEGATIVE": "#e74c3c",
-                "NOT RELEVANT": "#7f8c8d",
-            }
     
         clicked_override = None
         for lbl in manual_labels:
-            if colored_button(lbl, palette[lbl]):
+            if colored_button(lbl):
                 clicked_override = lbl
                 break
     
         if clicked_override:
             _rebuild_and_advance(clicked_override)
-    
+
         if not pd.isna(review_label) and str(review_label).strip():
             if st.button("Re-run review AI", use_container_width=True):
                 st.session_state.pop("__last_spot_check_ai_summary__", None)
@@ -703,12 +762,12 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
     
         nav1, nav2 = st.columns(2)
         with nav1:
-            if st.button("◄ Prev", disabled=(idx <= 0), use_container_width=True):
+            if st.button("", disabled=(idx <= 0), use_container_width=True, icon=":material/skip_previous:", help="Previous story"):
                 st.session_state.spot_idx = max(0, idx - 1)
                 st.session_state.spot_lock_gid = None
                 st.rerun()
         with nav2:
-            if st.button("Next ►", disabled=(idx >= len(candidates) - 1), use_container_width=True):
+            if st.button("", disabled=(idx >= len(candidates) - 1), use_container_width=True, icon=":material/skip_next:", help="Next story"):
                 st.session_state.spot_idx = min(len(candidates) - 1, idx + 1)
                 st.session_state.spot_lock_gid = None
                 st.rerun()

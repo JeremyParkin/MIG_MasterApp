@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 from openai import OpenAI
 
+from processing.top_stories import consolidate_top_story_candidates, parse_source_group_ids
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
@@ -367,62 +368,128 @@ def _build_top_media_type_context(working: pd.DataFrame, metric_label: str, limi
     return grouped.to_dict(orient="records")
 
 
+def _build_region_story_candidates(working: pd.DataFrame) -> pd.DataFrame:
+    if working.empty:
+        return pd.DataFrame(
+            columns=[
+                "Group ID",
+                "Headline",
+                "Date",
+                "Mentions",
+                "Impressions",
+                "Effective Reach",
+                "Example Outlet",
+                "Example URL",
+                "Example Type",
+                "Example Snippet",
+                "Source Group IDs",
+            ]
+        )
+
+    rows: list[dict[str, Any]] = []
+    for group_id, group in working.groupby("Group ID", dropna=False):
+        if group.empty:
+            continue
+
+        group_working = group.copy()
+        group_working["_snippet_len"] = group_working["Snippet"].fillna("").astype(str).str.len()
+        group_working["_has_url"] = group_working["URL"].fillna("").astype(str).str.strip().ne("")
+        group_working["_headline_len"] = group_working["Headline"].fillna("").astype(str).str.len()
+        best_row = group_working.sort_values(
+            by=["_snippet_len", "Mentions", "Impressions", "_has_url", "_headline_len", "Date"],
+            ascending=[False, False, False, False, False, False],
+            na_position="last",
+        ).iloc[0]
+
+        group_id_str = "" if pd.isna(group_id) else str(group_id).strip()
+        rows.append(
+            {
+                "Group ID": group_id,
+                "Headline": best_row.get("Headline", ""),
+                "Date": best_row.get("Date", pd.NaT),
+                "Mentions": int(pd.to_numeric(group["Mentions"], errors="coerce").fillna(0).sum()),
+                "Impressions": int(pd.to_numeric(group["Impressions"], errors="coerce").fillna(0).sum()),
+                "Effective Reach": int(pd.to_numeric(group["Effective Reach"], errors="coerce").fillna(0).sum()),
+                "Example Outlet": best_row.get("Outlet", ""),
+                "Example URL": best_row.get("URL", ""),
+                "Example Type": best_row.get("Media Type", ""),
+                "Example Snippet": best_row.get("Snippet", ""),
+                "Source Group IDs": group_id_str,
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame()
+
+    candidates = pd.DataFrame(rows)
+    candidates["Date"] = pd.to_datetime(candidates["Date"], errors="coerce").dt.date
+    candidates["Mentions"] = pd.to_numeric(candidates["Mentions"], errors="coerce").fillna(0).astype(int)
+    candidates["Impressions"] = pd.to_numeric(candidates["Impressions"], errors="coerce").fillna(0).astype(int)
+    candidates["Effective Reach"] = pd.to_numeric(candidates["Effective Reach"], errors="coerce").fillna(0).astype(int)
+    candidates["Source Group IDs"] = candidates["Source Group IDs"].fillna("").astype(str)
+    return consolidate_top_story_candidates(candidates)
+
+
+def _build_story_outlet_context_map(working: pd.DataFrame, story_candidates: pd.DataFrame) -> dict[str, dict[str, Any]]:
+    if working.empty or story_candidates.empty:
+        return {}
+
+    working_ids = working.copy()
+    working_ids["_group_id_key"] = working_ids["Group ID"].fillna("").astype(str).str.strip()
+    outlet_map: dict[str, dict[str, Any]] = {}
+
+    for _, row in story_candidates.iterrows():
+        story_key = str(row.get("Group ID", "") or "").strip()
+        source_ids = parse_source_group_ids(row.get("Source Group IDs", ""), fallback_group_id=row.get("Group ID"))
+        if not source_ids:
+            outlet_map[story_key] = {"example_outlets": "", "outlet_count": 0}
+            continue
+
+        story_rows = working_ids[working_ids["_group_id_key"].isin(source_ids)].copy()
+        if story_rows.empty:
+            outlet_map[story_key] = {"example_outlets": "", "outlet_count": 0}
+            continue
+
+        ranked_outlets = (
+            story_rows.groupby("Outlet", as_index=False)["Mentions"]
+            .sum()
+            .sort_values(["Mentions", "Outlet"], ascending=[False, True])
+        )
+        outlet_map[story_key] = {
+            "example_outlets": ", ".join(ranked_outlets["Outlet"].head(3).tolist()),
+            "outlet_count": int(ranked_outlets["Outlet"].nunique()),
+        }
+
+    return outlet_map
+
+
 def _build_top_story_context(working: pd.DataFrame, metric_label: str, limit: int = 10) -> list[dict[str, Any]]:
-    story_df = working.copy()
-    story_df["Group ID"] = story_df["Group ID"].fillna("").astype(str).str.strip()
-    story_df = story_df[story_df["Group ID"].ne("")].copy()
-    if story_df.empty:
+    story_candidates = _build_region_story_candidates(working)
+    if story_candidates.empty:
         return []
 
     metric_col = METRIC_FIELD_MAP.get(metric_label, "Mentions")
-    total_metric = float(story_df[metric_col].sum()) if metric_col in story_df.columns else 0.0
-    representative_rows = (
-        story_df.sort_values(
-            [metric_col, "Mentions", "Impressions", "Effective Reach", "Date"],
-            ascending=[False, False, False, False, False],
-            na_position="last",
-        )
-        .drop_duplicates(subset=["Group ID"], keep="first")
-        .loc[:, ["Group ID", "Headline", "Snippet", "Date"]]
-        .copy()
-    )
-    representative_rows["Headline"] = representative_rows["Headline"].fillna("").astype(str).str.strip()
-    representative_rows["Snippet"] = representative_rows["Snippet"].map(_trim_text)
-    representative_rows["Date"] = representative_rows["Date"].map(_format_date_value)
-    representative_rows["Headline"] = representative_rows.apply(
-        lambda row: _choose_story_label(row.get("Headline", ""), row.get("Snippet", ""), row.get("Group ID", "")),
+    total_metric = float(story_candidates[metric_col].sum()) if metric_col in story_candidates.columns else 0.0
+    outlet_context_map = _build_story_outlet_context_map(working, story_candidates)
+
+    grouped = story_candidates.copy()
+    grouped["Headline"] = grouped.apply(
+        lambda row: _choose_story_label(row.get("Headline", ""), row.get("Example Snippet", ""), row.get("Group ID", "")),
         axis=1,
     )
-
-    outlet_examples = (
-        story_df.groupby(["Group ID", "Outlet"], as_index=False)["Mentions"]
-        .sum()
-        .sort_values(["Group ID", "Mentions", "Outlet"], ascending=[True, False, True])
+    grouped["Snippet"] = grouped["Example Snippet"].map(_trim_text)
+    grouped["Outlet Count"] = grouped["Group ID"].map(
+        lambda value: int((outlet_context_map.get(str(value), {}) or {}).get("outlet_count", 0))
     )
-    example_outlet_map = (
-        outlet_examples.groupby("Group ID")["Outlet"]
-        .apply(lambda values: ", ".join(list(values.head(3))))
-        .to_dict()
+    grouped["Date"] = grouped["Date"].map(_format_date_value)
+    grouped["Example Outlets"] = grouped["Group ID"].map(
+        lambda value: str((outlet_context_map.get(str(value), {}) or {}).get("example_outlets", ""))
     )
-
-    grouped = (
-        story_df.groupby("Group ID", as_index=False)
-        .agg(
-            Mentions=("Mentions", "sum"),
-            Impressions=("Impressions", "sum"),
-            **{"Effective Reach": ("Effective Reach", "sum")},
-            **{"Outlet Count": ("Outlet", "nunique")},
-            **{"Row Count": ("Group ID", "size")},
-            **{"Latest Date": ("Date", "max")},
-        )
-        .sort_values([metric_col, "Mentions", "Impressions", "Effective Reach", "Group ID"], ascending=[False, False, False, False, True])
-        .head(limit)
-        .reset_index(drop=True)
-    )
-    grouped = grouped.merge(representative_rows, on="Group ID", how="left")
-    grouped["Example Outlets"] = grouped["Group ID"].map(lambda value: example_outlet_map.get(value, ""))
-    grouped["Latest Date"] = grouped["Latest Date"].map(_format_date_value)
     grouped["Metric Share Pct"] = grouped[metric_col].apply(lambda value: _share_pct(value, total_metric))
+    grouped = grouped.sort_values(
+        [metric_col, "Mentions", "Impressions", "Effective Reach", "Headline"],
+        ascending=[False, False, False, False, True],
+    ).head(limit).reset_index(drop=True)
     return grouped.to_dict(orient="records")
 
 
@@ -456,11 +523,9 @@ def build_region_profile_context(
     if not outlet_rank.empty:
         outlet_rank["Metric Share Pct"] = outlet_rank[metric_col].apply(lambda value: _share_pct(value, total_metric))
 
-    top_stories = (
-        _build_top_story_context(working, metric_label=metric_label, limit=10)
-    )
+    top_stories = _build_top_story_context(working, metric_label=metric_label, limit=10)
     top_media_types = _build_top_media_type_context(working, metric_label=metric_label, limit=5)
-    story_count = int(working["Headline"].replace("", pd.NA).dropna().nunique())
+    story_count = len(_build_region_story_candidates(working))
     unique_outlet_count = int(working["Outlet"].replace("", pd.NA).dropna().nunique())
     top_outlet_share_pct = float(outlet_rank["Metric Share Pct"].iloc[0]) if not outlet_rank.empty else 0.0
     top_three_outlet_share_pct = round(float(outlet_rank[metric_col].head(3).sum()) / total_metric * 100, 1) if total_metric > 0 and not outlet_rank.empty else 0.0

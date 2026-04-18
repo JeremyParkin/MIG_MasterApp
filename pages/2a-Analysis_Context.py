@@ -143,20 +143,23 @@ with st.expander("AI suggestion rationale", expanded=False):
     else:
         st.info("No AI suggestions have been generated yet.")
 
-if st.button("Save Analysis Context", type="primary"):
-    save_analysis_context(
-        st.session_state,
-        client_name=client_name,
-        primary_name=primary_name,
-        alternate_names=alternate_names,
-        spokespeople=spokespeople,
-        products=products,
-        guidance=guidance,
-    )
-    st.session_state.analysis_context_save_success = True
+save_col, save_status_col = st.columns([0.32, 0.68], gap="small")
+with save_col:
+    if st.button("Save Analysis Context", type="primary", use_container_width=True):
+        save_analysis_context(
+            st.session_state,
+            client_name=client_name,
+            primary_name=primary_name,
+            alternate_names=alternate_names,
+            spokespeople=spokespeople,
+            products=products,
+            guidance=guidance,
+        )
+        st.session_state.analysis_context_save_success = True
 
-if st.session_state.get("analysis_context_save_success"):
-    st.success("Analysis context saved.")
+with save_status_col:
+    if st.session_state.get("analysis_context_save_success"):
+        st.success("Analysis context saved.")
 
 with st.expander("Current shared context preview", expanded=False):
     preview = build_analysis_context_text(st.session_state)

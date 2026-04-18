@@ -596,11 +596,11 @@ def render_outlets_page() -> None:
                 )
 
             with cluster_nav1:
-                if st.button("Previous", key="outlet_cleanup_prev", use_container_width=True, disabled=cluster_index <= 0):
+                if st.button("", key="outlet_cleanup_prev", use_container_width=True, disabled=cluster_index <= 0, icon=":material/skip_previous:", help="Previous cluster"):
                     st.session_state.outlet_cleanup_cluster_index = max(cluster_index - 1, 0)
                     st.rerun()
             with cluster_nav2:
-                if st.button("Next", key="outlet_cleanup_next", use_container_width=True, disabled=cluster_index >= len(cleanup_clusters) - 1):
+                if st.button("", key="outlet_cleanup_next", use_container_width=True, disabled=cluster_index >= len(cleanup_clusters) - 1, icon=":material/skip_next:", help="Next cluster"):
                     st.session_state.outlet_cleanup_cluster_index = min(cluster_index + 1, len(cleanup_clusters) - 1)
                     st.rerun()
             with cluster_nav3:
@@ -898,11 +898,11 @@ def render_outlets_page() -> None:
             inspect_index = valid_outlets.index(inspect_outlet) if inspect_outlet in valid_outlets else 0
             nav_col1, nav_col2, nav_col3 = st.columns([1, 1, 1.3], gap="small")
             with nav_col1:
-                if st.button("Previous", key="outlet_inspector_prev", use_container_width=True, disabled=inspect_index <= 0):
+                if st.button("", key="outlet_inspector_prev", use_container_width=True, disabled=inspect_index <= 0, icon=":material/skip_previous:", help="Previous outlet"):
                     st.session_state.outlet_insights_pending_active_outlet = valid_outlets[inspect_index - 1]
                     st.rerun()
             with nav_col2:
-                if st.button("Next", key="outlet_inspector_next", use_container_width=True, disabled=inspect_index >= len(valid_outlets) - 1):
+                if st.button("", key="outlet_inspector_next", use_container_width=True, disabled=inspect_index >= len(valid_outlets) - 1, icon=":material/skip_next:", help="Next outlet"):
                     st.session_state.outlet_insights_pending_active_outlet = valid_outlets[inspect_index + 1]
                     st.rerun()
             with nav_col3:
