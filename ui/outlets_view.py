@@ -614,8 +614,7 @@ def render_outlets_page() -> None:
                     st.session_state.outlet_cleanup_cluster_index = len(cleanup_clusters) - 1
                     st.rerun()
             with cluster_nav5:
-                remaining_clusters = len(cleanup_clusters) - cluster_index
-                st.caption(f"Reviewing cluster {cluster_index + 1} of {len(cleanup_clusters)} • {remaining_clusters} left in queue")
+                st.caption(f"Reviewing cluster {cluster_index + 1} of {len(cleanup_clusters)}")
 
             selected_candidates_map = dict(st.session_state.get("outlet_cleanup_selected_candidates", {}))
             default_selected = selected_candidates_map.get(

@@ -791,7 +791,7 @@ def render_authors_page() -> None:
                 st.rerun()
         else:
             st.info("You've reached the end of the list!")
-            st.write(f"Current position: {st.session_state.auth_outlet_skipped}")
+            st.caption(f"Current position: {st.session_state.auth_outlet_skipped}")
 
             if st.session_state.auth_outlet_skipped > 0:
                 if st.button("", key="authors_outlets_reset_end", icon=":material/first_page:", help="First author"):
