@@ -317,10 +317,10 @@ def get_available_visible_flags(df: pd.DataFrame) -> tuple[list[str], list[str]]
     default_excluded_flags = [
         f
         for f in [
-            "Newswire?",
-            "Market Report Spam?",
-            "Stocks / Financials?",
-            "Advertorial?",
+            "Press Release",
+            "Market Report Spam",
+            "Financial Outlet",
+            "Advertorial",
             "User-Generated",
         ]
         if f in available_flags

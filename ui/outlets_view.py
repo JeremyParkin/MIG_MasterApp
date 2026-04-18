@@ -9,7 +9,13 @@ import warnings
 import pandas as pd
 import streamlit as st
 
-from processing.analysis_context import build_analysis_context_text, init_analysis_context_state
+from processing.analysis_context import (
+    apply_session_coverage_flag_policy,
+    build_analysis_context_text,
+    get_dataset_coverage_keep_keys,
+    get_outlet_insight_coverage_flag_exclusions,
+    init_analysis_context_state,
+)
 import processing.outlet_insights as outlet_insights
 from ui.insight_blocks import build_linked_example_blocks_html
 from utils.formatting import NUMERIC_FORMAT_DICT
@@ -88,19 +94,26 @@ def render_outlets_page() -> None:
 
     def rebuild_outlet_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         df_traditional = st.session_state.df_traditional.copy()
+        filtered_df = apply_session_coverage_flag_policy(
+            df_traditional,
+            st.session_state,
+            get_outlet_insight_coverage_flag_exclusions(st.session_state),
+        )
         outlet_map = st.session_state.get("outlet_rollup_map", {})
         cache_key = (
             "outlet_data_cache",
-            len(df_traditional),
-            tuple(df_traditional.columns.tolist()),
+            len(filtered_df),
+            tuple(filtered_df.columns.tolist()),
             tuple(sorted((str(k), str(v)) for k, v in outlet_map.items())),
+            tuple(get_outlet_insight_coverage_flag_exclusions(st.session_state)),
+            tuple(sorted(get_dataset_coverage_keep_keys(st.session_state))),
         )
         cached = st.session_state.get("outlet_data_cache")
         if cached and cached.get("key") == cache_key:
             return cached["metrics_df"], cached["story_df"], cached["variants_df"]
 
-        metrics_df, story_df = build_outlet_metrics(df_traditional, outlet_rollup_map=outlet_map)
-        variants_df = build_outlet_variant_candidates(df_traditional, outlet_rollup_map=outlet_map)
+        metrics_df, story_df = build_outlet_metrics(filtered_df, outlet_rollup_map=outlet_map)
+        variants_df = build_outlet_variant_candidates(filtered_df, outlet_rollup_map=outlet_map)
         st.session_state.outlet_data_cache = {
             "key": cache_key,
             "metrics_df": metrics_df,

@@ -11,10 +11,10 @@ SampleMode = Literal["full", "representative", "custom", "reuse_other_sample"]
 
 DEFAULT_MAX_FULL_ROWS = 2000
 DEFAULT_EXCLUDED_COVERAGE_FLAGS = [
-    "Newswire?",
-    "Market Report Spam?",
-    "Stocks / Financials?",
-    "Advertorial?",
+    "Press Release",
+    "Market Report Spam",
+    "Financial Outlet",
+    "Advertorial",
     "User-Generated",
 ]
 

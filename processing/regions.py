@@ -19,9 +19,9 @@ METRIC_FIELD_MAP = {
 
 DEFAULT_REGIONS_OBSERVATION_MODEL = "gpt-5.4-mini"
 REGIONS_DEFAULT_EXCLUDED_FLAGS = [
-    "Newswire?",
-    "Stocks / Financials?",
-    "Advertorial?",
+    "Press Release",
+    "Financial Outlet",
+    "Advertorial",
 ]
 REGIONS_HIDDEN_FILTER_FLAGS = {
     "Aggregators",

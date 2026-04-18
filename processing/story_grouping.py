@@ -351,10 +351,10 @@ def mark_prime_examples_legacy(grouped_df: pd.DataFrame) -> pd.DataFrame:
 
     flags = working["Coverage Flags"].str.strip()
     working["_quality_rank"] = 2
-    working.loc[flags.eq("Advertorial?"), "_quality_rank"] = 7
-    working.loc[flags.eq("Market Report Spam?"), "_quality_rank"] = 6
-    working.loc[flags.eq("Stocks / Financials?"), "_quality_rank"] = 5
-    working.loc[flags.eq("Newswire?"), "_quality_rank"] = 4
+    working.loc[flags.eq("Advertorial"), "_quality_rank"] = 7
+    working.loc[flags.eq("Market Report Spam"), "_quality_rank"] = 6
+    working.loc[flags.eq("Press Release"), "_quality_rank"] = 5
+    working.loc[flags.eq("Financial Outlet"), "_quality_rank"] = 4
     working.loc[flags.eq("Aggregator"), "_quality_rank"] = 3
     working.loc[flags.eq(""), "_quality_rank"] = 2
     working.loc[flags.eq("Good Outlet"), "_quality_rank"] = 1
@@ -401,10 +401,10 @@ def mark_prime_examples(grouped_df: pd.DataFrame) -> pd.DataFrame:
     preferred_wire_pattern = r"Reuters|Associated Press|Canadian Press"
     working["_quality_rank"] = 2
     flags = working["Coverage Flags"].str.strip()
-    working.loc[flags.eq("Advertorial?"), "_quality_rank"] = 7
-    working.loc[flags.eq("Market Report Spam?"), "_quality_rank"] = 6
-    working.loc[flags.eq("Stocks / Financials?"), "_quality_rank"] = 5
-    working.loc[flags.eq("Newswire?"), "_quality_rank"] = 4
+    working.loc[flags.eq("Advertorial"), "_quality_rank"] = 7
+    working.loc[flags.eq("Market Report Spam"), "_quality_rank"] = 6
+    working.loc[flags.eq("Press Release"), "_quality_rank"] = 5
+    working.loc[flags.eq("Financial Outlet"), "_quality_rank"] = 4
     working.loc[flags.eq("Aggregator"), "_quality_rank"] = 3
     working.loc[flags.eq(""), "_quality_rank"] = 2
     working.loc[flags.eq("Good Outlet"), "_quality_rank"] = 1

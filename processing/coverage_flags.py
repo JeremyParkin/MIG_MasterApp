@@ -92,8 +92,8 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
     ]
 
     for col in [
-        "Newswire Flag", "Market Report Flag", "Stock Moves Flag",
-        "Advertorial Flag", "Good Outlet Flag", "Aggregator Flag",
+        "Newswire Flag", "Market Report Flag", "Financial Outlet Flag",
+        "Advertorial Flag", "Possible Advertorial Flag", "Good Outlet Flag", "Aggregator Flag",
         "User-Generated Flag", "Coverage Flags"
     ]:
 
@@ -132,25 +132,38 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
         | df["Author"].str.contains(newswire_author_pattern, case=False, na=False, regex=True)
     )
 
-    advertorial_mask = (
-        df["Snippet_Limited"].str.contains(
-            r"advertorial|sponsored content|brandpoint",
+    advertorial_snippet_mask = df["Snippet_Limited"].str.contains(
+        r"advertorial|sponsored content|brandpoint",
+        case=False,
+        na=False,
+        regex=True,
+    )
+    advertorial_url_mask = df["URL"].str.contains(
+        r"sponsored|advertorial|brandpoint|paid[-_/ ]?post|paid[-_/ ]?content|partner[-_/ ]?content",
+        case=False,
+        na=False,
+        regex=True,
+    )
+    advertorial_author_mask = (
+        df["Author"].str.fullmatch("Brandpoint", case=False, na=False)
+        | df["Author"].str.contains(
+            r"sponsored content|partner content|paid content|brand studio|content studio",
             case=False,
             na=False,
             regex=True,
         )
-        | df["Author"].str.fullmatch("Brandpoint", case=False, na=False)
     )
+    advertorial_mask = advertorial_url_mask | advertorial_author_mask
+    possible_advertorial_mask = advertorial_snippet_mask & ~advertorial_mask
 
     df.drop(columns=["Snippet_Limited"], inplace=True, errors="ignore")
 
-    stock_moves_mask = df["Outlet"].str.contains(
+    financial_outlet_mask = df["Outlet"].str.contains(
         "|".join(re.escape(phrase) for phrase in stock_moves_phrases),
         case=False,
         na=False,
         regex=True,
     )
-
     market_report_mask = (
         df["Headline"].str.contains(r"\bglobal\b", case=False, na=False, regex=True)
         & df["Headline"].str.contains(r"\bmarket\b", case=False, na=False, regex=True)
@@ -176,15 +189,17 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
         regex=True,
     )
 
-    df.loc[newswire_mask, "Newswire Flag"] = "Newswire?"
-    df.loc[~newswire_mask & market_report_mask, "Market Report Flag"] = "Market Report Spam?"
-    df.loc[~newswire_mask & ~market_report_mask & stock_moves_mask, "Stock Moves Flag"] = "Stocks / Financials?"
-    df.loc[~newswire_mask & advertorial_mask, "Advertorial Flag"] = "Advertorial?"
+    df.loc[newswire_mask, "Newswire Flag"] = "Press Release"
+    df.loc[~newswire_mask & market_report_mask, "Market Report Flag"] = "Market Report Spam"
+    df.loc[~newswire_mask & ~market_report_mask & financial_outlet_mask, "Financial Outlet Flag"] = "Financial Outlet"
+    df.loc[~newswire_mask & advertorial_mask, "Advertorial Flag"] = "Advertorial"
+    # Disabled for now: snippet-only advertorial hints are too noisy to surface as a live flag.
+    # df.loc[~newswire_mask & ~advertorial_mask & possible_advertorial_mask, "Possible Advertorial Flag"] = "Possible Advertorial?"
     df.loc[aggregator_mask, "Aggregator Flag"] = "Aggregator"
     df.loc[user_generated_mask, "User-Generated Flag"] = "User-Generated"
 
     df.loc[
-        ~newswire_mask & ~advertorial_mask & ~market_report_mask & ~stock_moves_mask & reputable_outlet_mask,
+        ~newswire_mask & ~advertorial_mask & ~market_report_mask & ~financial_outlet_mask & reputable_outlet_mask,
         "Good Outlet Flag",
     ] = "Good Outlet"
 
@@ -195,22 +210,24 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
             return row["Advertorial Flag"]
         elif row.get("Good Outlet Flag"):
             return row["Good Outlet Flag"]
+        elif row.get("Possible Advertorial Flag"):
+            return row["Possible Advertorial Flag"]
         elif row.get("Aggregator Flag"):
             return row["Aggregator Flag"]
         elif row.get("User-Generated Flag"):
             return row["User-Generated Flag"]
         elif row.get("Market Report Flag"):
             return row["Market Report Flag"]
-        elif row.get("Stock Moves Flag"):
-            return row["Stock Moves Flag"]
+        elif row.get("Financial Outlet Flag"):
+            return row["Financial Outlet Flag"]
         return ""
 
     df["Coverage Flags"] = df.apply(combine_flags, axis=1)
 
 
     flag_columns = [
-        "Newswire Flag", "Advertorial Flag", "Good Outlet Flag",
-        "Market Report Flag", "Stock Moves Flag", "Aggregator Flag",
+        "Newswire Flag", "Advertorial Flag", "Possible Advertorial Flag", "Good Outlet Flag",
+        "Market Report Flag", "Financial Outlet Flag", "Aggregator Flag",
         "User-Generated Flag"
     ]
     df.drop(columns=[c for c in flag_columns if c in df.columns], inplace=True)

@@ -13,8 +13,10 @@ from streamlit_tags import st_tags
 from ui.insight_blocks import build_linked_example_blocks_html
 
 from processing.analysis_context import (
+    apply_session_coverage_flag_policy,
     build_analysis_context_text,
     build_analysis_context_caption,
+    get_qualitative_coverage_flag_exclusions,
     get_analysis_context_payload,
     init_analysis_context_state,
 )
@@ -25,8 +27,6 @@ from processing.sentiment_config import (
     build_sentiment_configuration,
     reset_sentiment_config_state,
     get_sentiment_source_rows,
-    get_available_coverage_flags,
-    apply_coverage_flag_exclusions,
     DEFAULT_MAX_FULL_ROWS,
 )
 from processing.ai_sentiment import (
@@ -311,21 +311,15 @@ if st.session_state.sentiment_section == "Setup":
     else:
         sample_mode = "custom"
 
-    excluded_flags: list[str] = []
+    excluded_flags = get_qualitative_coverage_flag_exclusions(st.session_state)
     working_source_rows = source_rows
     if sample_mode != "reuse_other_sample":
-        available_flags, default_excluded_flags = get_available_coverage_flags(source_rows)
-        stored_excluded_flags = st.session_state.get("sentiment_excluded_flags", default_excluded_flags)
-        fallback_defaults = [f for f in default_excluded_flags if f in available_flags]
-        preselected_flags = [f for f in stored_excluded_flags if f in available_flags] or fallback_defaults
-
-        excluded_flags = st.multiselect(
-            "Exclude coverage flags",
-            options=available_flags,
-            default=preselected_flags,
-            help="Exclude selected flagged coverage from sentiment sampling.",
-        )
-        working_source_rows = apply_coverage_flag_exclusions(source_rows, excluded_flags)
+        working_source_rows = apply_session_coverage_flag_policy(source_rows, st.session_state, excluded_flags)
+        if excluded_flags:
+            st.caption(
+                "Using Analysis Context coverage rules for qualitative workflows: "
+                + ", ".join(f"`{flag}`" for flag in excluded_flags)
+            )
 
     population_size = len(working_source_rows)
     recommended_sample = calculate_representative_sample_size(population_size) if population_size > 0 else 0

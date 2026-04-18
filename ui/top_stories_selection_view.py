@@ -9,6 +9,10 @@ def render_top_stories_selection() -> None:
     import pandas as pd
     import streamlit as st
 
+    from processing.analysis_context import (
+        apply_session_coverage_flag_policy,
+        get_qualitative_coverage_flag_exclusions,
+    )
     import processing.top_stories as top_stories_module
     
     warnings.filterwarnings("ignore")
@@ -149,9 +153,10 @@ def render_top_stories_selection() -> None:
     existing_columns = [col for col in columns_to_keep if col in source_df.columns]
     source_df = source_df[existing_columns].copy()
     source_df = normalize_top_stories_df(source_df)
+    qualitative_flags = get_qualitative_coverage_flag_exclusions(st.session_state)
+    source_df = apply_session_coverage_flag_policy(source_df, st.session_state, qualitative_flags)
     
     available_types = sorted([t for t in source_df["Type"].dropna().astype(str).unique().tolist() if t])
-    available_flags = sorted([f for f in source_df["Coverage Flags"].dropna().astype(str).unique().tolist() if f])
     
     advanced_filter_columns = []
     for col in source_df.columns:
@@ -193,25 +198,12 @@ def render_top_stories_selection() -> None:
             )
     
         with filter_col3:
-            default_excluded_flags = [
-                f for f in [
-                    "Newswire?",
-                    "Market Report Spam?",
-                    "Stocks / Financials?",
-                    "Advertorial?",
-                    "User-Generated",
-                ] if f in available_flags
-            ]
-    
-            hidden_flags = {"Good Outlet", "Aggregator"}
-            visible_flags = [f for f in available_flags if f not in hidden_flags]
-            visible_defaults = [f for f in default_excluded_flags if f not in hidden_flags]
-    
-            exclude_coverage_flags = st.multiselect(
-                "Exclude coverage flags",
-                options=visible_flags,
-                default=visible_defaults,
-            )
+            exclude_coverage_flags = []
+            if qualitative_flags:
+                st.caption(
+                    "Using Analysis Context coverage rules: "
+                    + ", ".join(f"`{flag}`" for flag in qualitative_flags)
+                )
     
         with st.expander("Advanced filters", expanded=False):
             adv1_col1, adv1_col2 = st.columns([2, 5], gap="small")

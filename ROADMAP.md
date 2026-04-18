@@ -142,6 +142,11 @@ This file is a lightweight parking lot for product and workflow ideas that are w
     - example selection
     - insight generation
     - suggested shortlists
+- Possible later refinement:
+  - add an `Advanced controls` expander so analysts can override the default junk-flag bundle item by item for special cases
+- More urgent refinement for the destructive path:
+  - let analysts preview exactly what would be removed before applying full dataset exclusion
+  - likely include a review table and, later, the ability to uncheck certain items from removal in edge cases
 - Important caution:
   - do not silently remove rows without making the rule visible and reversible
   - preserve enough transparency that analysts still understand what was excluded and why

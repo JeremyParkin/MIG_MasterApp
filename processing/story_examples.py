@@ -38,10 +38,10 @@ def pick_best_story_row(group: pd.DataFrame) -> pd.Series | None:
 
     working["_is_good_outlet"] = flags.eq("Good Outlet")
     working["_is_aggregator"] = flags.eq("Aggregator")
-    working["_is_newswire"] = flags.eq("Newswire?")
-    working["_is_stocks"] = flags.eq("Stocks / Financials?")
-    working["_is_market_report"] = flags.eq("Market Report Spam?")
-    working["_is_advertorial"] = flags.eq("Advertorial?")
+    working["_is_newswire"] = flags.eq("Press Release")
+    working["_is_financial_outlet"] = flags.eq("Financial Outlet")
+    working["_is_market_report"] = flags.eq("Market Report Spam")
+    working["_is_advertorial"] = flags.eq("Advertorial")
     working["_is_unflagged"] = flags.eq("")
 
     # Quality rank: lower is better
@@ -49,16 +49,16 @@ def pick_best_story_row(group: pd.DataFrame) -> pd.Series | None:
     # 1 = Good Outlet
     # 2 = Other non-flagged
     # 3 = Aggregator
-    # 4 = Newswire? / press-release distribution
-    # 5 = Stocks / Financials?
-    # 6 = Market Report Spam?
-    # 7 = Advertorial?
+    # 4 = Financial Outlet
+    # 5 = Press Release / distribution
+    # 6 = Market Report Spam
+    # 7 = Advertorial
     working["_quality_rank"] = 2
 
     working.loc[working["_is_advertorial"], "_quality_rank"] = 7
     working.loc[working["_is_market_report"], "_quality_rank"] = 6
-    working.loc[working["_is_stocks"], "_quality_rank"] = 5
-    working.loc[working["_is_newswire"], "_quality_rank"] = 4
+    working.loc[working["_is_newswire"], "_quality_rank"] = 5
+    working.loc[working["_is_financial_outlet"], "_quality_rank"] = 4
     working.loc[working["_is_aggregator"], "_quality_rank"] = 3
     working.loc[working["_is_unflagged"], "_quality_rank"] = 2
     working.loc[working["_is_good_outlet"], "_quality_rank"] = 1

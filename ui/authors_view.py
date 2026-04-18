@@ -11,7 +11,12 @@ import streamlit as st
 import processing.author_outlets as author_outlets_module
 from ui.insight_blocks import build_linked_example_blocks_html
 
-from processing.analysis_context import build_analysis_context_text, init_analysis_context_state
+from processing.analysis_context import (
+    apply_session_coverage_flag_policy,
+    build_analysis_context_text,
+    get_qualitative_coverage_flag_exclusions,
+    init_analysis_context_state,
+)
 from processing.author_insights import (
     DEFAULT_AUTHOR_SUMMARY_MODEL,
     build_author_headline_table,
@@ -23,7 +28,6 @@ from processing.missing_authors import (
     apply_author_fix,
     build_fixable_headline_table,
     build_last_author_fix_payload,
-    get_available_visible_flags,
     get_headline_authors,
     get_possible_authors,
     init_missing_authors_state,
@@ -99,10 +103,14 @@ def render_authors_page() -> None:
 
     st.session_state.df_traditional = prepare_traditional_for_author_outlets(st.session_state.df_traditional)
 
+    def get_author_qualitative_df() -> pd.DataFrame:
+        excluded_flags = get_qualitative_coverage_flag_exclusions(st.session_state)
+        return apply_session_coverage_flag_policy(st.session_state.df_traditional, st.session_state, excluded_flags)
+
     def rebuild_author_outlet_state() -> None:
         existing = st.session_state.auth_outlet_table.copy() if len(st.session_state.get("auth_outlet_table", [])) > 0 else None
         st.session_state.auth_outlet_table = build_auth_outlet_table(
-            st.session_state.df_traditional.copy(),
+            get_author_qualitative_df(),
             st.session_state.get("top_auths_by", "Mentions"),
             existing_assignments=existing,
         )
@@ -127,7 +135,7 @@ def render_authors_page() -> None:
 
         entry = build_author_outlet_cache_entry(
             author_name=author_name,
-            df_traditional=st.session_state.df_traditional,
+            df_traditional=get_author_qualitative_df(),
             secrets=st.secrets,
         )
         cache[cache_key] = entry
@@ -257,16 +265,12 @@ def render_authors_page() -> None:
         """
         st.markdown(hide_table_row_index, unsafe_allow_html=True)
 
-        base_working_df = st.session_state.df_traditional.copy()
-        visible_flags, visible_defaults = get_available_visible_flags(base_working_df)
-
-        excluded_flags = st.multiselect(
-            "Exclude coverage flags",
-            options=visible_flags,
-            default=visible_defaults,
-            help="Exclude selected flagged coverage from the missing-author workflow.",
-            key="authors_missing_excluded_flags",
-        )
+        excluded_flags = get_qualitative_coverage_flag_exclusions(st.session_state)
+        if excluded_flags:
+            st.caption(
+                "Using Analysis Context coverage rules for qualitative workflows: "
+                + ", ".join(f"`{flag}`" for flag in excluded_flags)
+            )
 
         author_working_df = prepare_author_working_df(
             st.session_state.df_traditional,
@@ -850,7 +854,7 @@ def render_authors_page() -> None:
         else:
             previous_rank_by = str(st.session_state.get("top_auths_by", "Mentions") or "Mentions")
         author_metrics, author_story_rows = build_author_metrics(
-            st.session_state.df_traditional,
+            get_author_qualitative_df(),
             auth_outlet_table=st.session_state.auth_outlet_table,
         )
 
