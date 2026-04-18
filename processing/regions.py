@@ -18,6 +18,15 @@ METRIC_FIELD_MAP = {
 }
 
 DEFAULT_REGIONS_OBSERVATION_MODEL = "gpt-5.4-mini"
+REGIONS_DEFAULT_EXCLUDED_FLAGS = [
+    "Newswire?",
+    "Stocks / Financials?",
+    "Advertorial?",
+]
+REGIONS_HIDDEN_FILTER_FLAGS = {
+    "Aggregators",
+    "Good outlets",
+}
 
 
 REGIONS_REQUIRED_COLUMNS = [
@@ -44,7 +53,8 @@ def init_regions_state(session_state) -> None:
     session_state.setdefault("regions_metric", "Mentions")
     session_state.setdefault("regions_geo_basis", "Outlet location")
     session_state.setdefault("regions_analysis_levels", ["Countries", "States / Provinces", "Cities"])
-    session_state.setdefault("regions_exclude_coverage_flags", [])
+    session_state.setdefault("regions_exclude_coverage_flags", REGIONS_DEFAULT_EXCLUDED_FLAGS.copy())
+    session_state.setdefault("regions_flag_defaults_initialized", False)
     session_state.setdefault("regions_include_countries", [])
     session_state.setdefault("regions_exclude_countries", [])
     session_state.setdefault("regions_prepared", False)
