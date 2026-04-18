@@ -8,23 +8,24 @@ from utils.api_meter import init_api_meter, get_api_cost_usd
 # ----------------------------
 # Sidebar
 # ----------------------------
-def standard_sidebar() -> None:
+def standard_sidebar(target=None) -> None:
     """Render branding + feedback link + session cost meter."""
-    st.sidebar.image(
-        "https://www.agilitypr.com/wp-content/uploads/2024/12/agility-logo-white.png",
-        width=230,
-    )
+    target = target or st.sidebar
+    with target.container():
+        st.image(
+            "https://www.agilitypr.com/wp-content/uploads/2024/12/agility-logo-white.png",
+            width=230,
+        )
 
-    st.sidebar.markdown("MIG Master App")
-    st.sidebar.caption(
-        "Version: April 2026 - "
-        "[Feedback](https://forms.office.com/Pages/ResponsePage.aspx?id=GvcJkLbBVUumZQrrWC6V07d2jCu79C5FsfEZJPZEfZxUNVlIVDRNNVBQVEgxQVFXNEM5VldUMkpXNS4u)"
-    )
+        st.markdown("MIG Master App")
+        st.caption(
+            "Version: April 2026 - "
+            "[Feedback](https://forms.office.com/Pages/ResponsePage.aspx?id=GvcJkLbBVUumZQrrWC6V07d2jCu79C5FsfEZJPZEfZxUNVlIVDRNNVBQVEgxQVFXNEM5VldUMkpXNS4u)"
+        )
 
-    # API meter
-    init_api_meter()
-    cost_usd = get_api_cost_usd()
-    st.sidebar.caption(f"Est. session cost USD${cost_usd:,.4f}")
+        init_api_meter()
+        cost_usd = get_api_cost_usd()
+        st.caption(f"Est. session cost USD${cost_usd:,.4f}")
 
 
 # ----------------------------
@@ -40,6 +41,7 @@ def build_pages() -> list:
         st.Page("pages/4-Outlets.py", title="Outlets", icon=":material/apartment:"),
         st.Page("pages/5-Translation.py", title="Translation", icon=":material/mediation:"),
         st.Page("pages/6-Top_Stories_Workflow.py", title="Top Stories", icon=":material/newspaper:"),
+        st.Page("pages/7-Regions.py", title="Regions", icon=":material/public:"),
         st.Page("pages/8-Tagging.py", title="Tagging", icon=":material/sell:"),
         st.Page("pages/9-AI_Sentiment.py", title="Sentiment", icon=":material/auto_awesome:"),
         st.Page("pages/11-Download.py", title="Download", icon=":material/download:"),
@@ -50,5 +52,7 @@ def build_pages() -> list:
 def run_navigation(position: str = "sidebar") -> None:
     """Run navigation + sidebar shell."""
     nav = st.navigation(build_pages(), position=position)
-    standard_sidebar()
+    sidebar_shell = st.sidebar.empty()
+    standard_sidebar(sidebar_shell)
     nav.run()
+    standard_sidebar(sidebar_shell)

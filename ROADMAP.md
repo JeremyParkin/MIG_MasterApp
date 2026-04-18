@@ -108,6 +108,44 @@ This file is a lightweight parking lot for product and workflow ideas that are w
   - keep the editor pass in English only
   - preserve differences between entries instead of smoothing them into one voice
 
+### Small AI Helpers For Analyst Workflows
+- Explore more narrow, structured AI helpers modeled on the new `Analysis Context` flow:
+  - bounded task
+  - structured JSON output
+  - human-visible rationale
+  - editable results rather than silent automation
+- Most promising near-term candidates:
+  - `Authors > Selection`
+    - suggest a top-10 author shortlist for review
+  - `Outlets > Selection`
+    - suggest a top-10 outlet shortlist for review
+  - `Missing Authors`
+    - suggest the cleanest likely author name when source variants are messy
+  - `Outlet Cleanup`
+    - suggest a reporting name and / or flag why a merge looks risky
+- Key guardrails:
+  - keep the analyst in control
+  - avoid hidden row-level mutation
+  - prefer acceptance / editing over auto-apply
+  - show the AI reasoning when it helps build trust
+
+### Global Coverage-Flag Handling
+- Consider a shared settings layer for how coverage flags should be treated across the app.
+- Current pain point:
+  - some workflows allow filtering by coverage flags
+  - some do not
+  - repeatedly re-selecting the same exclusions can become noisy for analysts
+- Possible future directions:
+  - global rule to fully exclude selected flags from the working dataset
+  - softer rule to keep flagged rows in the data but exclude them from:
+    - AI analysis
+    - example selection
+    - insight generation
+    - suggested shortlists
+- Important caution:
+  - do not silently remove rows without making the rule visible and reversible
+  - preserve enough transparency that analysts still understand what was excluded and why
+
 ### Author / Outlet Reconciliation
 - Consider a future reconciliation layer between:
   - author-assigned outlet labels
@@ -173,6 +211,22 @@ This file is a lightweight parking lot for product and workflow ideas that are w
   - `Coverage Distribution Map`
     - choropleth or similar regional fill map
     - useful for quickly spotting where coverage is concentrated
+
+### Downloadable HTML Client Report
+- Consider a late-stage module that assembles the app's cleaned data, charts, and AI-generated insights into a polished HTML report.
+- Goals:
+  - visual, client-ready output without requiring PowerPoint as the only presentation layer
+  - downloadable `.html` file that analysts can send directly to clients
+  - optional in-app preview, potentially embedded in an iframe-like viewer
+  - per-section or tabbed navigation so each report "page" stays focused and readable
+- Likely ingredients:
+  - reusable charts and tables from Top Stories, Authors, Outlets, Regions, Tagging, and Sentiment
+  - narrative blocks already curated in the workflows
+  - branding / theme controls
+  - optional interactive elements such as section tabs, expandable evidence, or metric toggles
+- Important caution:
+  - the first version should prioritize clean export and stable layout over highly custom interactivity
+  - analysts still need control over what sections are included before generating the final HTML
 
 - Narrative outputs / observations:
   - generate concise text explaining:
