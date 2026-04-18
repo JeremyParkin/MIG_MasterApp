@@ -294,9 +294,23 @@ def render_authors_page() -> None:
             elif st.session_state.get("authors_missing_select_author") not in possibles:
                 st.session_state.authors_missing_select_author = possibles[0] if possibles else ""
 
-            controls_spacer, controls_col = st.columns([0.7, 2.3], gap="small")
+            controls_spacer, controls_col = st.columns([0.55, 2.45], gap="small")
             with controls_col:
-                button_prev, button_next, button_reset, button_undo, button_status = st.columns([0.5, 0.5, 0.85, 0.8, 1.0], gap="small")
+                button_first, button_prev, button_next, button_last, button_undo, button_status = st.columns(
+                    [0.42, 0.42, 0.42, 0.42, 0.65, 1.15], gap="small"
+                )
+
+                with button_first:
+                    if st.button(
+                        "",
+                        key="authors_missing_first",
+                        disabled=counter <= 0,
+                        use_container_width=True,
+                        icon=":material/first_page:",
+                        help="First headline",
+                    ):
+                        st.session_state.auth_skip_counter = 0
+                        st.rerun()
 
                 with button_prev:
                     if st.button(
@@ -322,9 +336,16 @@ def render_authors_page() -> None:
                         st.session_state.auth_skip_counter = counter + 1
                         st.rerun()
 
-                with button_reset:
-                    if counter > 0 and st.button("Start", key="authors_missing_reset", use_container_width=True):
-                        st.session_state.auth_skip_counter = 0
+                with button_last:
+                    if st.button(
+                        "",
+                        key="authors_missing_last",
+                        disabled=counter >= len(headline_table) - 1,
+                        use_container_width=True,
+                        icon=":material/last_page:",
+                        help="Last headline",
+                    ):
+                        st.session_state.auth_skip_counter = len(headline_table) - 1
                         st.rerun()
 
                 with button_undo:
@@ -429,7 +450,7 @@ def render_authors_page() -> None:
             top_end_col1, top_end_col2 = st.columns([1, 1])
 
             with top_end_col1:
-                if counter > 0 and st.button("Back to Start", key="authors_missing_reset_end"):
+                if counter > 0 and st.button("", key="authors_missing_reset_end", icon=":material/first_page:", help="First headline"):
                     st.session_state.auth_skip_counter = 0
                     st.rerun()
 
@@ -537,7 +558,7 @@ def render_authors_page() -> None:
                     "This updates every instance of this author in the cleaned dataset and refreshes the author-outlet workflow."
                 )
 
-            header_col, controls_col = st.columns([2.7, 1.5], gap="medium")
+            header_col, controls_col = st.columns([2.9, 1.3], gap="medium")
 
             with header_col:
                 st.markdown(
@@ -550,7 +571,19 @@ def render_authors_page() -> None:
                 )
 
             with controls_col:
-                prev_col, next_col, reset_col, undo_col = st.columns([0.62, 0.62, 0.86, 0.8], gap="small")
+                first_col, prev_col, next_col, last_col, undo_col = st.columns([0.42, 0.42, 0.42, 0.42, 0.7], gap="small")
+
+                with first_col:
+                    if st.button(
+                        "",
+                        key="authors_outlets_first",
+                        disabled=st.session_state.auth_outlet_skipped <= 0,
+                        use_container_width=True,
+                        icon=":material/first_page:",
+                        help="First author",
+                    ):
+                        st.session_state.auth_outlet_skipped = 0
+                        st.rerun()
 
                 with prev_col:
                     if st.button(
@@ -576,9 +609,16 @@ def render_authors_page() -> None:
                         st.session_state.auth_outlet_skipped += 1
                         st.rerun()
 
-                with reset_col:
-                    if st.button("Start", key="authors_outlets_reset", use_container_width=True):
-                        st.session_state.auth_outlet_skipped = 0
+                with last_col:
+                    if st.button(
+                        "",
+                        key="authors_outlets_last",
+                        disabled=st.session_state.auth_outlet_skipped >= len(auth_outlet_todo) - 1,
+                        use_container_width=True,
+                        icon=":material/last_page:",
+                        help="Last author",
+                    ):
+                        st.session_state.auth_outlet_skipped = len(auth_outlet_todo) - 1
                         st.rerun()
 
                 with undo_col:
@@ -754,7 +794,7 @@ def render_authors_page() -> None:
             st.write(f"Current position: {st.session_state.auth_outlet_skipped}")
 
             if st.session_state.auth_outlet_skipped > 0:
-                if st.button("Back to Start", key="authors_outlets_reset_end"):
+                if st.button("", key="authors_outlets_reset_end", icon=":material/first_page:", help="First author"):
                     st.session_state.auth_outlet_skipped = 0
                     st.rerun()
             else:

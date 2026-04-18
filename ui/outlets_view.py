@@ -587,7 +587,9 @@ def render_outlets_page() -> None:
             st.session_state.outlet_cleanup_cluster_index = cluster_index
             cluster = cleanup_clusters[cluster_index]
 
-            anchor_col, cluster_nav1, cluster_nav2, cluster_nav3, cluster_nav4 = st.columns([2.2, 1, 1, 1, 1.5], gap="small")
+            anchor_col, cluster_nav1, cluster_nav2, cluster_nav3, cluster_nav4, cluster_nav5 = st.columns(
+                [2.1, 0.8, 0.8, 0.8, 0.8, 1.45], gap="small"
+            )
             with anchor_col:
                 st.markdown(
                     f'<div style="font-size:2rem; font-weight:800; color:#d4a72c; line-height:1.1; margin:0.1rem 0 0.2rem 0;">'
@@ -596,18 +598,22 @@ def render_outlets_page() -> None:
                 )
 
             with cluster_nav1:
+                if st.button("", key="outlet_cleanup_first", use_container_width=True, disabled=cluster_index <= 0, icon=":material/first_page:", help="First cluster"):
+                    st.session_state.outlet_cleanup_cluster_index = 0
+                    st.rerun()
+            with cluster_nav2:
                 if st.button("", key="outlet_cleanup_prev", use_container_width=True, disabled=cluster_index <= 0, icon=":material/skip_previous:", help="Previous cluster"):
                     st.session_state.outlet_cleanup_cluster_index = max(cluster_index - 1, 0)
                     st.rerun()
-            with cluster_nav2:
+            with cluster_nav3:
                 if st.button("", key="outlet_cleanup_next", use_container_width=True, disabled=cluster_index >= len(cleanup_clusters) - 1, icon=":material/skip_next:", help="Next cluster"):
                     st.session_state.outlet_cleanup_cluster_index = min(cluster_index + 1, len(cleanup_clusters) - 1)
                     st.rerun()
-            with cluster_nav3:
-                if st.button("Back to Start", key="outlet_cleanup_reset_cluster", use_container_width=True):
-                    st.session_state.outlet_cleanup_cluster_index = 0
-                    st.rerun()
             with cluster_nav4:
+                if st.button("", key="outlet_cleanup_last", use_container_width=True, disabled=cluster_index >= len(cleanup_clusters) - 1, icon=":material/last_page:", help="Last cluster"):
+                    st.session_state.outlet_cleanup_cluster_index = len(cleanup_clusters) - 1
+                    st.rerun()
+            with cluster_nav5:
                 remaining_clusters = len(cleanup_clusters) - cluster_index
                 st.caption(f"Reviewing cluster {cluster_index + 1} of {len(cleanup_clusters)} • {remaining_clusters} left in queue")
 
