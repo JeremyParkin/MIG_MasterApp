@@ -27,6 +27,34 @@ def normalize_snippet_for_compare(text: str) -> str:
     return text
 
 
+def _leading_token_tuple(text: str, limit: int = 12) -> tuple[str, ...]:
+    if not text:
+        return ()
+    return tuple(text.split()[:limit])
+
+
+def _cheap_broadcast_similarity_gate(
+    prefix_a: tuple[str, ...],
+    prefix_b: tuple[str, ...],
+    *,
+    min_overlap_ratio: float = 0.65,
+    min_shared_tokens: int = 5,
+) -> bool:
+    if not prefix_a or not prefix_b:
+        return False
+
+    if prefix_a == prefix_b:
+        return True
+
+    shared = len(set(prefix_a) & set(prefix_b))
+    shortest = min(len(prefix_a), len(prefix_b))
+    if shortest == 0:
+        return False
+
+    overlap_ratio = shared / shortest
+    return shared >= min_shared_tokens and overlap_ratio >= min_overlap_ratio
+
+
 def has_nonblank_value(series: pd.Series) -> pd.Series:
     return series.fillna("").astype(str).str.strip().ne("")
 
@@ -534,6 +562,7 @@ def dedupe_broadcast(broadcast_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataF
         .str.replace(r"\s+", " ", regex=True)
         .str.strip()
     )
+    working["_snippet_prefix_tokens"] = working["_snippet_norm"].map(_leading_token_tuple)
     working["_snippet_len"] = working["_snippet_text"].str.len()
 
     required_mask = (
@@ -587,6 +616,7 @@ def dedupe_broadcast(broadcast_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataF
         for i, idx_i in enumerate(group_indices):
             row_i = remaining_group.loc[idx_i]
             snippet_i = row_i["_snippet_norm"]
+            prefix_i = row_i["_snippet_prefix_tokens"]
             time_i = row_i["_date_time"]
 
             for idx_j in group_indices[i + 1:]:
@@ -602,6 +632,9 @@ def dedupe_broadcast(broadcast_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataF
                     continue
 
                 if not lengths_are_similar_enough(row_i["_snippet_len"], row_j["_snippet_len"]):
+                    continue
+
+                if not _cheap_broadcast_similarity_gate(prefix_i, row_j["_snippet_prefix_tokens"]):
                     continue
 
                 if SequenceMatcher(None, snippet_i, snippet_j).ratio() >= 0.90:
@@ -648,6 +681,7 @@ def dedupe_broadcast(broadcast_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataF
         "_date_only",
         "_snippet_text",
         "_snippet_norm",
+        "_snippet_prefix_tokens",
         "_snippet_len",
     ]
     cleaned_broadcast = pd.concat([cleaned_broadcast, excluded_rows], ignore_index=True)
@@ -660,13 +694,9 @@ def dedupe_broadcast(broadcast_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataF
 def dedupe_traditional(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     df = df.copy()
     non_broadcast_df, broadcast_df = split_broadcast(df)
-
     deduped_non_broadcast, dupe_urls = dedupe_by_url(non_broadcast_df)
-
     deduped_non_broadcast, dupe_cols = dedupe_non_broadcast_by_fields(deduped_non_broadcast)
-
     cleaned_broadcast, broadcast_dupes = dedupe_broadcast(broadcast_df)
-
     cleaned_df = pd.concat([deduped_non_broadcast, cleaned_broadcast], ignore_index=True).reset_index(drop=True)
     dupes_df = pd.concat([dupe_urls, dupe_cols, broadcast_dupes], ignore_index=True)
     return cleaned_df, dupes_df

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import gc
 import time
 import warnings
 import pandas as pd
 import streamlit as st
 
 from processing.standard_cleaning import run_standard_cleaning
+from processing.coverage_flags import add_coverage_flags
 from processing.effective_reach import (
     apply_effective_reach_traditional,
     apply_effective_reach_social,
@@ -22,6 +24,8 @@ from processing.story_grouping import (
 from utils.formatting import format_number, NUMERIC_FORMAT_DICT
 
 warnings.filterwarnings("ignore")
+
+STAGED_BASIC_CLEANING_THRESHOLD = 10_000
 
 st.title("Basic Cleaning")
 st.caption("Standardize the raw export, remove duplicates, calculate effective reach, and group similar coverage into unique stories.")
@@ -41,6 +45,18 @@ def ensure_basic_cleaning_state() -> None:
 
     if "standard_step" not in st.session_state:
         st.session_state.standard_step = False
+    if "basic_cleaning_stage" not in st.session_state:
+        st.session_state.basic_cleaning_stage = 0
+    if "basic_cleaning_elapsed" not in st.session_state:
+        st.session_state.basic_cleaning_elapsed = None
+    if "basic_cleaning_part_durations" not in st.session_state:
+        st.session_state.basic_cleaning_part_durations = {}
+    if "basic_cleaning_merge_online" not in st.session_state:
+        st.session_state.basic_cleaning_merge_online = True
+    if "basic_cleaning_drop_dupes" not in st.session_state:
+        st.session_state.basic_cleaning_drop_dupes = True
+    if "basic_cleaning_started_at" not in st.session_state:
+        st.session_state.basic_cleaning_started_at = None
 
 
 def reset_basic_cleaning() -> None:
@@ -55,6 +71,92 @@ def reset_basic_cleaning() -> None:
     st.session_state.df_ai_grouped = pd.DataFrame()
     st.session_state.df_ai_unique = pd.DataFrame()
     st.session_state.standard_step = False
+    st.session_state.basic_cleaning_stage = 0
+    st.session_state.basic_cleaning_elapsed = None
+    st.session_state.basic_cleaning_part_durations = {}
+    st.session_state.basic_cleaning_started_at = None
+
+
+def run_basic_cleaning_stage_1() -> None:
+    start = time.time()
+    source_df = st.session_state.df_traditional_pre_standard.copy()
+    cleaning_results = run_standard_cleaning(
+        df=source_df,
+        merge_online=st.session_state.basic_cleaning_merge_online,
+        drop_dupes=st.session_state.basic_cleaning_drop_dupes,
+        add_flags=False,
+    )
+    st.session_state.df_traditional = cleaning_results["df_traditional"]
+    st.session_state.df_social = cleaning_results["df_social"]
+    st.session_state.df_dupes = cleaning_results["df_dupes"]
+    st.session_state.df_ai_grouped = pd.DataFrame()
+    st.session_state.df_ai_unique = pd.DataFrame()
+    duration = time.time() - start
+    st.session_state.basic_cleaning_elapsed = (st.session_state.basic_cleaning_elapsed or 0.0) + duration
+    st.session_state.basic_cleaning_part_durations[1] = duration
+    st.session_state.basic_cleaning_stage = 1
+    del source_df, cleaning_results
+    gc.collect()
+
+
+def run_basic_cleaning_stage_2() -> None:
+    start = time.time()
+    st.session_state.df_traditional = apply_effective_reach_traditional(st.session_state.df_traditional)
+    st.session_state.df_social = apply_effective_reach_social(st.session_state.df_social)
+    st.session_state.df_traditional = add_coverage_flags(st.session_state.df_traditional)
+    duration = time.time() - start
+    st.session_state.basic_cleaning_elapsed = (st.session_state.basic_cleaning_elapsed or 0.0) + duration
+    st.session_state.basic_cleaning_part_durations[2] = duration
+    st.session_state.basic_cleaning_stage = 2
+    gc.collect()
+
+
+def run_basic_cleaning_stage_3() -> None:
+    start = time.time()
+    df_ai_grouped = cluster_by_media_type(
+        df=st.session_state.df_traditional,
+        similarity_threshold=0.935,
+        max_batch_size=1800,
+    )
+    df_ai_grouped = mark_prime_examples(df_ai_grouped)
+    df_ai_unique = build_unique_story_table(df_ai_grouped)
+
+    st.session_state.df_traditional = df_ai_grouped
+    st.session_state.df_ai_grouped = df_ai_grouped
+    st.session_state.df_ai_unique = df_ai_unique
+    duration = time.time() - start
+    st.session_state.basic_cleaning_elapsed = (st.session_state.basic_cleaning_elapsed or 0.0) + duration
+    st.session_state.basic_cleaning_part_durations[3] = duration
+    st.session_state.standard_step = True
+    st.session_state.basic_cleaning_stage = 3
+    gc.collect()
+
+
+def render_stage_progress() -> None:
+    current_stage = int(st.session_state.get("basic_cleaning_stage", 0))
+    part_durations = st.session_state.get("basic_cleaning_part_durations", {})
+    progress = min(max(current_stage / 3, 0.0), 1.0)
+    st.progress(progress)
+
+    if current_stage == 1:
+        duration = part_durations.get(1)
+        duration_text = f" in {duration:.1f} seconds" if duration is not None else ""
+        st.info(f"Part 1 of 3 complete{duration_text}. Click Continue to keep going.")
+    elif current_stage == 2:
+        duration = part_durations.get(2)
+        duration_text = f" in {duration:.1f} seconds" if duration is not None else ""
+        st.info(f"Part 2 of 3 complete{duration_text}. Click Continue to finish.")
+
+
+def should_use_staged_basic_cleaning() -> bool:
+    current_stage = int(st.session_state.get("basic_cleaning_stage", 0))
+    if current_stage > 0:
+        return True
+
+    source_df = st.session_state.get("df_traditional_pre_standard")
+    if not isinstance(source_df, pd.DataFrame):
+        return False
+    return len(source_df) >= STAGED_BASIC_CLEANING_THRESHOLD
 
 
 def render_preview_dataframe(df: pd.DataFrame, preview_rows: int = 1000) -> None:
@@ -223,7 +325,7 @@ if st.session_state.standard_step:
         st.metric("Reconciled Total", f"{reconciled_total:,}")
 
     if reconciliation_matches:
-        st.success("Row reconciliation passed: Original Rows match Traditional + Social + Deleted Duplicates.")
+        st.info("Row reconciliation passed: Original Rows match Traditional + Social + Deleted Duplicates.")
     else:
         delta = reconciled_total - original_rows
         delta_text = f"{delta:+,}"
@@ -257,56 +359,64 @@ if st.session_state.standard_step:
         unique_mentions=None,
     )
 else:
-    with st.form("basic_cleaning_form"):
-        st.subheader("Cleaning Options")
+    current_stage = int(st.session_state.get("basic_cleaning_stage", 0))
+    staged_mode = should_use_staged_basic_cleaning()
+    source_df = st.session_state.get("df_traditional_pre_standard")
+    source_rows = len(source_df) if isinstance(source_df, pd.DataFrame) else 0
 
-        merge_online = st.checkbox(
-            "Merge 'blogs' and 'press releases' into 'Online'",
-            value=True,
-            help="Combine ONLINE NEWS, PRESS RELEASE, and BLOGS into ONLINE.",
+    if staged_mode:
+        st.info(
+            f"Large dataset detected ({source_rows:,} rows). Basic Cleaning will run in 3 parts to improve stability."
         )
 
-        drop_dupes = st.checkbox(
-            "Drop duplicates",
-            value=True,
-            help="After media types are normalized, remove non-broadcast duplicates by URL and by Type + Outlet + Headline, run separate broadcast duplicate checks using outlet, media type, date, time proximity, and snippet similarity, and apply conservative exact-match social dedupe within each network.",
-        )
+    if current_stage == 0:
+        with st.form("basic_cleaning_form"):
+            st.subheader("Cleaning Options")
 
-        submitted = st.form_submit_button("Run Basic Cleaning", type="primary")
-
-    if submitted:
-        with st.spinner("Running cleaning, Effective Reach, and story grouping..."):
-            start_time = time.time()
-            source_df = st.session_state.df_traditional_pre_standard.copy()
-            cleaning_results = run_standard_cleaning(
-                df=source_df,
-                merge_online=merge_online,
-                drop_dupes=drop_dupes,
-                add_flags=True,
+            merge_online = st.checkbox(
+                "Merge 'blogs' and 'press releases' into 'Online'",
+                value=st.session_state.get("basic_cleaning_merge_online", True),
+                help="Combine ONLINE NEWS, PRESS RELEASE, and BLOGS into ONLINE.",
             )
-            df_traditional = apply_effective_reach_traditional(cleaning_results["df_traditional"])
-            df_social = apply_effective_reach_social(cleaning_results["df_social"])
-            df_dupes = cleaning_results["df_dupes"]
 
-            df_ai_grouped = cluster_by_media_type(
-                df=df_traditional.copy(),
-                similarity_threshold=0.935,
-                max_batch_size=1800,
+            drop_dupes = st.checkbox(
+                "Drop duplicates",
+                value=st.session_state.get("basic_cleaning_drop_dupes", True),
+                help="After media types are normalized, remove non-broadcast duplicates by URL and by Type + Outlet + Headline, run separate broadcast duplicate checks using outlet, media type, date, time proximity, and snippet similarity, and apply conservative exact-match social dedupe within each network.",
             )
-            df_ai_grouped = mark_prime_examples(df_ai_grouped)
-            df_ai_unique = build_unique_story_table(df_ai_grouped)
 
-            # Canonical grouped traditional dataset
-            df_traditional = df_ai_grouped.copy()
+            submitted = st.form_submit_button("Run Basic Cleaning", type="primary")
 
-            st.session_state.df_traditional = df_traditional
-            st.session_state.df_social = df_social
-            st.session_state.df_dupes = df_dupes
-            st.session_state.df_ai_grouped = df_ai_grouped
-            st.session_state.df_ai_unique = df_ai_unique
-            st.session_state.standard_step = True
-
-            elapsed = time.time() - start_time
-            st.session_state.basic_cleaning_elapsed = elapsed
-
+        if submitted:
+            st.session_state.basic_cleaning_merge_online = merge_online
+            st.session_state.basic_cleaning_drop_dupes = drop_dupes
+            st.session_state.basic_cleaning_started_at = time.time()
+            st.session_state.basic_cleaning_elapsed = 0.0
+            st.session_state.basic_cleaning_part_durations = {}
+            if staged_mode:
+                with st.spinner("Running part 1 of 3..."):
+                    run_basic_cleaning_stage_1()
+            else:
+                with st.spinner("Running basic cleaning..."):
+                    run_basic_cleaning_stage_1()
+                    run_basic_cleaning_stage_2()
+                    run_basic_cleaning_stage_3()
             st.rerun()
+    elif staged_mode:
+        render_stage_progress()
+
+        action_cols = st.columns([0.34, 0.2, 0.46], gap="small")
+        with action_cols[0]:
+            continue_label = "Continue" if current_stage == 1 else "Finish Basic Cleaning"
+            if st.button(continue_label, type="primary", use_container_width=True):
+                spinner_text = "Running part 2 of 3..." if current_stage == 1 else "Running part 3 of 3..."
+                with st.spinner(spinner_text):
+                    if current_stage == 1:
+                        run_basic_cleaning_stage_2()
+                    elif current_stage == 2:
+                        run_basic_cleaning_stage_3()
+                st.rerun()
+        with action_cols[1]:
+            if st.button("Start Over", use_container_width=True):
+                reset_basic_cleaning()
+                st.rerun()
