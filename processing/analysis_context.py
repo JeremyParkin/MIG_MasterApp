@@ -205,22 +205,34 @@ def build_coverage_flag_removal_preview(
         }
 
     mentions = pd.to_numeric(removed.get("Mentions", pd.Series(index=removed.index, data=0)), errors="coerce").fillna(0)
+    impressions = pd.to_numeric(removed.get("Impressions", pd.Series(index=removed.index, data=0)), errors="coerce").fillna(0)
+    effective_reach = pd.to_numeric(removed.get("Effective Reach", pd.Series(index=removed.index, data=0)), errors="coerce").fillna(0)
     flag_counts: dict[str, dict[str, int]] = {}
     for _, row in removed.iterrows():
         row_mentions = int(pd.to_numeric(pd.Series([row.get("Mentions", 0)]), errors="coerce").fillna(0).iloc[0])
+        row_impressions = int(pd.to_numeric(pd.Series([row.get("Impressions", 0)]), errors="coerce").fillna(0).iloc[0])
+        row_effective_reach = int(pd.to_numeric(pd.Series([row.get("Effective Reach", 0)]), errors="coerce").fillna(0).iloc[0])
         for flag in row["_matched_flags"]:
-            bucket = flag_counts.setdefault(flag, {"Rows": 0, "Mentions": 0})
+            bucket = flag_counts.setdefault(flag, {"Rows": 0, "Mentions": 0, "Impressions": 0, "Effective Reach": 0})
             bucket["Rows"] += 1
             bucket["Mentions"] += row_mentions
+            bucket["Impressions"] += row_impressions
+            bucket["Effective Reach"] += row_effective_reach
 
     counts_df = (
         pd.DataFrame(
             [
-                {"Coverage Flag": flag, "Rows": values["Rows"], "Mentions": values["Mentions"]}
+                {
+                    "Coverage Flag": flag,
+                    "Rows": values["Rows"],
+                    "Mentions": values["Mentions"],
+                    "Impressions": values["Impressions"],
+                    "Effective Reach": values["Effective Reach"],
+                }
                 for flag, values in flag_counts.items()
             ]
         )
-        .sort_values(["Rows", "Mentions", "Coverage Flag"], ascending=[False, False, True])
+        .sort_values(["Mentions", "Impressions", "Coverage Flag"], ascending=[False, False, True])
         .reset_index(drop=True)
     )
 
@@ -387,6 +399,9 @@ def build_analysis_context_discovery_prompt(
         "- Suggest practical additional items for alternate names / aliases, key spokespeople, and products / sub-brands / initiatives.\n"
         "- Be selective rather than exhaustive.\n"
         "- Aim for stability and high confidence rather than variety.\n"
+        "- Use web search when needed to verify current, time-sensitive facts such as officeholders, executives, team principals, current mayors, or other leadership/spokespeople.\n"
+        "- Prefer current official sources for people and leadership facts, such as official government pages, company newsroom/about/investor pages, official team sites, or similarly authoritative first-party sources.\n"
+        "- If a current spokesperson or officeholder cannot be verified confidently from current sources, omit them rather than guessing.\n"
         "- Prefer public-facing names that are likely to appear in media coverage.\n"
         "- Avoid duplicates of existing items.\n"
         "- If a category is weak or uncertain, keep it sparse and say so in the assessment.\n"
@@ -412,6 +427,7 @@ def build_analysis_context_discovery_prompt(
         '- Do not put the same item into multiple categories unless there is a truly compelling reason, which is rare here.\n\n'
         "When uncertain:\n"
         "- prefer fewer, higher-confidence items\n"
+        "- for current people, verified and current beats plausible but stale\n"
         "- explain uncertainty in the assessment rather than padding the lists\n"
     )
 
@@ -483,6 +499,12 @@ def generate_analysis_context_suggestions(
     response = client.responses.create(
         model=model,
         temperature=0,
+        tools=[
+            {
+                "type": "web_search",
+            }
+        ],
+        tool_choice="auto",
         input=[
             {
                 "role": "system",
@@ -493,6 +515,7 @@ def generate_analysis_context_suggestions(
             },
             {"role": "user", "content": prompt},
         ],
+        include=["web_search_call.action.sources"],
         text={
             "verbosity": "low",
             "format": {
