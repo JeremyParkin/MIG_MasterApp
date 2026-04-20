@@ -865,12 +865,11 @@ def render_outlets_page() -> None:
 
     def render_selection_section() -> None:
         st.session_state.outlets_section = "Selection"
-        previous_rank_by = str(st.session_state.get("outlets_rank_by", "Mentions") or "Mentions")
-        st.session_state.outlets_rank_by = st.radio(
-            "Rank outlets by",
+        rank_by = st.radio(
+            "Ranking metric",
             ["Mentions", "Impressions", "Effective Reach"],
             horizontal=True,
-            key="outlets_rank_by_selection",
+            key="outlets_rank_by",
         )
         ranked = get_ranked_outlet_metrics()
         valid_outlets = ranked["Outlet"].tolist()
@@ -882,9 +881,7 @@ def render_outlets_page() -> None:
         pending_active_outlet = str(st.session_state.pop("outlet_insights_pending_active_outlet", "") or "")
         if pending_active_outlet:
             active_outlet = pending_active_outlet
-        if st.session_state.outlets_rank_by != previous_rank_by:
-            active_outlet = valid_outlets[0]
-        elif active_outlet not in valid_outlets:
+        if active_outlet not in valid_outlets:
             active_outlet = valid_outlets[0]
 
         st.session_state.outlet_insights_active_outlet = active_outlet
@@ -1034,8 +1031,6 @@ def render_outlets_page() -> None:
             st.divider()
             st.write("**Current shortlist**")
             shortlist_df = ranked[ranked["Outlet"].isin(selected_outlets)].copy()
-            shortlist_df["SortOrder"] = shortlist_df["Outlet"].map({name: idx for idx, name in enumerate(selected_outlets)})
-            shortlist_df = shortlist_df.sort_values("SortOrder").drop(columns=["SortOrder"])
             shortlist_df["Coverage Themes"] = shortlist_df["Outlet"].map(
                 lambda outlet: st.session_state.get("outlet_insights_summaries", {}).get(outlet, "")
             )
@@ -1043,10 +1038,8 @@ def render_outlets_page() -> None:
                 "Outlet",
                 "Top_Types",
                 "Mention_Total",
-                "Unique_Mentions",
                 "Impressions",
                 "Effective_Reach",
-                "Coverage Themes",
             ]].copy()
             shortlist_view["Delete"] = False
             shortlist_editor = st.data_editor(
@@ -1057,10 +1050,8 @@ def render_outlets_page() -> None:
                 column_config={
                     "Top_Types": st.column_config.Column("Media Types", width="medium"),
                     "Mention_Total": st.column_config.NumberColumn("Mentions", width="small", format="%d"),
-                    "Unique_Mentions": st.column_config.NumberColumn("Unique Mentions", width="small", format="%d"),
                     "Impressions": st.column_config.NumberColumn("Impressions", width="small", format="%,d"),
                     "Effective_Reach": st.column_config.NumberColumn("Effective Reach", width="small", format="%,d"),
-                    "Coverage Themes": st.column_config.Column("Coverage Themes", width="large"),
                     "Delete": st.column_config.CheckboxColumn("Delete", width="small"),
                 },
             )
@@ -1083,19 +1074,17 @@ def render_outlets_page() -> None:
             st.info("Save outlets in Selection before reviewing insights.")
             return
 
-        ranked = get_ranked_outlet_metrics()
-        shortlist_df = ranked[ranked["Outlet"].isin(selected_outlets)].copy()
-        shortlist_df["SortOrder"] = shortlist_df["Outlet"].map({name: idx for idx, name in enumerate(selected_outlets)})
-        shortlist_df = shortlist_df.sort_values("SortOrder").drop(columns=["SortOrder"])
-        shortlist_df["Coverage Themes"] = shortlist_df["Outlet"].map(
-            lambda outlet: st.session_state.get("outlet_insights_summaries", {}).get(outlet, "")
-        )
-
         metric_label = st.radio(
             "Ranking metric",
             ["Mentions", "Impressions", "Effective Reach"],
             horizontal=True,
-            key="outlets_insights_chart_metric",
+            key="outlets_rank_by",
+        )
+
+        ranked = get_ranked_outlet_metrics()
+        shortlist_df = ranked[ranked["Outlet"].isin(selected_outlets)].copy()
+        shortlist_df["Coverage Themes"] = shortlist_df["Outlet"].map(
+            lambda outlet: st.session_state.get("outlet_insights_summaries", {}).get(outlet, "")
         )
 
         chart_table = shortlist_df[[

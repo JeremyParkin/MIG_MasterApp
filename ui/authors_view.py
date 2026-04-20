@@ -97,12 +97,19 @@ def render_authors_page() -> None:
     st.session_state.setdefault("author_selection_editor_version", 0)
     st.session_state.setdefault("author_outlet_state_dirty", True)
     st.session_state.setdefault("author_outlet_state_last_sort", None)
+    st.session_state.setdefault(
+        "authors_rank_by",
+        str(st.session_state.get("top_auths_by", "Mentions") or "Mentions"),
+    )
 
     if st.session_state.get("pickle_load", False) is True and len(st.session_state.get("auth_outlet_table", [])) > 0:
         st.session_state.auth_outlet_table = st.session_state.auth_outlet_table.copy()
         st.session_state.auth_outlet_table["Outlet"] = st.session_state.auth_outlet_table["Outlet"].replace([None], "").fillna("")
 
     st.session_state.df_traditional = prepare_traditional_for_author_outlets(st.session_state.df_traditional)
+
+    def get_author_rank_metric() -> str:
+        return str(st.session_state.get("authors_rank_by", "Mentions") or "Mentions")
 
     def get_author_qualitative_df() -> pd.DataFrame:
         excluded_flags = get_qualitative_coverage_flag_exclusions(st.session_state)
@@ -112,17 +119,17 @@ def render_authors_page() -> None:
         existing = st.session_state.auth_outlet_table.copy() if len(st.session_state.get("auth_outlet_table", [])) > 0 else None
         st.session_state.auth_outlet_table = build_auth_outlet_table(
             get_author_qualitative_df(),
-            st.session_state.get("top_auths_by", "Mentions"),
+            get_author_rank_metric(),
             existing_assignments=existing,
         )
         st.session_state.author_outlet_state_dirty = False
-        st.session_state.author_outlet_state_last_sort = st.session_state.get("top_auths_by", "Mentions")
+        st.session_state.author_outlet_state_last_sort = get_author_rank_metric()
 
     def ensure_author_outlet_state() -> None:
         needs_rebuild = (
             st.session_state.get("author_outlet_state_dirty", True)
             or len(st.session_state.get("auth_outlet_table", [])) == 0
-            or st.session_state.get("author_outlet_state_last_sort") != st.session_state.get("top_auths_by", "Mentions")
+            or st.session_state.get("author_outlet_state_last_sort") != get_author_rank_metric()
         )
         if needs_rebuild:
             rebuild_author_outlet_state()
@@ -505,10 +512,10 @@ def render_authors_page() -> None:
 
         control_col1, control_col2 = st.columns([1, 1], gap="medium")
         with control_col1:
-            st.session_state.top_auths_by = st.selectbox(
-                "Top Authors by:",
+            st.selectbox(
+                "Ranking metric",
                 ["Mentions", "Impressions", "Effective Reach"],
-                key="authors_outlets_rank_by",
+                key="authors_rank_by",
                 on_change=lambda: reset_outlet_skips(st.session_state),
             )
         with control_col2:
@@ -809,9 +816,10 @@ def render_authors_page() -> None:
         with bottom_col1:
             st.subheader("Top Authors")
             table_df = st.session_state.auth_outlet_table[["Author", "Outlet", "Mentions", "Impressions", "Effective Reach"]].copy().fillna("")
-            if st.session_state.top_auths_by == "Mentions":
+            rank_metric = get_author_rank_metric()
+            if rank_metric == "Mentions":
                 table_df = table_df.sort_values(["Mentions", "Impressions", "Effective Reach"], ascending=False).head(15)
-            elif st.session_state.top_auths_by == "Impressions":
+            elif rank_metric == "Impressions":
                 table_df = table_df.sort_values(["Impressions", "Mentions", "Effective Reach"], ascending=False).head(15)
             else:
                 table_df = table_df.sort_values(["Effective Reach", "Impressions", "Mentions"], ascending=False).head(15)
@@ -829,15 +837,15 @@ def render_authors_page() -> None:
         st.session_state.authors_section = "Selection" if mode == "selection" else "Insights"
         ensure_author_outlet_state()
         if mode == "selection":
-            previous_rank_by = str(st.session_state.get("top_auths_by", "Mentions") or "Mentions")
+            previous_rank_by = get_author_rank_metric()
             current_assigned_only = bool(st.session_state.get("author_selection_assigned_only", False))
             control_col1, control_col2 = st.columns([1.3, 1.2], gap="large")
             with control_col1:
-                st.session_state.top_auths_by = st.radio(
-                    "Rank authors by",
+                st.radio(
+                    "Ranking metric",
                     ["Mentions", "Impressions", "Effective Reach"],
                     horizontal=True,
-                    key="authors_selection_rank_by",
+                    key="authors_rank_by",
                 )
             with control_col2:
                 show_authors_mode = st.radio(
@@ -850,7 +858,7 @@ def render_authors_page() -> None:
                 )
                 st.session_state.author_selection_assigned_only = show_authors_mode == "With outlet"
         else:
-            previous_rank_by = str(st.session_state.get("top_auths_by", "Mentions") or "Mentions")
+            previous_rank_by = get_author_rank_metric()
         author_metrics, author_story_rows = build_author_metrics(
             get_author_qualitative_df(),
             auth_outlet_table=st.session_state.auth_outlet_table,
@@ -869,7 +877,7 @@ def render_authors_page() -> None:
             "Impressions": ["Impressions", "Mention_Total", "Unique_Stories"],
             "Effective Reach": ["Effective_Reach", "Impressions", "Mention_Total"],
         }
-        sort_cols = rank_map.get(st.session_state.get("top_auths_by", "Mentions"), rank_map["Mentions"])
+        sort_cols = rank_map.get(get_author_rank_metric(), rank_map["Mentions"])
         ranked_df = author_metrics.copy().sort_values(sort_cols, ascending=False).reset_index(drop=True)
         selection_ranked_df = ranked_df.copy()
         if mode == "selection" and st.session_state.get("author_selection_assigned_only", False):
@@ -888,7 +896,7 @@ def render_authors_page() -> None:
         pending_active_author = str(st.session_state.pop("authors_insights_pending_active_author", "") or "")
         if pending_active_author:
             active_author = pending_active_author
-        if st.session_state.get("top_auths_by", "Mentions") != previous_rank_by:
+        if get_author_rank_metric() != previous_rank_by:
             active_author = valid_authors[0]
         elif active_author not in valid_authors:
             active_author = valid_authors[0]
@@ -948,8 +956,6 @@ def render_authors_page() -> None:
 
         selected_authors = st.session_state.get("author_insights_selected_authors", [])
         shortlist_df = ranked_df[ranked_df["Author"].isin(selected_authors)].copy()
-        shortlist_df["SortOrder"] = shortlist_df["Author"].map({name: idx for idx, name in enumerate(selected_authors)})
-        shortlist_df = shortlist_df.sort_values("SortOrder").drop(columns=["SortOrder"])
 
         summary_store = st.session_state.get("author_insights_summaries", {})
         shortlist_df["Good Outlet Rate"] = (
@@ -965,8 +971,7 @@ def render_authors_page() -> None:
             "Assigned Outlet",
             "Mention_Total",
             "Impressions",
-            "Good Outlet Rate",
-            "Coverage Themes",
+            "Effective_Reach",
         ]].copy()
         shortlist_view["Delete"] = False
         shortlist_output_df = shortlist_df[[
@@ -1103,8 +1108,7 @@ def render_authors_page() -> None:
                 column_config={
                     "Mention_Total": st.column_config.NumberColumn("Mentions", width="small", format="%d"),
                     "Impressions": st.column_config.NumberColumn("Impressions", width="small", format="%,d"),
-                    "Good Outlet Rate": st.column_config.NumberColumn("Good Outlet Rate", width="small", format="%.0f%%"),
-                    "Coverage Themes": st.column_config.Column("Coverage Themes", width="large"),
+                    "Effective_Reach": st.column_config.NumberColumn("Effective Reach", width="small", format="%,d"),
                     "Delete": st.column_config.CheckboxColumn("Delete", width="small"),
                 },
             )
@@ -1243,7 +1247,7 @@ def render_authors_page() -> None:
                         next_index = min(inspect_index + 1, len(valid_authors) - 1)
                         st.session_state["authors_insights_pending_active_author"] = valid_authors[next_index]
                         st.rerun()
-                st.caption(f"{inspect_index + 1} of {len(valid_authors)} by {st.session_state.get('top_auths_by', 'Mentions')}")
+                st.caption(f"{inspect_index + 1} of {len(valid_authors)} by {get_author_rank_metric()}")
                 inspect_row = selection_ranked_df.loc[selection_ranked_df["Author"] == inspect_author].iloc[0]
                 headline_table = build_author_headline_table(author_story_rows, inspect_author, limit=5)
                 st.markdown(
@@ -1273,7 +1277,7 @@ def render_authors_page() -> None:
                 "Ranking metric",
                 ["Mentions", "Impressions", "Effective Reach"],
                 horizontal=True,
-                key="authors_insights_chart_metric",
+                key="authors_rank_by",
             )
 
             chart_table = shortlist_output_df[[

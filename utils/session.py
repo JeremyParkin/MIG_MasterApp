@@ -7,6 +7,7 @@ import streamlit as st
 
 DEFAULT_STRING_VARS = {
     "top_auths_by": "Mentions",
+    "authors_rank_by": "Mentions",
     "export_name": "",
     "client_name": "",
     "auth_skip_counter": 0,

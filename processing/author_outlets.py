@@ -27,8 +27,8 @@ def init_author_outlets_state(session_state) -> None:
     if "auth_outlet_skipped" not in session_state:
         session_state.auth_outlet_skipped = 0
 
-    if "top_auths_by" not in session_state:
-        session_state.top_auths_by = "Mentions"
+    if "authors_rank_by" not in session_state:
+        session_state.authors_rank_by = session_state.get("top_auths_by", "Mentions")
 
 
 def undo_last_outlet_assignment(session_state) -> None:
@@ -238,7 +238,7 @@ def apply_author_name_fix(
 
     session_state.auth_outlet_table = build_auth_outlet_table(
         session_state.df_traditional.copy(),
-        session_state.top_auths_by,
+        session_state.get("authors_rank_by", session_state.get("top_auths_by", "Mentions")),
         existing_assignments=existing_assignments,
     )
 
