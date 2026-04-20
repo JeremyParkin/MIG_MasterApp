@@ -16,6 +16,7 @@ from processing.analysis_context import (
     apply_session_coverage_flag_policy,
     build_analysis_context_text,
     build_analysis_context_caption,
+    format_qualitative_exclusion_caption,
     get_qualitative_coverage_flag_exclusions,
     get_analysis_context_payload,
     init_analysis_context_state,
@@ -316,10 +317,7 @@ if st.session_state.sentiment_section == "Setup":
     if sample_mode != "reuse_other_sample":
         working_source_rows = apply_session_coverage_flag_policy(source_rows, st.session_state, excluded_flags)
         if excluded_flags:
-            st.caption(
-                "Using Analysis Context coverage rules for qualitative workflows: "
-                + ", ".join(f"`{flag}`" for flag in excluded_flags)
-            )
+            st.caption(format_qualitative_exclusion_caption(excluded_flags))
 
     population_size = len(working_source_rows)
     recommended_sample = calculate_representative_sample_size(population_size) if population_size > 0 else 0

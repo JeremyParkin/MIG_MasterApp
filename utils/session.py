@@ -29,7 +29,6 @@ DEFAULT_DF_KEYS = [
     "selected_rows",
     "top_stories",
     "auth_outlet_todo",
-    "df_traditional_pre_standard",
 ]
 
 DEFAULT_STEP_VARS = [

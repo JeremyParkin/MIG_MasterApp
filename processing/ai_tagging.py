@@ -264,14 +264,14 @@ def apply_tagging_result_to_unique_df(
     return df
 
 
-def cascade_tags_to_grouped_rows(
-    df_tagging_grouped_rows: pd.DataFrame,
+def cascade_tags_to_rows(
+    df_tagging_rows: pd.DataFrame,
     df_tagging_unique: pd.DataFrame,
 ) -> pd.DataFrame:
-    if df_tagging_grouped_rows is None or df_tagging_grouped_rows.empty:
-        return df_tagging_grouped_rows
+    if df_tagging_rows is None or df_tagging_rows.empty:
+        return df_tagging_rows
 
-    grouped = df_tagging_grouped_rows.copy()
+    grouped = df_tagging_rows.copy()
     unique = df_tagging_unique.copy()
 
     tag_cols_to_copy = [col for col in unique.columns if col.startswith("AI Tag")]
@@ -443,10 +443,10 @@ def generate_tag_observations(
 
 def reset_ai_tagging_results(
     df_tagging_unique: pd.DataFrame,
-    df_tagging_grouped_rows: pd.DataFrame,
+    df_tagging_rows: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     unique = df_tagging_unique.copy()
-    grouped = df_tagging_grouped_rows.copy()
+    grouped = df_tagging_rows.copy()
 
     if "Tag_Processed" in unique.columns:
         unique["Tag_Processed"] = False

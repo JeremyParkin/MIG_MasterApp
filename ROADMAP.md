@@ -129,93 +129,57 @@ This file is a lightweight parking lot for product and workflow ideas that are w
   - prefer acceptance / editing over auto-apply
   - show the AI reasoning when it helps build trust
 
-### Global Coverage-Flag Handling
-- Consider a shared settings layer for how coverage flags should be treated across the app.
-- Current pain point:
-  - some workflows allow filtering by coverage flags
-  - some do not
-  - repeatedly re-selecting the same exclusions can become noisy for analysts
-- Possible future directions:
-  - global rule to fully exclude selected flags from the working dataset
-  - softer rule to keep flagged rows in the data but exclude them from:
-    - AI analysis
-    - example selection
-    - insight generation
-    - suggested shortlists
-- Possible later refinement:
-  - add an `Advanced controls` expander so analysts can override the default junk-flag bundle item by item for special cases
-- More urgent refinement for the destructive path:
-  - let analysts preview exactly what would be removed before applying full dataset exclusion
-  - likely include a review table and, later, the ability to uncheck certain items from removal in edge cases
-- Important caution:
-  - do not silently remove rows without making the rule visible and reversible
-  - preserve enough transparency that analysts still understand what was excluded and why
+### Top Stories Recommendation Engine
+- Consider a dedicated recommendation layer for `Top Stories` that ranks the strongest candidate stories before analyst review.
+- Goal:
+  - surface stories that are both highly visible and strongly focused on the client, instead of relying on raw mentions or impressions alone
+- Suggested signal mix:
+  - visibility signals:
+    - mentions
+    - impressions
+    - effective reach
+    - evidence of syndication / broad pickup
+  - relevance signals:
+    - brand or client mention in headline
+    - brand or client mention early in the snippet / text
+    - overall prominence of the client within the story
+  - qualitative signal:
+    - AI second opinion on whether the story is truly about the client and how central the client is to the narrative
+- Possible first-pass workflow:
+  - start from a candidate pool such as:
+    - top 20 stories by mentions
+    - top 20 stories by impressions
+    - top 20 stories by effective reach
+  - combine and deduplicate that pool
+  - score stories using a weighted blend of visibility + relevance signals
+  - let AI provide a bounded second-pass ranking or tie-break on story focus
+  - present the analyst with a recommended shortlist rather than just a raw metric sort
+- Important guardrails:
+  - keep the scoring transparent enough that analysts can understand why a story ranked highly
+  - avoid over-weighting syndication alone when the story is only weakly about the client
+  - keep analyst override easy
 
-### Author / Outlet Reconciliation
-- Consider a future reconciliation layer between:
-  - author-assigned outlet labels
-  - outlet reporting-name rollups
-- Open question:
-  - should author outlet labels remain independent analyst-facing labels
-  - or should they optionally align to the outlet reporting-name layer for consistency across workflows and exports
-- Important caution:
-  - do not tightly couple the Author workflow to Outlet cleanup too early unless the analyst benefit is clear
-- Safer future directions may include:
-  - a derived mapped-outlet field for authors
-  - or a lightweight later-step reconciliation / review pass rather than forcing a workflow reordering
-
-### Geography Insights Module
-- Consider a future geography insights workflow or module that helps analysts understand where coverage is concentrated by:
-  - country
-  - province / state
-  - city / market
-  - media type / outlet mix by geography
-- This depends on stronger outlet geography metadata upstream.
-- A `Pubs Check` workflow that fixes incorrect outlet region metadata would likely be an important prerequisite.
-- Potential future outputs:
-  - market-level coverage tables
-  - geography distribution charts
-  - narrative observations about where visibility is strongest or weakest
-  - region-aware filtering for later insight workflows
-
-### Regions Module
-- Consider a dedicated `Regions` workflow for turning reviewed outlet geography into reporting-ready regional analysis.
-- This should go beyond raw tables and support the kinds of outputs often used in client decks:
-  - top cities
-  - top states / provinces / regions
-  - regional distribution maps
-  - concise narrative observations about what is driving the geographic mix
-
-- Likely dependencies:
-  - cleaned coverage rows from Basic Cleaning
-  - improved outlet geography from a future `Pubs Check` workflow
-  - reliable city / state / province / country normalization
-  - optional market reference tables for DMA / metro / region rollups
-
+### Client Relevance Review
+- Consider a lightweight early-stage QA module that checks whether coverage is actually about the client, rather than just mentioning the client in passing.
+- Core use cases:
+  - employment-history mentions
+  - event listings
+  - directory-style pages
+  - passing references in broader roundups
+  - pages that look more like ads, listings, or weakly related postings than real coverage about the client
 - Suggested workflow shape:
-  - prepare / validate regional fields
-  - review top cities
-  - review top states / provinces / regions
-  - generate regional observations
-  - export report-ready tables / copy
-
-- Key analytical views:
-  - `Top Cities`
-    - ranked by mentions by default
-    - optional toggles for impressions / effective reach
-    - likely should distinguish between:
-      - local-market reporting
-      - syndicated pickup
-      - national outlets datelined to a city
-  - `Top States / Provinces / Regions`
-    - ranked view plus map
-    - optional rollups for:
-      - U.S. states
-      - Canadian provinces
-      - broader custom regions if needed
-  - `Coverage Distribution Map`
-    - choropleth or similar regional fill map
-    - useful for quickly spotting where coverage is concentrated
+  - build a suspect-relevance pool using simple heuristics
+  - sample one item from the largest story groups
+  - add a random sample of unique stories from the suspect pool
+  - let the analyst confirm or uncheck AI-flagged `Not relevant` items
+  - surface patterns that may warrant broader follow-up searching in the dataset
+- Good first-pass heuristic:
+  - deprioritize stories where the client or brand is clearly present in the headline or first 125 words of the snippet
+  - prioritize stories where the client appears only later, only in metadata-like contexts, or in patterns associated with weak relevance
+- Important guardrails:
+  - this should stay sampled and lightweight, not become a row-by-row moderation queue
+  - AI should surface likely non-relevant items, but the analyst should be able to check or uncheck them before any broader exclusion logic is applied
+  - findings from this review may justify targeted searching for similar items elsewhere in the coverage
 
 ### Downloadable HTML Client Report
 - Consider a late-stage module that assembles the app's cleaned data, charts, and AI-generated insights into a polished HTML report.
@@ -232,31 +196,5 @@ This file is a lightweight parking lot for product and workflow ideas that are w
 - Important caution:
   - the first version should prioritize clean export and stable layout over highly custom interactivity
   - analysts still need control over what sections are included before generating the final HTML
-
-- Narrative outputs / observations:
-  - generate concise text explaining:
-    - where coverage is most concentrated
-    - whether leading regions are driven by one dominant storyline or a broader mix
-    - where visibility seems local vs syndicated vs nationally amplified
-    - whether a region appears because of headquarters/home-market relevance, major events, or broad pickup
-  - possible structures:
-    - `Overall regional observation`
-    - `Top cities observation`
-    - `Top states / provinces observation`
-
-- Important methodological choices to think through:
-  - whether geography should be attributed from:
-    - outlet location
-    - dateline / story location
-    - both, for different kinds of analysis
-  - whether syndicated stories should count fully in every local outlet market or be flagged separately
-  - how to handle national outlets with weak or missing regional metadata
-  - whether maps and rankings should default to mentions or allow quick metric switching
-
-- Useful downstream integrations:
-  - include regional tables and observations in Download
-  - optionally feed regional context into:
-    - author insights
-    - outlet insights
     - top stories
   - allow region-based filtering for later workflows

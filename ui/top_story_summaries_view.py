@@ -31,8 +31,7 @@ def render_top_story_summaries() -> None:
     
     warnings.filterwarnings("ignore")
     top_stories_module = importlib.reload(top_stories_module)
-    refresh_saved_story_metrics = top_stories_module.refresh_saved_story_metrics
-    
+
     st.subheader("Step 3: Top Story Insights")
     st.caption("Generate the saved top-story outputs and review the overall observations and report copy.")
     
@@ -57,13 +56,6 @@ def render_top_story_summaries() -> None:
             f"Token usage this batch: input={batch['in_tok']:,} • output={batch['out_tok']:,}"
         )
     
-    source_df = top_stories_module.normalize_top_stories_df(st.session_state.df_ai_grouped.copy())
-    if not st.session_state.added_df.empty:
-        st.session_state.added_df = refresh_saved_story_metrics(
-            st.session_state.added_df,
-            source_df,
-        )
-
     df = normalize_summary_df(st.session_state.added_df.copy())
     df = df.sort_values(by="Date", ascending=True).reset_index(drop=True)
     

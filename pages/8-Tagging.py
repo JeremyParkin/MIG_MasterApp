@@ -13,6 +13,7 @@ from ui.insight_blocks import build_linked_example_blocks_html
 
 from processing.analysis_context import (
     apply_session_coverage_flag_policy,
+    format_qualitative_exclusion_caption,
     get_qualitative_coverage_flag_exclusions,
 )
 from processing.tagging_config import (
@@ -31,7 +32,7 @@ from processing.ai_tagging import (
     get_remaining_tagging_rows,
     analyze_story_worker,
     apply_tagging_result_to_unique_df,
-    cascade_tags_to_grouped_rows,
+    cascade_tags_to_rows,
     reset_ai_tagging_results,
     generate_tag_observations,
     DEFAULT_TAGGING_BATCH_SIZE,
@@ -253,10 +254,7 @@ if st.session_state.tagging_section == "Setup":
     if sample_mode != "reuse_other_sample":
         working_source_rows = apply_session_coverage_flag_policy(source_rows, st.session_state, excluded_flags)
         if excluded_flags:
-            st.caption(
-                "Using Analysis Context coverage rules for qualitative workflows: "
-                + ", ".join(f"`{flag}`" for flag in excluded_flags)
-            )
+            st.caption(format_qualitative_exclusion_caption(excluded_flags))
 
     population_size = len(working_source_rows)
     recommended_sample = calculate_representative_sample_size(population_size) if population_size > 0 else 0
@@ -349,7 +347,6 @@ if st.session_state.tagging_section == "Setup":
         )
 
         st.session_state.df_tagging_rows = results["df_tagging_rows"]
-        st.session_state.df_tagging_grouped_rows = results["df_tagging_grouped_rows"]
         st.session_state.df_tagging_unique = results["df_tagging_unique"]
         st.session_state.tagging_sample_mode = sample_mode
         st.session_state.tagging_sample_size = results["sample_size_used"]
@@ -439,13 +436,12 @@ if st.session_state.tagging_section == "Run":
     reset_results_clicked = st.button("Reset Processed Rows")
 
     if reset_results_clicked:
-        unique, grouped = reset_ai_tagging_results(
+        unique, rows = reset_ai_tagging_results(
             st.session_state.df_tagging_unique,
-            st.session_state.df_tagging_grouped_rows,
+            st.session_state.df_tagging_rows,
         )
         st.session_state.df_tagging_unique = unique
-        st.session_state.df_tagging_grouped_rows = grouped
-        st.session_state.df_tagging_rows = st.session_state.df_tagging_grouped_rows.copy()
+        st.session_state.df_tagging_rows = rows
         st.session_state.tagging_observation_output = None
         st.success("Reset AI tagging results.")
         st.rerun()
@@ -508,12 +504,10 @@ if st.session_state.tagging_section == "Run":
 
                 progress_bar.progress(completed / max(1, total))
 
-        st.session_state.df_tagging_grouped_rows = cascade_tags_to_grouped_rows(
-            st.session_state.df_tagging_grouped_rows,
+        st.session_state.df_tagging_rows = cascade_tags_to_rows(
+            st.session_state.df_tagging_rows,
             st.session_state.df_tagging_unique,
         )
-
-        st.session_state.df_tagging_rows = st.session_state.df_tagging_grouped_rows.copy()
         st.session_state.tagging_observation_output = None
 
         apply_usage_to_session(total_in, total_out, model)

@@ -62,7 +62,6 @@ if not st.session_state.upload_step:
             st.session_state.df_traditional = normalize_uploaded_dataframe(
                 st.session_state.df_untouched
             )
-            st.session_state.df_traditional_pre_standard = st.session_state.df_traditional.copy()
 
             if "AVE" in st.session_state.df_traditional.columns:
                 st.session_state.ave_col = "AVE"
@@ -100,10 +99,7 @@ if st.session_state.upload_step:
 
     st.header("Initial Stats")
 
-    if not st.session_state.df_traditional_pre_standard.empty:
-        df_display = st.session_state.df_traditional_pre_standard.copy()
-    else:
-        df_display = st.session_state.df_traditional.copy()
+    df_display = st.session_state.df_traditional.copy()
 
     col1, col2, col3 = st.columns(3, gap="medium")
 

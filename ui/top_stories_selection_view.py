@@ -11,6 +11,8 @@ def render_top_stories_selection() -> None:
 
     from processing.analysis_context import (
         apply_session_coverage_flag_policy,
+        format_qualitative_exclusion_caption,
+        get_analysis_context_payload,
         get_qualitative_coverage_flag_exclusions,
     )
     import processing.top_stories as top_stories_module
@@ -21,11 +23,12 @@ def render_top_stories_selection() -> None:
     normalize_top_stories_df = top_stories_module.normalize_top_stories_df
     apply_filters = top_stories_module.apply_filters
     build_grouped_story_candidates = top_stories_module.build_grouped_story_candidates
+    dedupe_saved_top_stories = top_stories_module.dedupe_saved_top_stories
+    recommend_top_story_group_ids = top_stories_module.recommend_top_story_group_ids
     save_selected_rows = top_stories_module.save_selected_rows
     remove_saved_candidates_from_display = top_stories_module.remove_saved_candidates_from_display
     reset_generated_candidates = top_stories_module.reset_generated_candidates
-    refresh_saved_story_metrics = top_stories_module.refresh_saved_story_metrics
-    refresh_generated_story_metrics = top_stories_module.refresh_generated_story_metrics
+    from processing.standard_cleaning import SOCIAL_TYPES
     
     title_col, chart_col = st.columns([2, 3], gap="medium")
     
@@ -53,19 +56,13 @@ def render_top_stories_selection() -> None:
     st.session_state.setdefault("top_stories_editor_version", 0)
     
     if not st.session_state.added_df.empty:
-        st.session_state.added_df = normalize_top_stories_df(st.session_state.added_df)
+        st.session_state.added_df = dedupe_saved_top_stories(
+            normalize_top_stories_df(st.session_state.added_df)
+        )
     
     source_df = normalize_top_stories_df(st.session_state.df_ai_grouped.copy())
-    if st.session_state.top_stories_generated and not st.session_state.df_grouped.empty:
-        st.session_state.df_grouped = refresh_generated_story_metrics(
-            st.session_state.df_grouped,
-            source_df,
-        )
-    if not st.session_state.added_df.empty:
-        st.session_state.added_df = refresh_saved_story_metrics(
-            st.session_state.added_df,
-            source_df,
-        )
+    if "Type" in source_df.columns:
+        source_df = source_df[~source_df["Type"].fillna("").astype(str).str.upper().isin(SOCIAL_TYPES)].copy()
     
     with chart_col:
         trend_df = (
@@ -200,10 +197,7 @@ def render_top_stories_selection() -> None:
         with filter_col3:
             exclude_coverage_flags = []
             if qualitative_flags:
-                st.caption(
-                    "Using Analysis Context coverage rules: "
-                    + ", ".join(f"`{flag}`" for flag in qualitative_flags)
-                )
+                st.caption(format_qualitative_exclusion_caption(qualitative_flags))
     
         with st.expander("Advanced filters", expanded=False):
             adv1_col1, adv1_col2 = st.columns([2, 5], gap="small")
@@ -357,7 +351,19 @@ def render_top_stories_selection() -> None:
                 hide_index=True,
             )
 
-            action1, action2 = st.columns([1, 2], gap="small")
+            analysis_context_payload = get_analysis_context_payload(st.session_state)
+            entity_terms = []
+            for field in [
+                analysis_context_payload.get("client_name", ""),
+                analysis_context_payload.get("primary_name", ""),
+            ]:
+                if field:
+                    entity_terms.append(field)
+            entity_terms.extend(analysis_context_payload.get("alternate_names", []))
+            entity_terms.extend(analysis_context_payload.get("spokespeople", []))
+            entity_terms.extend(analysis_context_payload.get("products", []))
+
+            action1, action2, action3 = st.columns([1, 1.2, 2], gap="small")
             with action1:
                 if st.button("Check Top 10", key="top_stories_check_top_10"):
                     st.session_state.top_stories_checked_group_ids = (
@@ -366,6 +372,23 @@ def render_top_stories_selection() -> None:
                     st.session_state.top_stories_editor_version += 1
                     st.rerun()
             with action2:
+                if st.button("Recommend Top Stories", key="top_stories_recommend_top_stories"):
+                    existing_checked_ids = (
+                        updated_data_custom.loc[updated_data_custom["Top Story"], "Group ID"]
+                        .dropna()
+                        .astype(str)
+                        .tolist()
+                    )
+                    recommended_ids = recommend_top_story_group_ids(
+                        df_to_display,
+                        entity_terms=entity_terms,
+                        count=10,
+                    )
+                    merged_ids = list(dict.fromkeys(existing_checked_ids + recommended_ids))
+                    st.session_state.top_stories_checked_group_ids = merged_ids
+                    st.session_state.top_stories_editor_version += 1
+                    st.rerun()
+            with action3:
                 if st.button("Save Selected", key="by_custom", type="primary"):
                     st.session_state.top_stories_checked_group_ids = (
                         updated_data_custom.loc[updated_data_custom["Top Story"], "Group ID"]

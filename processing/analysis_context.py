@@ -260,6 +260,13 @@ def get_dataset_coverage_flag_exclusions(session_state) -> list[str]:
     return _clean_list(session_state.get("analysis_dataset_excluded_flags", []))
 
 
+def format_qualitative_exclusion_caption(excluded_flags: list[str] | None) -> str:
+    flags = [str(flag).strip() for flag in excluded_flags or [] if str(flag).strip()]
+    if not flags:
+        return ""
+    return "Excluded from qualitative workflow: " + ", ".join(flags)
+
+
 def get_dataset_coverage_keep_keys(session_state) -> set[str]:
     return {
         str(value).strip()

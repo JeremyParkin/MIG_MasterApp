@@ -94,6 +94,12 @@ def standardize_media_types(df: pd.DataFrame, merge_online: bool = True) -> pd.D
     if "Type" not in df.columns:
         return df
 
+    # Prefer the original destination URL before platform detection so
+    # wrapped/redirect URLs do not leave social rows misclassified as traditional.
+    if "Original URL" in df.columns:
+        df.loc[df["Original URL"].notnull(), "URL"] = df["Original URL"]
+        df.drop(columns=["Original URL"], inplace=True, errors="ignore")
+
     df["Type"] = df["Type"].fillna("").astype(str)
 
     df["Type"] = df["Type"].replace({
@@ -127,10 +133,6 @@ def standardize_media_types(df: pd.DataFrame, merge_online: bool = True) -> pd.D
             "PRESS RELEASE": "ONLINE",
             "BLOGS": "ONLINE",
         })
-
-    if "Original URL" in df.columns:
-        df.loc[df["Original URL"].notnull(), "URL"] = df["Original URL"]
-        df.drop(columns=["Original URL"], inplace=True, errors="ignore")
 
     return df
 

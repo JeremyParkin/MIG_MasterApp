@@ -26,7 +26,6 @@ def init_tagging_config_state(session_state) -> None:
         "tagging_sample_size": None,
         "tagging_full_override": False,
         "df_tagging_rows": pd.DataFrame(),
-        "df_tagging_grouped_rows": pd.DataFrame(),
         "df_tagging_unique": pd.DataFrame(),
         "tagging_elapsed_time": 0.0,
         "tagging_excluded_flags": [],
@@ -231,7 +230,6 @@ def prepare_tagging_datasets(
     """
     Build tagging-specific datasets:
     - df_tagging_rows: sampled row-level rows with original Group ID
-    - df_tagging_grouped_rows: same as sampled rows (kept for naming consistency)
     - df_tagging_unique: one row per original Group ID represented in the sample
     """
     source_rows = get_tagging_source_rows(df_traditional)
@@ -257,8 +255,7 @@ def prepare_tagging_datasets(
     if not sampled_rows.empty and "Group ID" not in sampled_rows.columns:
         raise ValueError("Sampled tagging rows do not contain Group ID. Standard Cleaning must run first.")
 
-    grouped_rows = sampled_rows.copy()
-    unique_rows = build_unique_story_table_from_existing_groups(grouped_rows)
+    unique_rows = build_unique_story_table_from_existing_groups(sampled_rows)
 
     if "Tag_Processed" not in unique_rows.columns:
         unique_rows["Tag_Processed"] = False
@@ -269,7 +266,6 @@ def prepare_tagging_datasets(
 
     return {
         "df_tagging_rows": sampled_rows.reset_index(drop=True),
-        "df_tagging_grouped_rows": grouped_rows.reset_index(drop=True),
         "df_tagging_unique": unique_rows.reset_index(drop=True),
         "population_size": len(source_rows),
         "sample_size_used": effective_sample_size,
@@ -283,7 +279,6 @@ def reset_tagging_config_state(session_state) -> None:
     session_state.tagging_sample_size = None
     session_state.tagging_full_override = False
     session_state.df_tagging_rows = pd.DataFrame()
-    session_state.df_tagging_grouped_rows = pd.DataFrame()
     session_state.df_tagging_unique = pd.DataFrame()
     session_state.tagging_elapsed_time = 0.0
     session_state.tagging_excluded_flags = []

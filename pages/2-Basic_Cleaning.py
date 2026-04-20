@@ -22,6 +22,7 @@ from processing.story_grouping import (
 )
 
 from utils.formatting import format_number, NUMERIC_FORMAT_DICT
+from utils.io import normalize_uploaded_dataframe
 
 warnings.filterwarnings("ignore")
 
@@ -59,27 +60,70 @@ def ensure_basic_cleaning_state() -> None:
         st.session_state.basic_cleaning_started_at = None
 
 
-def reset_basic_cleaning() -> None:
-    """Reset this step while preserving uploaded source data."""
-    if "df_traditional_pre_standard" in st.session_state and isinstance(
-        st.session_state.df_traditional_pre_standard, pd.DataFrame
-    ):
-        st.session_state.df_traditional = st.session_state.df_traditional_pre_standard.copy()
+def build_post_upload_baseline_df() -> pd.DataFrame:
+    raw_df = st.session_state.get("df_untouched")
+    if not isinstance(raw_df, pd.DataFrame) or raw_df.empty:
+        return pd.DataFrame()
 
-    st.session_state.df_social = pd.DataFrame()
-    st.session_state.df_dupes = pd.DataFrame()
-    st.session_state.df_ai_grouped = pd.DataFrame()
-    st.session_state.df_ai_unique = pd.DataFrame()
-    st.session_state.standard_step = False
-    st.session_state.basic_cleaning_stage = 0
-    st.session_state.basic_cleaning_elapsed = None
-    st.session_state.basic_cleaning_part_durations = {}
-    st.session_state.basic_cleaning_started_at = None
+    baseline_df = normalize_uploaded_dataframe(raw_df)
+
+    category_columns = [
+        "Sentiment",
+        "Continent",
+        "Country",
+        "Prov/State",
+        "City",
+        "Language",
+    ]
+    for column in category_columns:
+        if column in baseline_df.columns:
+            baseline_df[column] = baseline_df[column].astype("category")
+
+    return baseline_df
+
+
+def reset_to_post_upload_baseline() -> None:
+    """Reset all downstream workflow state back to the completed upload baseline."""
+    baseline_df = build_post_upload_baseline_df()
+    preserved_values = {
+        "df_untouched": st.session_state.get("df_untouched", pd.DataFrame()),
+        "df_traditional": baseline_df,
+        "uploaded_filename": st.session_state.get("uploaded_filename"),
+        "original_ave_col": st.session_state.get("original_ave_col"),
+        "ave_col": st.session_state.get("ave_col", "AVE"),
+        "export_name": st.session_state.get("export_name", ""),
+        "client_name": st.session_state.get("client_name", ""),
+        "client": st.session_state.get("client", ""),
+        "period": st.session_state.get("period", ""),
+        "upload_step": True,
+    }
+
+    for key in list(st.session_state.keys()):
+        if key not in preserved_values:
+            del st.session_state[key]
+
+    for key, value in preserved_values.items():
+        st.session_state[key] = value
+
+    ensure_basic_cleaning_state()
+    gc.collect()
+
+
+def get_pre_standard_source_df() -> pd.DataFrame:
+    baseline_df = build_post_upload_baseline_df()
+    if not baseline_df.empty:
+        return baseline_df
+
+    fallback_df = st.session_state.get("df_traditional")
+    if isinstance(fallback_df, pd.DataFrame):
+        return fallback_df.copy()
+
+    return pd.DataFrame()
 
 
 def run_basic_cleaning_stage_1() -> None:
     start = time.time()
-    source_df = st.session_state.df_traditional_pre_standard.copy()
+    source_df = get_pre_standard_source_df()
     cleaning_results = run_standard_cleaning(
         df=source_df,
         merge_online=st.session_state.basic_cleaning_merge_online,
@@ -153,9 +197,7 @@ def should_use_staged_basic_cleaning() -> bool:
     if current_stage > 0:
         return True
 
-    source_df = st.session_state.get("df_traditional_pre_standard")
-    if not isinstance(source_df, pd.DataFrame):
-        return False
+    source_df = get_pre_standard_source_df()
     return len(source_df) >= STAGED_BASIC_CLEANING_THRESHOLD
 
 
@@ -240,6 +282,14 @@ def render_dataset_expander(
             )
             st.metric("Total Mentions", f"{int(mentions_total):,}")
 
+            if "Engagements" in df.columns:
+                engagements_total = pd.to_numeric(df["Engagements"], errors="coerce").fillna(0).sum()
+                st.metric(
+                    "Total Engagements",
+                    format_number(engagements_total),
+                    help=f"{int(engagements_total):,}",
+                )
+
             if unique_mentions is not None:
                 st.metric("Unique Mentions", f"{int(unique_mentions):,}")
 
@@ -286,7 +336,8 @@ if not st.session_state.get("upload_step", False):
     st.error("Please upload a CSV/XLSX before trying this step.")
     st.stop()
 
-if "df_traditional_pre_standard" not in st.session_state or st.session_state.df_traditional_pre_standard.empty:
+source_df_for_page = get_pre_standard_source_df()
+if source_df_for_page.empty:
     st.error("Uploaded data is missing or empty. Please return to Getting Started.")
     st.stop()
 
@@ -301,7 +352,7 @@ if st.session_state.standard_step:
 
     with top_col2:
         if st.button("Reset Basic Cleaning", type="secondary"):
-            reset_basic_cleaning()
+            reset_to_post_upload_baseline()
             st.rerun()
 
     original_rows = len(st.session_state.get("df_untouched", pd.DataFrame()))
@@ -361,8 +412,7 @@ if st.session_state.standard_step:
 else:
     current_stage = int(st.session_state.get("basic_cleaning_stage", 0))
     staged_mode = should_use_staged_basic_cleaning()
-    source_df = st.session_state.get("df_traditional_pre_standard")
-    source_rows = len(source_df) if isinstance(source_df, pd.DataFrame) else 0
+    source_rows = len(source_df_for_page)
 
     if staged_mode:
         st.info(
@@ -418,5 +468,5 @@ else:
                 st.rerun()
         with action_cols[1]:
             if st.button("Start Over", use_container_width=True):
-                reset_basic_cleaning()
+                reset_to_post_upload_baseline()
                 st.rerun()

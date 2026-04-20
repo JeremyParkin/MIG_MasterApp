@@ -9,14 +9,17 @@ def render_top_stories_validation() -> None:
     import streamlit as st
 
     import processing.top_stories as top_stories_module
+    from processing.standard_cleaning import SOCIAL_TYPES
 
     warnings.filterwarnings("ignore")
     top_stories_module = importlib.reload(top_stories_module)
 
-    build_source_candidate_table = top_stories_module.build_source_candidate_table
+    build_prime_grouped_story_candidates = top_stories_module.build_prime_grouped_story_candidates
+    build_source_candidate_table_from_candidates = top_stories_module.build_source_candidate_table_from_candidates
     normalize_top_stories_df = top_stories_module.normalize_top_stories_df
     parse_source_group_ids = top_stories_module.parse_source_group_ids
-    rotate_saved_story_source = top_stories_module.rotate_saved_story_source
+    rotate_saved_story_source_from_candidates = top_stories_module.rotate_saved_story_source_from_candidates
+    strip_html_tags = top_stories_module.strip_html_tags
 
     st.markdown(
         """
@@ -46,79 +49,125 @@ def render_top_stories_validation() -> None:
         st.stop()
 
     saved_df = normalize_top_stories_df(st.session_state.added_df.copy())
-    source_df = st.session_state.df_ai_grouped.copy()
+    grouped_source_df = st.session_state.df_ai_grouped
+    source_df = grouped_source_df.copy()
+    if "Type" in source_df.columns:
+        source_df = source_df[~source_df["Type"].fillna("").astype(str).str.upper().isin(SOCIAL_TYPES)].copy()
+
+    source_signature = (
+        len(grouped_source_df),
+        len(source_df),
+        tuple(source_df.columns.tolist()),
+        int(pd.to_numeric(source_df.get("Mentions", pd.Series(dtype="float64")), errors="coerce").fillna(0).sum()),
+        int(pd.to_numeric(source_df.get("Impressions", pd.Series(dtype="float64")), errors="coerce").fillna(0).sum()),
+        int(pd.to_numeric(source_df.get("Effective Reach", pd.Series(dtype="float64")), errors="coerce").fillna(0).sum()),
+        int(pd.to_numeric(source_df.get("Prime Example", pd.Series(dtype="float64")), errors="coerce").fillna(0).sum()),
+    )
+    cached_signature = st.session_state.get("top_stories_validation_prime_candidates_signature")
+    if cached_signature == source_signature and isinstance(
+        st.session_state.get("top_stories_validation_prime_candidates"),
+        pd.DataFrame,
+    ):
+        prime_source_candidates = st.session_state.top_stories_validation_prime_candidates
+    else:
+        prime_source_candidates = build_prime_grouped_story_candidates(source_df)
+        st.session_state.top_stories_validation_prime_candidates = prime_source_candidates
+        st.session_state.top_stories_validation_prime_candidates_signature = source_signature
 
     if saved_df.empty:
         st.info("No saved top stories available for validation.")
         st.stop()
 
-    for idx, row in saved_df.reset_index(drop=True).iterrows():
-        story_group_id = row.get("Group ID")
-        source_ids = parse_source_group_ids(row.get("Source Group IDs", ""), fallback_group_id=story_group_id)
-        source_candidates = build_source_candidate_table(
-            df=source_df,
-            source_group_ids=row.get("Source Group IDs", ""),
-            fallback_group_id=story_group_id,
-        )
-        source_count = max(len(source_candidates), 1)
-        current_url = str(row.get("Example URL", "") or "").strip()
-        current_outlet = str(row.get("Example Outlet", "") or "").strip()
-        current_type = str(row.get("Example Type", "") or "").strip()
+    saved_df = saved_df.reset_index(drop=True)
+    st.session_state.setdefault("top_stories_validation_index", 0)
+    current_index = int(st.session_state.get("top_stories_validation_index", 0) or 0)
+    current_index = max(0, min(current_index, len(saved_df) - 1))
+    st.session_state.top_stories_validation_index = current_index
 
-        current_rank = 1
-        if not source_candidates.empty:
-            for pos, (_, candidate) in enumerate(source_candidates.iterrows(), start=1):
-                if (
-                    str(candidate.get("Example URL", "") or "").strip() == current_url
-                    and str(candidate.get("Example Outlet", "") or "").strip() == current_outlet
-                    and str(candidate.get("Example Type", "") or "").strip() == current_type
-                ):
-                    current_rank = pos
-                    break
+    nav_left, nav_right = st.columns([3.8, 2.2], gap="medium")
+    with nav_right:
+        nav1, nav2, nav3, nav4 = st.columns(4, gap="small")
+        with nav1:
+            if st.button("", key="top_story_validation_first", use_container_width=True, disabled=current_index <= 0, icon=":material/first_page:", help="First story"):
+                st.session_state.top_stories_validation_index = 0
+                st.rerun()
+        with nav2:
+            if st.button("", key="top_story_validation_prev", use_container_width=True, disabled=current_index <= 0, icon=":material/skip_previous:", help="Previous story"):
+                st.session_state.top_stories_validation_index = current_index - 1
+                st.rerun()
+        with nav3:
+            if st.button("", key="top_story_validation_next", use_container_width=True, disabled=current_index >= len(saved_df) - 1, icon=":material/skip_next:", help="Next story"):
+                st.session_state.top_stories_validation_index = current_index + 1
+                st.rerun()
+        with nav4:
+            if st.button("", key="top_story_validation_last", use_container_width=True, disabled=current_index >= len(saved_df) - 1, icon=":material/last_page:", help="Last story"):
+                st.session_state.top_stories_validation_index = len(saved_df) - 1
+                st.rerun()
+        st.caption(f"Reviewing story {current_index + 1} of {len(saved_df)}")
 
-        container = st.container(border=True)
-        with container:
-            st.markdown(f"### {row.get('Headline', '')}")
+    row = saved_df.iloc[current_index]
+    story_group_id = row.get("Group ID")
+    source_ids = parse_source_group_ids(row.get("Source Group IDs", ""), fallback_group_id=story_group_id)
+    source_candidates = build_source_candidate_table_from_candidates(
+        candidates=prime_source_candidates,
+        source_group_ids=row.get("Source Group IDs", ""),
+        fallback_group_id=story_group_id,
+        require_url_if_available=bool(str(row.get("Example URL", "") or "").strip()),
+    )
+    source_count = max(len(source_candidates), 1)
+    current_url = str(row.get("Example URL", "") or "").strip()
+    current_outlet = str(row.get("Example Outlet", "") or "").strip()
+    current_type = str(row.get("Example Type", "") or "").strip()
 
-            snippet = str(row.get("Example Snippet", "") or "").strip()
-            if snippet:
-                st.caption(snippet[:420] + ("..." if len(snippet) > 420 else ""))
+    current_rank = 1
+    if not source_candidates.empty:
+        for pos, (_, candidate) in enumerate(source_candidates.iterrows(), start=1):
+            if (
+                str(candidate.get("Example URL", "") or "").strip() == current_url
+                and str(candidate.get("Example Outlet", "") or "").strip() == current_outlet
+                and str(candidate.get("Example Type", "") or "").strip() == current_type
+            ):
+                current_rank = pos
+                break
 
-            meta_parts = []
-            if pd.notna(row.get("Date")):
-                meta_parts.append(str(row.get("Date")))
-            if current_outlet:
-                meta_parts.append(current_outlet)
-            if current_type:
-                meta_parts.append(current_type)
-            mentions = int(pd.to_numeric(pd.Series([row.get("Mentions", 0)]), errors="coerce").fillna(0).iloc[0])
-            impressions = int(pd.to_numeric(pd.Series([row.get("Impressions", 0)]), errors="coerce").fillna(0).iloc[0])
-            meta_parts.append(f"Mentions: {mentions:,}")
-            meta_parts.append(f"Impressions: {impressions:,}")
-            st.caption(" | ".join(meta_parts))
-            st.caption(f"Source {current_rank} of {source_count}")
+    container = st.container(border=True)
+    with container:
+        st.markdown(f"### {row.get('Headline', '')}")
 
-            action1, action2, action3 = st.columns([1, 1, 3], gap="small")
-            with action1:
-                if current_url:
-                    st.link_button("Open current link", current_url, use_container_width=True)
-                else:
-                    st.button("Open current link", key=f"top_story_open_link_disabled_{idx}", disabled=True, use_container_width=True)
-            with action2:
-                if st.button("Try next source", key=f"top_story_next_source_{idx}", disabled=source_count <= 1):
-                    st.session_state.added_df = rotate_saved_story_source(
-                        saved_df=st.session_state.added_df.copy(),
-                        source_df=source_df,
-                        story_group_id=story_group_id,
-                        step=1,
-                    )
-                    st.session_state.top_story_observation_output = None
-                    st.rerun()
-            with action3:
-                if source_ids:
-                    st.caption(f"{len(source_ids)} source instance(s) available in this story family.")
+        snippet = strip_html_tags(row.get("Example Snippet", ""))
+        if snippet:
+            st.caption(snippet[:420] + ("..." if len(snippet) > 420 else ""))
 
-    st.divider()
-    if st.button("Continue to Insights", type="primary", key="top_stories_continue_to_insights"):
-        st.session_state.top_stories_section = "Insights"
-        st.rerun()
+        meta_parts = []
+        if pd.notna(row.get("Date")):
+            meta_parts.append(str(row.get("Date")))
+        if current_outlet:
+            meta_parts.append(current_outlet)
+        if current_type:
+            meta_parts.append(current_type)
+        mentions = int(pd.to_numeric(pd.Series([row.get("Mentions", 0)]), errors="coerce").fillna(0).iloc[0])
+        impressions = int(pd.to_numeric(pd.Series([row.get("Impressions", 0)]), errors="coerce").fillna(0).iloc[0])
+        meta_parts.append(f"Mentions: {mentions:,}")
+        meta_parts.append(f"Impressions: {impressions:,}")
+        st.caption(" | ".join(meta_parts))
+        st.caption(f"Source option {current_rank} of {source_count}")
+
+        action1, action2, action3 = st.columns([1, 1, 3], gap="small")
+        with action1:
+            if current_url:
+                st.link_button("Open current link", current_url, use_container_width=True)
+            else:
+                st.button("Open current link", key=f"top_story_open_link_disabled_{current_index}", disabled=True, use_container_width=True)
+        with action2:
+            if st.button("Try next source", key=f"top_story_next_source_{current_index}", disabled=source_count <= 1):
+                st.session_state.added_df = rotate_saved_story_source_from_candidates(
+                    saved_df=st.session_state.added_df.copy(),
+                    candidates=prime_source_candidates,
+                    story_group_id=story_group_id,
+                    step=1,
+                )
+                st.session_state.top_story_observation_output = None
+                st.rerun()
+        with action3:
+            if source_ids:
+                st.caption(f"{len(source_ids)} source instance(s) available in this story family.")

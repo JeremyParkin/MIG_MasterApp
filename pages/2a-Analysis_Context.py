@@ -333,17 +333,6 @@ with save_col:
             qualitative_exclusion_keep_keys=qualitative_exclusion_keep_keys,
             dataset_exclusion_keep_keys=dataset_exclusion_keep_keys,
         )
-        st.session_state.analysis_context_draft_client_name = client_name
-        st.session_state.analysis_context_draft_primary_name = primary_name
-        st.session_state.analysis_context_draft_alternate_names = alternate_names
-        st.session_state.analysis_context_draft_spokespeople = spokespeople
-        st.session_state.analysis_context_draft_products = products
-        st.session_state.analysis_context_draft_guidance = guidance
-        st.session_state.analysis_context_draft_exclude_aggregators = exclude_aggregators_from_outlet_insights
-        st.session_state.analysis_context_draft_qualitative_flags = qualitative_excluded_flags
-        st.session_state.analysis_context_draft_dataset_flags = dataset_excluded_flags
-        st.session_state.analysis_context_draft_qualitative_keep_keys = qualitative_exclusion_keep_keys
-        st.session_state.analysis_context_draft_dataset_keep_keys = dataset_exclusion_keep_keys
         saved_at = datetime.now().astimezone().strftime("%b %-d, %Y at %-I:%M %p")
         st.session_state.analysis_context_save_message = f"Saved {saved_at}"
 

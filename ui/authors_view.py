@@ -14,6 +14,7 @@ from ui.insight_blocks import build_linked_example_blocks_html
 from processing.analysis_context import (
     apply_session_coverage_flag_policy,
     build_analysis_context_text,
+    format_qualitative_exclusion_caption,
     get_qualitative_coverage_flag_exclusions,
     init_analysis_context_state,
 )
@@ -267,10 +268,7 @@ def render_authors_page() -> None:
 
         excluded_flags = get_qualitative_coverage_flag_exclusions(st.session_state)
         if excluded_flags:
-            st.caption(
-                "Using Analysis Context coverage rules for qualitative workflows: "
-                + ", ".join(f"`{flag}`" for flag in excluded_flags)
-            )
+            st.caption(format_qualitative_exclusion_caption(excluded_flags))
 
         author_working_df = prepare_author_working_df(
             st.session_state.df_traditional,
@@ -1126,7 +1124,7 @@ def render_authors_page() -> None:
                 st.rerun()
 
         def render_generate_button(key_suffix: str) -> None:
-            if st.button("Generate brand-relevant coverage themes", type="primary", key=f"authors_generate_theme_summaries_{key_suffix}"):
+            if st.button("Generate Coverage Themes", type="primary", key=f"authors_generate_theme_summaries_{key_suffix}", use_container_width=True):
                 st.session_state.authors_section = "Insights"
                 summaries = dict(summary_store)
                 client_name = str(st.session_state.get("client_name", "")).strip()
@@ -1416,7 +1414,7 @@ def render_authors_page() -> None:
 
             st.divider()
             st.subheader("Report Copy")
-            generate_col1, generate_col2 = st.columns([1.2, 3], gap="medium")
+            generate_col1, generate_col2 = st.columns([1.05, 3.15], gap="medium")
             with generate_col1:
                 render_generate_button("insights")
             with generate_col2:
