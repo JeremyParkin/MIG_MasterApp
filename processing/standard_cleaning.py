@@ -191,6 +191,10 @@ def split_social(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     df_social = df.loc[df["Type"].isin(SOCIAL_TYPES)].copy()
     df_traditional = df.loc[~df["Type"].isin(SOCIAL_TYPES)].copy()
 
+    # Engagements is only used by the social effective-reach path, so drop it
+    # from the traditional dataset once the platform split is complete.
+    df_traditional.drop(columns=["Engagements"], inplace=True, errors="ignore")
+
     return df_traditional, df_social
 
 

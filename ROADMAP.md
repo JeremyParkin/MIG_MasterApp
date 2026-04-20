@@ -44,6 +44,16 @@ This file is a lightweight parking lot for product and workflow ideas that are w
   - queue borderline matches for analyst confirmation
   - avoid silently applying weak outlet matches
   - capture source/method metadata so analysts can understand how a value was derived
+- Outlet impression consistency:
+  - detect cases where rows with the same outlet name, domain, and media type still carry inconsistent impression values
+  - flag these for analyst review or normalize them when a strong canonical value can be inferred
+  - treat this as a data hygiene and reference-data problem, not just a downstream reporting quirk
+  - likely surface the issue earlier in the workflow, since inconsistent outlet impressions can distort:
+    - effective reach
+    - outlet ranking
+    - author ranking
+    - top stories scoring
+  - if normalization is allowed, preserve the original exported impression values for traceability
 - Reference data layer should support:
   - broadcast outlets
   - cities / population data
@@ -65,6 +75,42 @@ This file is a lightweight parking lot for product and workflow ideas that are w
   - Sentiment
   - Tagging
 - Goal: streamline analyst QA of linked examples before client-facing use, without requiring them to manually hunt through every workflow page.
+
+### Prominence Normalization
+- Consider an early workflow step that normalizes `Prominence...` columns across grouped or syndicated copies of the same story.
+- Problem:
+  - prominence labels such as `Very High`, `High`, or `Moderate` are often based on whatever snippet text is available in the export
+  - syndicated copies of the same article can therefore get inconsistent prominence labels when one row has fuller text and another is artificially truncated
+  - this weakens the usefulness of prominence fields for later ranking, QA, and reporting
+- Core idea:
+  - use the app's story grouping logic to identify rows that appear to represent the same underlying story
+  - for each `Prominence...` column, propagate the strongest prominence label found within the grouped story family to the other matched rows
+- Important dependency:
+  - this only works well if the story grouping is trustworthy enough to represent syndicated variants safely
+  - if the stronger headline/date grouping used in Top Stories proves more reliable, consider whether some version of that grouping should move earlier in the workflow
+- Likely normalization rule:
+  - define a clear rank order such as:
+    - `Very High`
+    - `High`
+    - `Moderate`
+    - `Low`
+    - `Very Low`
+  - apply the highest valid value in the group to all grouped rows for that prominence column
+- Possible workflow shapes:
+  - simple option:
+    - add an optional checkbox in `Basic Cleaning`, such as `Normalize prominence across grouped story variants`
+  - analyst-review option:
+    - add a lightweight review queue or wizard
+    - show one representative story per grouped family rather than every row
+    - let the analyst confirm whether the grouping is safe before propagating prominence values
+- Suggested first version:
+  - start with an optional normalization checkbox for speed and simplicity
+  - add a review-based workflow later only if analysts are uneasy about silent propagation
+- Important guardrails:
+  - preserve the original exported prominence values somewhere for traceability
+  - only normalize within high-confidence grouped families
+  - do not invent prominence when no valid value exists in the group
+  - be explicit when multiple `Prominence...` columns are present and normalize each independently
 
 ## Later Exploration
 
@@ -90,6 +136,32 @@ This file is a lightweight parking lot for product and workflow ideas that are w
   - representative source choice
   - possibly other output-readiness checks
 - This should stay lightweight and optional unless real analyst usage proves it saves time.
+
+### Tagging Validation Layer
+- Consider adding a validation step for `Tagging` similar to the existing `Sentiment > Spot Checks` pattern.
+- Core idea:
+  - before final tagging insights are treated as output-ready, run a lightweight QA layer that combines:
+    - AI pre-review or second-opinion checks
+    - human spot checks through a review interface
+- Goals:
+  - catch obvious mis-tags before they shape the narrative
+  - surface uncertain or low-confidence tag assignments for review
+  - build more analyst trust in the final tag summaries and charts
+- Possible workflow shape:
+  - AI pre-reviews generated tags and flags rows or story groups that look questionable
+  - analyst reviews a bounded sample rather than every tagged row
+  - analyst can confirm, correct, or override tags before final insights are generated
+- Likely first-pass design:
+  - sample one item from large or important tag clusters
+  - add a random spot-check sample across the tagged set
+  - prioritize:
+    - rows with conflicting evidence
+    - rows where AI tagging rationale looks weak
+    - rows where multiple likely tags compete
+- Important guardrails:
+  - this should improve trust without turning Tagging into a full manual moderation workflow
+  - AI pre-review should help prioritize what the analyst sees, not silently rewrite tags
+  - corrections should feed the final tagging insights and exported outputs cleanly
 
 ### Two-Pass Narrative Editing For Authors / Outlets
 - Consider moving Author and Outlet insight generation to a two-pass model:
@@ -173,9 +245,25 @@ This file is a lightweight parking lot for product and workflow ideas that are w
   - add a random sample of unique stories from the suspect pool
   - let the analyst confirm or uncheck AI-flagged `Not relevant` items
   - surface patterns that may warrant broader follow-up searching in the dataset
+- Useful first-pass classification labels to test:
+  - `Press Release`
+  - `Advertisement / Sponsored Content`
+  - `Event Listing / Calendar Notice`
+  - `Stock Market Update`
+  - `Job Posting`
+  - `Incidental Bio Mention`
+  - `Legitimate News`
+- These labels are useful not because every row needs a final permanent category, but because they help separate:
+  - clearly non-editorial or low-value coverage
+  - weak / passing brand mentions
+  - genuinely relevant client coverage
 - Good first-pass heuristic:
   - deprioritize stories where the client or brand is clearly present in the headline or first 125 words of the snippet
   - prioritize stories where the client appears only later, only in metadata-like contexts, or in patterns associated with weak relevance
+- Good examples of low-relevance patterns to catch:
+  - the client appears only in a person's employment history or biography
+  - the client is mentioned only as an event venue, sponsor, or participant in a listing
+  - the client appears in promotional, recruitment, or stock-price boilerplate without meaningful editorial discussion
 - Important guardrails:
   - this should stay sampled and lightweight, not become a row-by-row moderation queue
   - AI should surface likely non-relevant items, but the analyst should be able to check or uncheck them before any broader exclusion logic is applied

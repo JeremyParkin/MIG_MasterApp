@@ -260,6 +260,7 @@ def render_dataset_expander(
     title: str,
     preview_rows: int = 1000,
     unique_mentions: int | None = None,
+    show_total_engagements: bool = False,
 ) -> None:
     """Render compact metrics + type breakdown + preview."""
     if df is None or len(df) == 0:
@@ -282,7 +283,7 @@ def render_dataset_expander(
             )
             st.metric("Total Mentions", f"{int(mentions_total):,}")
 
-            if "Engagements" in df.columns:
+            if show_total_engagements and "Engagements" in df.columns:
                 engagements_total = pd.to_numeric(df["Engagements"], errors="coerce").fillna(0).sum()
                 st.metric(
                     "Total Engagements",
@@ -394,6 +395,7 @@ if st.session_state.standard_step:
         "Traditional",
         preview_rows=1000,
         unique_mentions=traditional_unique_mentions,
+        show_total_engagements=False,
     )
 
     render_dataset_expander(
@@ -401,6 +403,7 @@ if st.session_state.standard_step:
         "Social",
         preview_rows=200,
         unique_mentions=None,
+        show_total_engagements=True,
     )
 
     render_dataset_expander(
@@ -408,6 +411,7 @@ if st.session_state.standard_step:
         "Deleted Duplicates",
         preview_rows=200,
         unique_mentions=None,
+        show_total_engagements=False,
     )
 else:
     current_stage = int(st.session_state.get("basic_cleaning_stage", 0))

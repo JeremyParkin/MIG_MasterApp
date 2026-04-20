@@ -38,6 +38,11 @@ if "analysis_context_draft_initialized" not in st.session_state:
     st.session_state.analysis_context_draft_exclude_aggregators = payload["exclude_aggregators_from_outlet_insights"]
     st.session_state.analysis_context_draft_qualitative_flags = list(payload["qualitative_excluded_flags"])
     st.session_state.analysis_context_draft_dataset_flags = list(payload["dataset_excluded_flags"])
+    st.session_state.analysis_context_draft_dataset_date_range = (
+        payload.get("dataset_start_date"),
+        payload.get("dataset_end_date"),
+    )
+    st.session_state.analysis_context_draft_dataset_media_types = list(payload.get("dataset_media_types", []))
     st.session_state.analysis_context_draft_qualitative_keep_keys = list(payload.get("qualitative_exclusion_keep_keys", []))
     st.session_state.analysis_context_draft_dataset_keep_keys = list(payload.get("dataset_exclusion_keep_keys", []))
 
@@ -249,38 +254,73 @@ with st.container(border=True):
         st.session_state.analysis_context_draft_qualitative_keep_keys = []
         st.info("No junky coverage flags are currently selected for qualitative exclusion.")
 
-with st.expander("⚠ Delete from dataset", expanded=False):
-    st.caption("Use with caution. Anything selected here is removed from downstream working views unless you explicitly keep a row below.")
+with st.container(border=True):
+    st.subheader("Data Scope")
+    st.caption("Refine the working dataset used by downstream workflows. Anything scoped out here is removed from the app's working view unless you explicitly keep a row below.")
+
+    scope_col1, scope_col2 = st.columns([1.05, 1.25], gap="medium")
+    with scope_col1:
+        if payload.get("dataset_min_date") and payload.get("dataset_max_date"):
+            dataset_date_range = st.date_input(
+                "Date range",
+                value=st.session_state.analysis_context_draft_dataset_date_range,
+                min_value=payload.get("dataset_min_date"),
+                max_value=payload.get("dataset_max_date"),
+                key="analysis_context_draft_dataset_date_range_widget",
+                help="Limit downstream workflows to a specific date range from the cleaned dataset.",
+            )
+            if isinstance(dataset_date_range, tuple) and len(dataset_date_range) == 2:
+                st.session_state.analysis_context_draft_dataset_date_range = dataset_date_range
+        else:
+            st.info("No usable dates detected in the current cleaned dataset.")
+
+    with scope_col2:
+        dataset_media_types = st.multiselect(
+            "Media types",
+            options=payload["available_media_types"],
+            default=st.session_state.analysis_context_draft_dataset_media_types,
+            key="analysis_context_draft_dataset_media_types_widget",
+            help="Only these media types will remain in the working dataset for downstream workflows.",
+        )
+        st.session_state.analysis_context_draft_dataset_media_types = dataset_media_types
 
     dataset_excluded_flags = st.multiselect(
-        "Delete junky coverage flags from dataset",
+        "Prune flagged coverage from working dataset",
         options=payload["available_junky_flags"],
         default=st.session_state.analysis_context_draft_dataset_flags,
-        help="No defaults here. Select only the flags you are comfortable removing from the working dataset.",
+        help="Optional. Remove rows with these flags from the working dataset, with row-level keep overrides below.",
         key="analysis_context_draft_dataset_flags_widget",
     )
     st.session_state.analysis_context_draft_dataset_flags = dataset_excluded_flags
 
     dataset_exclusion_keep_keys = list(st.session_state.analysis_context_draft_dataset_keep_keys)
-    if dataset_excluded_flags:
-        preview = analysis_context.build_coverage_flag_removal_preview(
-            st.session_state.get("df_traditional"),
-            dataset_excluded_flags,
-            keep_row_keys=set(st.session_state.analysis_context_draft_dataset_keep_keys),
-        )
+    dataset_date_range = st.session_state.analysis_context_draft_dataset_date_range
+    dataset_start_date = dataset_date_range[0] if isinstance(dataset_date_range, tuple) and len(dataset_date_range) == 2 else None
+    dataset_end_date = dataset_date_range[1] if isinstance(dataset_date_range, tuple) and len(dataset_date_range) == 2 else None
+
+    preview = analysis_context.build_dataset_scope_preview(
+        st.session_state.get("df_traditional"),
+        start_date=dataset_start_date,
+        end_date=dataset_end_date,
+        selected_media_types=dataset_media_types,
+        excluded_flags=dataset_excluded_flags,
+        keep_row_keys=set(st.session_state.analysis_context_draft_dataset_keep_keys),
+    )
+    if preview["removed_rows"] > 0:
         preview_stat1, preview_stat2 = st.columns(2, gap="medium")
         with preview_stat1:
-            st.metric("Rows that would be removed", f"{preview['removed_rows']:,}")
+            st.metric("Rows removed from working dataset", f"{preview['removed_rows']:,}")
         with preview_stat2:
-            st.metric("Mentions that would be removed", f"{preview['removed_mentions']:,}")
+            st.metric("Mentions removed from working dataset", f"{preview['removed_mentions']:,}")
 
         if not preview["counts_df"].empty:
-            st.write("**Deletion preview by flag**")
+            st.write("**Removal preview by reason**")
             st.dataframe(
-                preview["counts_df"][["Coverage Flag", "Mentions", "Impressions", "Effective Reach"]],
+                preview["counts_df"][["Reason", "Rows", "Mentions", "Impressions", "Effective Reach"]],
                 use_container_width=True,
                 hide_index=True,
                 column_config={
+                    "Rows": st.column_config.NumberColumn("Rows", format="%,d"),
                     "Mentions": st.column_config.NumberColumn("Mentions", format="%,d"),
                     "Impressions": st.column_config.NumberColumn("Impressions", format="%,d"),
                     "Effective Reach": st.column_config.NumberColumn("Effective Reach", format="%,d"),
@@ -288,19 +328,21 @@ with st.expander("⚠ Delete from dataset", expanded=False):
             )
 
         if not preview["sample_df"].empty:
-            st.write("**Rows flagged for deletion**")
-            st.caption("Uncheck `Delete` to keep a specific row even when it matches the selected junky flags.")
+            st.write("**Rows removed from working dataset**")
+            st.caption("Uncheck `Remove` to keep a specific row in the working dataset even when it matches the selected scope or pruning rules.")
             removal_editor = st.data_editor(
-                preview["sample_df"][["Remove", "Headline", "Outlet", "Coverage Flags", "Link", "Row Key"]],
+                preview["sample_df"][["Remove", "Headline", "Outlet", "Type", "Coverage Flags", "Removal Reason", "Link", "Row Key"]],
                 use_container_width=True,
                 hide_index=True,
-                disabled=["Headline", "Outlet", "Coverage Flags", "Link", "Row Key"],
-                column_order=["Remove", "Headline", "Outlet", "Coverage Flags", "Link"],
+                disabled=["Headline", "Outlet", "Type", "Coverage Flags", "Removal Reason", "Link", "Row Key"],
+                column_order=["Remove", "Headline", "Outlet", "Type", "Coverage Flags", "Removal Reason", "Link"],
                 column_config={
-                    "Remove": st.column_config.CheckboxColumn("Delete", width="small"),
+                    "Remove": st.column_config.CheckboxColumn("Remove", width="small"),
                     "Headline": st.column_config.Column("Headline", width="large"),
                     "Outlet": st.column_config.Column("Outlet", width="medium"),
+                    "Type": st.column_config.Column("Type", width="small"),
                     "Coverage Flags": st.column_config.Column("Coverage Flags", width="medium"),
+                    "Removal Reason": st.column_config.Column("Removal Reason", width="medium"),
                     "Link": st.column_config.LinkColumn("Link", width="small", display_text="open"),
                 },
                 key="analysis_context_dataset_removal_editor",
@@ -308,13 +350,9 @@ with st.expander("⚠ Delete from dataset", expanded=False):
             dataset_exclusion_keep_keys = removal_editor.loc[~removal_editor["Remove"], "Row Key"].astype(str).tolist()
             st.session_state.analysis_context_draft_dataset_keep_keys = dataset_exclusion_keep_keys
             if dataset_exclusion_keep_keys:
-                st.caption(f"Keeping {len(dataset_exclusion_keep_keys)} row(s) even though they match the selected junky flags.")
-        else:
-            st.info("No rows with those selected junky flags are present in the current cleaned dataset.")
+                st.caption(f"Keeping {len(dataset_exclusion_keep_keys)} row(s) even though they match the selected data-scope rules.")
     else:
-        dataset_exclusion_keep_keys = []
-        st.session_state.analysis_context_draft_dataset_keep_keys = []
-        st.info("No coverage flags are currently selected for dataset deletion.")
+        st.info("No rows are currently being removed by the selected data-scope rules.")
 
 save_col, save_status_col = st.columns([0.32, 0.68], gap="small")
 with save_col:
@@ -330,6 +368,9 @@ with save_col:
             qualitative_excluded_flags=qualitative_excluded_flags,
             dataset_excluded_flags=dataset_excluded_flags,
             exclude_aggregators_from_outlet_insights=exclude_aggregators_from_outlet_insights,
+            dataset_start_date=dataset_start_date,
+            dataset_end_date=dataset_end_date,
+            dataset_media_types=dataset_media_types,
             qualitative_exclusion_keep_keys=qualitative_exclusion_keep_keys,
             dataset_exclusion_keep_keys=dataset_exclusion_keep_keys,
         )

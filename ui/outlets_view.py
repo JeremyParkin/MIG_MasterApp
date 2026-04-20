@@ -12,7 +12,7 @@ import streamlit as st
 from processing.analysis_context import (
     apply_session_coverage_flag_policy,
     build_analysis_context_text,
-    get_dataset_coverage_keep_keys,
+    build_dataset_scope_cache_key,
     get_outlet_insight_coverage_flag_exclusions,
     init_analysis_context_state,
 )
@@ -106,7 +106,7 @@ def render_outlets_page() -> None:
             tuple(filtered_df.columns.tolist()),
             tuple(sorted((str(k), str(v)) for k, v in outlet_map.items())),
             tuple(get_outlet_insight_coverage_flag_exclusions(st.session_state)),
-            tuple(sorted(get_dataset_coverage_keep_keys(st.session_state))),
+            build_dataset_scope_cache_key(st.session_state),
         )
         cached = st.session_state.get("outlet_data_cache")
         if cached and cached.get("key") == cache_key:

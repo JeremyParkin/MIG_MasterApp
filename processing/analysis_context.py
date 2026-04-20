@@ -4,6 +4,7 @@ import json
 import re
 import unicodedata
 import hashlib
+from datetime import date
 from typing import Any
 
 from openai import OpenAI
@@ -104,6 +105,123 @@ def get_present_junky_coverage_flags(df_rows: pd.DataFrame | None) -> list[str]:
             if flag in AVAILABLE_JUNKY_COVERAGE_FLAGS:
                 present.add(flag)
     return [flag for flag in AVAILABLE_JUNKY_COVERAGE_FLAGS if flag in present]
+
+
+def get_present_media_types(df_rows: pd.DataFrame | None) -> list[str]:
+    if df_rows is None or df_rows.empty or "Type" not in df_rows.columns:
+        return []
+
+    values = (
+        df_rows["Type"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+    present = [value for value in values.tolist() if value]
+    return sorted(set(present))
+
+
+def get_dataset_date_bounds(df_rows: pd.DataFrame | None) -> tuple[date | None, date | None]:
+    if df_rows is None or df_rows.empty or "Date" not in df_rows.columns:
+        return None, None
+
+    parsed = pd.to_datetime(df_rows["Date"], errors="coerce")
+    if parsed.isna().all():
+        return None, None
+
+    return parsed.min().date(), parsed.max().date()
+
+
+def _coerce_date_value(value: Any) -> date | None:
+    if value in (None, "", pd.NaT):
+        return None
+    if isinstance(value, date):
+        return value
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return parsed.date()
+
+
+def _build_dataset_scope_masks(
+    df_rows: pd.DataFrame,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    selected_media_types: list[str] | None = None,
+    excluded_flags: list[str] | None = None,
+) -> dict[str, pd.Series]:
+    working = df_rows.copy()
+    masks: dict[str, pd.Series] = {}
+    base_false = pd.Series(False, index=working.index)
+
+    normalized_start = _coerce_date_value(start_date)
+    normalized_end = _coerce_date_value(end_date)
+    selected_types = {str(value).strip() for value in selected_media_types or [] if str(value).strip()}
+    blocked_flags = {str(flag).strip() for flag in excluded_flags or [] if str(flag).strip()}
+
+    if normalized_start or normalized_end:
+        if "Date" in working.columns:
+            parsed_dates = pd.to_datetime(working["Date"], errors="coerce").dt.date
+            if normalized_start:
+                masks["Before selected start date"] = parsed_dates.notna() & (parsed_dates < normalized_start)
+            if normalized_end:
+                masks["After selected end date"] = parsed_dates.notna() & (parsed_dates > normalized_end)
+        else:
+            masks["Outside selected date range"] = base_false.copy()
+
+    if selected_types:
+        if "Type" in working.columns:
+            normalized_types = working["Type"].fillna("").astype(str).str.strip()
+            masks["Excluded media type"] = ~normalized_types.isin(selected_types)
+        else:
+            masks["Excluded media type"] = base_false.copy()
+
+    if blocked_flags:
+        if "Coverage Flags" in working.columns:
+            masks["Excluded coverage flag"] = working["Coverage Flags"].apply(
+                lambda value: any(flag in blocked_flags for flag in split_coverage_flags(value))
+            )
+        else:
+            masks["Excluded coverage flag"] = base_false.copy()
+
+    return masks
+
+
+def apply_dataset_scope_policy(
+    df_rows: pd.DataFrame,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    selected_media_types: list[str] | None = None,
+    excluded_flags: list[str] | None = None,
+    keep_row_keys: set[str] | None = None,
+) -> pd.DataFrame:
+    if df_rows is None or df_rows.empty:
+        return pd.DataFrame()
+
+    keep_row_keys = {str(key).strip() for key in keep_row_keys or set() if str(key).strip()}
+    masks = _build_dataset_scope_masks(
+        df_rows,
+        start_date=start_date,
+        end_date=end_date,
+        selected_media_types=selected_media_types,
+        excluded_flags=excluded_flags,
+    )
+    if not masks:
+        return df_rows.copy().reset_index(drop=True)
+
+    working = df_rows.copy()
+    working["_dataset_scope_row_key"] = build_coverage_row_key_series(working)
+    removal_mask = pd.Series(False, index=working.index)
+    for mask in masks.values():
+        removal_mask = removal_mask | mask.reindex(working.index, fill_value=False)
+
+    working = working[
+        ~(removal_mask & ~working["_dataset_scope_row_key"].isin(keep_row_keys))
+    ].copy()
+    working = working.drop(columns=["_dataset_scope_row_key"], errors="ignore")
+    return working.reset_index(drop=True)
 
 
 def apply_coverage_flag_policy(
@@ -256,8 +374,143 @@ def build_coverage_flag_removal_preview(
     }
 
 
+def build_dataset_scope_preview(
+    df_rows: pd.DataFrame,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    selected_media_types: list[str] | None = None,
+    excluded_flags: list[str] | None = None,
+    keep_row_keys: set[str] | None = None,
+) -> dict[str, Any]:
+    if df_rows is None or df_rows.empty:
+        empty = pd.DataFrame()
+        return {
+            "removed_rows": 0,
+            "removed_mentions": 0,
+            "counts_df": empty,
+            "sample_df": empty,
+        }
+
+    working = df_rows.copy()
+    masks = _build_dataset_scope_masks(
+        working,
+        start_date=start_date,
+        end_date=end_date,
+        selected_media_types=selected_media_types,
+        excluded_flags=excluded_flags,
+    )
+    if not masks:
+        empty = pd.DataFrame()
+        return {
+            "removed_rows": 0,
+            "removed_mentions": 0,
+            "counts_df": empty,
+            "sample_df": empty,
+        }
+
+    working["_row_key"] = build_coverage_row_key_series(working)
+    keep_row_keys = {str(key).strip() for key in keep_row_keys or set() if str(key).strip()}
+    working["_removal_reasons"] = [[] for _ in range(len(working))]
+
+    for reason, mask in masks.items():
+        matched_indexes = working.index[mask.reindex(working.index, fill_value=False)]
+        for idx in matched_indexes:
+            working.at[idx, "_removal_reasons"] = list(working.at[idx, "_removal_reasons"]) + [reason]
+
+    removed = working[
+        working["_removal_reasons"].map(bool)
+        & ~working["_row_key"].isin(keep_row_keys)
+    ].copy()
+    if removed.empty:
+        empty = pd.DataFrame()
+        return {
+            "removed_rows": 0,
+            "removed_mentions": 0,
+            "counts_df": empty,
+            "sample_df": empty,
+        }
+
+    mentions = pd.to_numeric(removed.get("Mentions", pd.Series(index=removed.index, data=0)), errors="coerce").fillna(0)
+    counts: dict[str, dict[str, int]] = {}
+    for _, row in removed.iterrows():
+        row_mentions = int(pd.to_numeric(pd.Series([row.get("Mentions", 0)]), errors="coerce").fillna(0).iloc[0])
+        row_impressions = int(pd.to_numeric(pd.Series([row.get("Impressions", 0)]), errors="coerce").fillna(0).iloc[0])
+        row_effective_reach = int(pd.to_numeric(pd.Series([row.get("Effective Reach", 0)]), errors="coerce").fillna(0).iloc[0])
+        for reason in row["_removal_reasons"]:
+            bucket = counts.setdefault(reason, {"Rows": 0, "Mentions": 0, "Impressions": 0, "Effective Reach": 0})
+            bucket["Rows"] += 1
+            bucket["Mentions"] += row_mentions
+            bucket["Impressions"] += row_impressions
+            bucket["Effective Reach"] += row_effective_reach
+
+    counts_df = (
+        pd.DataFrame(
+            [
+                {
+                    "Reason": reason,
+                    "Rows": values["Rows"],
+                    "Mentions": values["Mentions"],
+                    "Impressions": values["Impressions"],
+                    "Effective Reach": values["Effective Reach"],
+                }
+                for reason, values in counts.items()
+            ]
+        )
+        .sort_values(["Mentions", "Impressions", "Reason"], ascending=[False, False, True])
+        .reset_index(drop=True)
+    )
+
+    sample_columns = [
+        "_row_key",
+        "Headline",
+        "Outlet",
+        "Type",
+        "Coverage Flags",
+        "URL",
+    ]
+    sample_existing = [col for col in sample_columns if col in removed.columns]
+    sample_df = removed[sample_existing].copy().reset_index(drop=True)
+    sample_df = sample_df.rename(columns={"_row_key": "Row Key", "URL": "Link"})
+    sample_df["Removal Reason"] = removed["_removal_reasons"].map(lambda values: "; ".join(values)).reset_index(drop=True)
+    sample_df["Remove"] = True
+
+    return {
+        "removed_rows": int(len(removed)),
+        "removed_mentions": int(mentions.sum()),
+        "counts_df": counts_df,
+        "sample_df": sample_df,
+    }
+
+
 def get_dataset_coverage_flag_exclusions(session_state) -> list[str]:
     return _clean_list(session_state.get("analysis_dataset_excluded_flags", []))
+
+
+def get_dataset_scope_media_types(session_state) -> list[str]:
+    present_types = get_present_media_types(session_state.get("df_traditional"))
+    selected_types = _clean_list(session_state.get("analysis_dataset_media_types", present_types))
+    if not present_types:
+        return selected_types
+    return [media_type for media_type in selected_types if media_type in present_types]
+
+
+def get_dataset_scope_date_range(session_state) -> tuple[date | None, date | None]:
+    return (
+        _coerce_date_value(session_state.get("analysis_dataset_start_date")),
+        _coerce_date_value(session_state.get("analysis_dataset_end_date")),
+    )
+
+
+def build_dataset_scope_cache_key(session_state) -> tuple[Any, ...]:
+    start_date, end_date = get_dataset_scope_date_range(session_state)
+    return (
+        start_date.isoformat() if start_date else "",
+        end_date.isoformat() if end_date else "",
+        tuple(get_dataset_scope_media_types(session_state)),
+        tuple(get_dataset_coverage_flag_exclusions(session_state)),
+        tuple(sorted(get_dataset_coverage_keep_keys(session_state))),
+    )
 
 
 def format_qualitative_exclusion_caption(excluded_flags: list[str] | None) -> str:
@@ -284,9 +537,7 @@ def get_qualitative_coverage_keep_keys(session_state) -> set[str]:
 
 
 def get_qualitative_coverage_flag_exclusions(session_state) -> list[str]:
-    flags = set(get_dataset_coverage_flag_exclusions(session_state))
-    flags.update(_clean_list(session_state.get("analysis_qualitative_excluded_flags", [])))
-    return sorted(flags)
+    return _clean_list(session_state.get("analysis_qualitative_excluded_flags", []))
 
 
 def get_outlet_insight_coverage_flag_exclusions(session_state) -> list[str]:
@@ -301,11 +552,23 @@ def apply_session_coverage_flag_policy(
     session_state,
     excluded_flags: list[str] | None,
 ) -> pd.DataFrame:
-    keep_row_keys = get_dataset_coverage_keep_keys(session_state) | get_qualitative_coverage_keep_keys(session_state)
-    return apply_coverage_flag_policy(
+    dataset_keep_row_keys = get_dataset_coverage_keep_keys(session_state)
+    qualitative_keep_row_keys = get_qualitative_coverage_keep_keys(session_state)
+    start_date, end_date = get_dataset_scope_date_range(session_state)
+    selected_media_types = get_dataset_scope_media_types(session_state)
+
+    scoped = apply_dataset_scope_policy(
         df_rows,
+        start_date=start_date,
+        end_date=end_date,
+        selected_media_types=selected_media_types,
+        excluded_flags=get_dataset_coverage_flag_exclusions(session_state),
+        keep_row_keys=dataset_keep_row_keys,
+    )
+    return apply_coverage_flag_policy(
+        scoped,
         excluded_flags=excluded_flags,
-        keep_row_keys=keep_row_keys,
+        keep_row_keys=qualitative_keep_row_keys,
     )
 
 
@@ -601,6 +864,8 @@ def apply_analysis_context_suggestions(session_state, suggestions: dict[str, Any
 def init_analysis_context_state(session_state) -> None:
     client_name = str(session_state.get("client_name", "") or "").strip()
     present_junky_flags = get_present_junky_coverage_flags(session_state.get("df_traditional"))
+    present_media_types = get_present_media_types(session_state.get("df_traditional"))
+    dataset_start, dataset_end = get_dataset_date_bounds(session_state.get("df_traditional"))
 
     primary_seed = []
     for candidate in [
@@ -644,6 +909,9 @@ def init_analysis_context_state(session_state) -> None:
     session_state.setdefault("analysis_products", products_seed)
     session_state.setdefault("analysis_guidance", guidance_seed)
     session_state.setdefault("analysis_exclude_aggregators_from_outlet_insights", True)
+    session_state.setdefault("analysis_dataset_start_date", dataset_start.isoformat() if dataset_start else None)
+    session_state.setdefault("analysis_dataset_end_date", dataset_end.isoformat() if dataset_end else None)
+    session_state.setdefault("analysis_dataset_media_types", present_media_types)
     session_state.setdefault("analysis_qualitative_exclusion_keep_keys", [])
     session_state.setdefault("analysis_dataset_exclusion_keep_keys", [])
     if "analysis_qualitative_excluded_flags" not in session_state:
@@ -676,6 +944,9 @@ def save_analysis_context(
     qualitative_excluded_flags: list[str],
     dataset_excluded_flags: list[str],
     exclude_aggregators_from_outlet_insights: bool,
+    dataset_start_date: date | None = None,
+    dataset_end_date: date | None = None,
+    dataset_media_types: list[str] | None = None,
     qualitative_exclusion_keep_keys: list[str] | None = None,
     dataset_exclusion_keep_keys: list[str] | None = None,
 ) -> None:
@@ -698,6 +969,9 @@ def save_analysis_context(
     session_state.analysis_dataset_excluded_flags = [
         flag for flag in _clean_list(dataset_excluded_flags) if flag in AVAILABLE_JUNKY_COVERAGE_FLAGS
     ]
+    session_state.analysis_dataset_start_date = _coerce_date_value(dataset_start_date).isoformat() if _coerce_date_value(dataset_start_date) else None
+    session_state.analysis_dataset_end_date = _coerce_date_value(dataset_end_date).isoformat() if _coerce_date_value(dataset_end_date) else None
+    session_state.analysis_dataset_media_types = _clean_list(dataset_media_types or [])
     session_state.analysis_exclude_aggregators_from_outlet_insights = bool(exclude_aggregators_from_outlet_insights)
     session_state.analysis_qualitative_exclusion_keep_keys = _clean_list(qualitative_exclusion_keep_keys or [])
     session_state.analysis_dataset_exclusion_keep_keys = _clean_list(dataset_exclusion_keep_keys or [])
@@ -719,6 +993,8 @@ def get_analysis_context_payload(session_state) -> dict[str, Any]:
     init_analysis_context_state(session_state)
     client_name = str(session_state.get("client_name", "") or "").strip()
     present_junky_flags = get_present_junky_coverage_flags(session_state.get("df_traditional"))
+    present_media_types = get_present_media_types(session_state.get("df_traditional"))
+    dataset_min_date, dataset_max_date = get_dataset_date_bounds(session_state.get("df_traditional"))
     primary_names = _clean_list(session_state.get("analysis_primary_names", []))
     if not primary_names and client_name:
         primary_names = [client_name]
@@ -731,6 +1007,16 @@ def get_analysis_context_payload(session_state) -> dict[str, Any]:
         "products": _clean_list(session_state.get("analysis_products", [])),
         "guidance": str(session_state.get("analysis_guidance", "") or "").strip(),
         "available_junky_flags": present_junky_flags,
+        "available_media_types": present_media_types,
+        "dataset_min_date": dataset_min_date,
+        "dataset_max_date": dataset_max_date,
+        "dataset_start_date": _coerce_date_value(session_state.get("analysis_dataset_start_date")) or dataset_min_date,
+        "dataset_end_date": _coerce_date_value(session_state.get("analysis_dataset_end_date")) or dataset_max_date,
+        "dataset_media_types": [
+            media_type
+            for media_type in _clean_list(session_state.get("analysis_dataset_media_types", present_media_types))
+            if media_type in present_media_types
+        ] if present_media_types else _clean_list(session_state.get("analysis_dataset_media_types", [])),
         "qualitative_excluded_flags": [
             flag for flag in _clean_list(session_state.get("analysis_qualitative_excluded_flags", DEFAULT_QUALITATIVE_COVERAGE_FLAGS.copy()))
             if flag in present_junky_flags
@@ -782,6 +1068,17 @@ def build_analysis_context_text(session_state) -> str:
             lines.append(
                 f"Dataset exclusion exceptions kept: {len(payload['dataset_exclusion_keep_keys'])}"
             )
+    if payload["dataset_start_date"] and payload["dataset_end_date"]:
+        lines.append(
+            "Data scope date range: "
+            + f"{payload['dataset_start_date'].isoformat()} to {payload['dataset_end_date'].isoformat()}"
+        )
+    elif payload["dataset_start_date"]:
+        lines.append(f"Data scope starts: {payload['dataset_start_date'].isoformat()}")
+    elif payload["dataset_end_date"]:
+        lines.append(f"Data scope ends: {payload['dataset_end_date'].isoformat()}")
+    if payload["dataset_media_types"]:
+        lines.append("Data scope media types: " + "; ".join(payload["dataset_media_types"]))
     if payload["exclude_aggregators_from_outlet_insights"]:
         lines.append("Outlet insights rule: exclude Aggregator coverage from outlet charts and narrative")
 
@@ -805,6 +1102,10 @@ def build_analysis_context_caption(session_state) -> str:
         parts.append("Junky flags excluded from qualitative workflows")
     if payload["dataset_excluded_flags"]:
         parts.append("Junky flags removed from dataset")
+    if payload["dataset_media_types"]:
+        parts.append(f"Media types: {len(payload['dataset_media_types'])}")
+    if payload["dataset_start_date"] or payload["dataset_end_date"]:
+        parts.append("Data scope date range set")
     if payload["exclude_aggregators_from_outlet_insights"]:
         parts.append("Aggregators excluded from Outlet insights")
     return " | ".join(parts)
