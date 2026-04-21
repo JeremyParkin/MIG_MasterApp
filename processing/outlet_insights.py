@@ -28,6 +28,7 @@ def init_outlet_workflow_state(session_state) -> None:
     session_state.setdefault("outlet_cleanup_rule_target", "")
     session_state.setdefault("outlet_cleanup_cluster_index", 0)
     session_state.setdefault("outlet_cleanup_selected_candidates", {})
+    session_state.setdefault("outlet_cleanup_dismissed_candidates", {})
 
 
 def _normalize_outlet_key(text: str) -> str:

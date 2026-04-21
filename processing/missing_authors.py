@@ -351,6 +351,97 @@ def build_fixable_headline_table(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def build_obvious_author_acceptance_table(
+    df: pd.DataFrame,
+    threshold: float = 0.80,
+    min_known_matches: int = 4,
+) -> pd.DataFrame:
+    """Return headline-level obvious author matches eligible for bulk acceptance."""
+    required = {"Headline", "Author"}
+    if df is None or df.empty or not required.issubset(df.columns):
+        return pd.DataFrame(columns=["Headline", "Suggested Author", "Total", "Missing", "Support Share"])
+
+    signal_table = _build_headline_signal_table(df)
+    if signal_table.empty:
+        return pd.DataFrame(columns=["Headline", "Suggested Author", "Total", "Missing", "Support Share"])
+
+    working = df.copy()
+    working["Headline"] = working["Headline"].fillna("").astype(str).str.strip()
+    working = working[working["Headline"] != ""].copy()
+    if working.empty:
+        return pd.DataFrame(columns=["Headline", "Suggested Author", "Total", "Missing", "Support Share"])
+
+    working["Author"] = working["Author"].replace("", np.nan)
+    working = working[working["Author"].notna()].copy()
+    working["Author"] = working["Author"].astype(str).str.strip()
+    working = working[working["Author"] != ""].copy()
+    working = working[working["Author"].apply(_is_quality_author_string)].copy()
+    if working.empty:
+        return pd.DataFrame(columns=["Headline", "Suggested Author", "Total", "Missing", "Support Share"])
+
+    author_counts = (
+        working.groupby(["Headline", "Author"], as_index=False)
+        .size()
+        .rename(columns={"size": "Author_Count"})
+        .sort_values(["Headline", "Author_Count", "Author"], ascending=[True, False, True])
+    )
+    dominant = author_counts.drop_duplicates(subset=["Headline"], keep="first").copy()
+
+    obvious = signal_table.merge(
+        dominant[["Headline", "Author", "Author_Count"]],
+        on="Headline",
+        how="inner",
+    )
+    obvious["Support Share"] = obvious["Author_Count"] / obvious["Known"].replace(0, pd.NA)
+    obvious = obvious[
+        (obvious["Missing"] > 0)
+        & obvious["Author"].fillna("").astype(str).str.strip().ne("")
+        & obvious["Author_Count"].fillna(0).ge(int(min_known_matches))
+        & obvious["Support Share"].fillna(0).ge(float(threshold))
+    ].copy()
+
+    if obvious.empty:
+        return pd.DataFrame(columns=["Headline", "Suggested Author", "Total", "Missing", "Support Share"])
+
+    return (
+        obvious.rename(columns={"Author": "Suggested Author"})
+        [["Headline", "Suggested Author", "Total", "Missing", "Support Share"]]
+        .sort_values(["Support Share", "Missing", "Total", "Headline"], ascending=[False, False, False, True])
+        .reset_index(drop=True)
+    )
+
+
+def apply_bulk_author_fixes(
+    df: pd.DataFrame,
+    fixes_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Apply many headline -> author fixes in one pass to missing author rows only."""
+    updated = df.copy()
+    if (
+        updated is None
+        or updated.empty
+        or fixes_df is None
+        or fixes_df.empty
+        or "Headline" not in updated.columns
+        or "Author" not in updated.columns
+    ):
+        return updated
+
+    fix_map = {
+        str(row["Headline"]).strip(): str(row["Suggested Author"]).strip()
+        for _, row in fixes_df.iterrows()
+        if str(row.get("Headline", "")).strip() and str(row.get("Suggested Author", "")).strip()
+    }
+    if not fix_map:
+        return updated
+
+    author_blank_mask = updated["Author"].isna() | updated["Author"].astype(str).str.strip().eq("")
+    headline_map = updated["Headline"].fillna("").astype(str).str.strip().map(fix_map)
+    match_mask = author_blank_mask & headline_map.fillna("").astype(str).str.strip().ne("")
+    updated.loc[match_mask, "Author"] = headline_map[match_mask]
+    return updated
+
+
 def fixable_headline_stats(
     df: pd.DataFrame,
     counter: int,

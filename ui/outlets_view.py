@@ -572,8 +572,44 @@ def render_outlets_page() -> None:
 
         st.session_state.outlets_section = "Cleanup"
         raw_rollup_preview, cleanup_clusters, current_entities = rebuild_outlet_cleanup_data()
+        outlet_map = st.session_state.get("outlet_rollup_map", {})
+        dismissed_candidates_map = {
+            str(cluster_id): {str(name).strip() for name in (names or []) if str(name).strip()}
+            for cluster_id, names in st.session_state.get("outlet_cleanup_dismissed_candidates", {}).items()
+        }
+
+        filtered_cleanup_clusters: list[dict[str, object]] = []
+        for cluster in cleanup_clusters:
+            cluster_id = str(cluster.get("cluster_id", "") or "")
+            dismissed_names = dismissed_candidates_map.get(cluster_id, set())
+            unresolved_candidates = []
+            for row in cluster.get("candidates", []):
+                outlet_name = str(row.get("Outlet", "")).strip()
+                if not outlet_name:
+                    continue
+                if outlet_name in dismissed_names:
+                    continue
+                if outlet_map.get(outlet_name, outlet_name) != outlet_name:
+                    continue
+                unresolved_candidates.append(row)
+
+            if len(unresolved_candidates) < 2:
+                continue
+
+            cluster_copy = dict(cluster)
+            cluster_copy["candidates"] = unresolved_candidates
+            cluster_copy["candidate_count"] = len(unresolved_candidates)
+            cluster_copy["mentions"] = int(sum(int(pd.to_numeric(row.get("Mentions", 0), errors="coerce") or 0) for row in unresolved_candidates))
+            cluster_copy["impressions"] = int(sum(int(pd.to_numeric(row.get("Impressions", 0), errors="coerce") or 0) for row in unresolved_candidates))
+            cluster_copy["effective_reach"] = int(sum(int(pd.to_numeric(row.get("Effective Reach", 0), errors="coerce") or 0) for row in unresolved_candidates))
+            if str(cluster_copy.get("suggested_master", "")).strip() not in {
+                str(row.get("Outlet", "")).strip() for row in unresolved_candidates
+            }:
+                cluster_copy["suggested_master"] = str(unresolved_candidates[0].get("Outlet", "")).strip()
+            filtered_cleanup_clusters.append(cluster_copy)
+
         cleanup_clusters = sorted(
-            cleanup_clusters,
+            filtered_cleanup_clusters,
             key=lambda row: (
                 row.get("candidate_count", 0),
                 row.get("mentions", 0),
@@ -690,10 +726,27 @@ def render_outlets_page() -> None:
                 elif not canonical_target:
                     st.warning("Choose or enter a master outlet name.")
                 else:
+                    dismissed_map = dict(st.session_state.get("outlet_cleanup_dismissed_candidates", {}))
+                    dismissed_set = {
+                        str(name).strip()
+                        for name in candidate_editor.loc[~candidate_editor["Merge"], "Outlet"].astype(str).tolist()
+                        if str(name).strip()
+                    }
+                    if dismissed_set:
+                        existing_dismissed = {
+                            str(name).strip()
+                            for name in dismissed_map.get(cluster["cluster_id"], [])
+                            if str(name).strip()
+                        }
+                        dismissed_map[cluster["cluster_id"]] = sorted(existing_dismissed | dismissed_set)
+                    else:
+                        dismissed_map.pop(cluster["cluster_id"], None)
+                    st.session_state.outlet_cleanup_dismissed_candidates = dismissed_map
+
                     apply_outlet_rollup_map(st.session_state, selected_sources, canonical_target)
                     selected_candidates_map.pop(cluster["cluster_id"], None)
                     st.session_state.outlet_cleanup_selected_candidates = selected_candidates_map
-                    st.session_state.outlet_cleanup_cluster_index = min(cluster_index + 1, max(len(cleanup_clusters) - 1, 0))
+                    st.session_state.outlet_cleanup_cluster_index = cluster_index
                     st.rerun()
 
         st.divider()
@@ -911,13 +964,17 @@ def render_outlets_page() -> None:
             )
             inspect_outlet = st.session_state["outlet_insights_active_outlet"]
             inspect_index = valid_outlets.index(inspect_outlet) if inspect_outlet in valid_outlets else 0
-            nav_col1, nav_col2, nav_col3 = st.columns([1, 1, 1.3], gap="small")
+            nav_col1, nav_col2, nav_col3 = st.columns(
+                [1, 1, 1.3],
+                gap="small",
+                vertical_alignment="bottom",
+            )
             with nav_col1:
-                if st.button("", key="outlet_inspector_prev", use_container_width=True, disabled=inspect_index <= 0, icon=":material/skip_previous:", help="Previous outlet"):
+                if st.button("Prev", key="outlet_inspector_prev", use_container_width=True, disabled=inspect_index <= 0, icon=":material/skip_previous:", help="Previous outlet"):
                     st.session_state.outlet_insights_pending_active_outlet = valid_outlets[inspect_index - 1]
                     st.rerun()
             with nav_col2:
-                if st.button("", key="outlet_inspector_next", use_container_width=True, disabled=inspect_index >= len(valid_outlets) - 1, icon=":material/skip_next:", help="Next outlet"):
+                if st.button("Next", key="outlet_inspector_next", use_container_width=True, disabled=inspect_index >= len(valid_outlets) - 1, icon=":material/skip_next:", help="Next outlet"):
                     st.session_state.outlet_insights_pending_active_outlet = valid_outlets[inspect_index + 1]
                     st.rerun()
             with nav_col3:

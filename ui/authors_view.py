@@ -26,7 +26,9 @@ from processing.author_insights import (
     init_author_insights_state,
 )
 from processing.missing_authors import (
+    apply_bulk_author_fixes,
     apply_author_fix,
+    build_obvious_author_acceptance_table,
     build_fixable_headline_table,
     build_last_author_fix_payload,
     get_headline_authors,
@@ -174,12 +176,12 @@ def render_authors_page() -> None:
 
         by_mentions = (
             working.sort_values(["Mentions", "Impressions"], ascending=False)["Author"]
-            .head(25)
+            .head(15)
             .tolist()
         )
         by_impressions = (
             working.sort_values(["Impressions", "Mentions"], ascending=False)["Author"]
-            .head(25)
+            .head(15)
             .tolist()
         )
 
@@ -283,8 +285,10 @@ def render_authors_page() -> None:
         )
 
         headline_table = build_fixable_headline_table(author_working_df)
+        obvious_acceptance_table = build_obvious_author_acceptance_table(author_working_df)
         counter = st.session_state.auth_skip_counter
         reviewed = st.session_state.auth_reviewed_count
+        obvious_count = int(len(obvious_acceptance_table))
 
         if len(headline_table) == 0:
             st.success("No fixable missing-author headlines remain in the current filtered view.")
@@ -303,10 +307,40 @@ def render_authors_page() -> None:
             elif st.session_state.get("authors_missing_select_author") not in possibles:
                 st.session_state.authors_missing_select_author = possibles[0] if possibles else ""
 
-            controls_spacer, controls_col = st.columns([0.55, 2.45], gap="small")
-            with controls_col:
-                button_first, button_prev, button_next, button_last, button_undo, button_status = st.columns(
-                    [0.42, 0.42, 0.42, 0.42, 0.65, 1.15], gap="small"
+            controls_left, controls_center, controls_right = st.columns(
+                [1.15, 1.85, 0.7],
+                gap="small",
+                vertical_alignment="bottom",
+            )
+            with controls_left:
+                if st.button(
+                    f"Accept obvious ({obvious_count})",
+                    key="authors_missing_accept_obvious",
+                    disabled=obvious_count == 0,
+                    use_container_width=True,
+                    help="Accept missing-author fixes where the same quality author accounts for at least 80% of known suggestions for that headline.",
+                ):
+                    st.session_state.last_author_fix = {
+                        "mode": "bulk_obvious_author_accept",
+                        "row_indexes": st.session_state.df_traditional.index.tolist(),
+                        "previous_authors": st.session_state.df_traditional["Author"].copy(),
+                        "previous_reviewed_count": st.session_state.auth_reviewed_count,
+                    }
+                    st.session_state.df_traditional = apply_bulk_author_fixes(
+                        st.session_state.df_traditional,
+                        obvious_acceptance_table[["Headline", "Suggested Author"]].copy(),
+                    )
+                    invalidate_author_outlet_cache()
+                    st.session_state.auth_reviewed_count = reviewed + obvious_count
+                    st.session_state.author_outlet_state_dirty = True
+                    st.session_state.auth_skip_counter = 0
+                    st.rerun()
+
+            with controls_center:
+                button_first, button_prev, button_next, button_last = st.columns(
+                    [0.42, 0.42, 0.42, 0.42],
+                    gap="small",
+                    vertical_alignment="bottom",
                 )
 
                 with button_first:
@@ -357,21 +391,20 @@ def render_authors_page() -> None:
                         st.session_state.auth_skip_counter = len(headline_table) - 1
                         st.rerun()
 
-                with button_undo:
-                    if st.button(
-                        "Undo",
-                        key="authors_missing_undo",
-                        disabled=st.session_state.get("last_author_fix") is None,
-                        use_container_width=True,
-                    ):
-                        undo_last_author_fix(st.session_state)
-                        invalidate_author_outlet_cache()
-                        st.session_state.author_outlet_state_dirty = True
-                        st.rerun()
+            with controls_right:
+                if st.button(
+                    "Undo",
+                    key="authors_missing_undo",
+                    disabled=st.session_state.get("last_author_fix") is None,
+                    use_container_width=True,
+                ):
+                    undo_last_author_fix(st.session_state)
+                    invalidate_author_outlet_cache()
+                    st.session_state.author_outlet_state_dirty = True
+                    st.rerun()
 
-                with button_status:
-                    if counter > 0:
-                        st.caption(f"Current position: {counter}")
+            if counter > 0:
+                st.caption(f"Current position: {counter}")
 
             col1, col2, col3 = st.columns([12, 1, 9])
 
@@ -393,16 +426,16 @@ def render_authors_page() -> None:
                     low_signal_color = "color: #985331;"
                     authors_display = headline_authors_df[["Possible Author(s)", "Count"]].copy()
                     signal_mask = headline_authors_df["In Signal"].tolist()
-                    max_count = int(authors_display["Count"].max()) if len(authors_display) > 0 else 0
-                    use_signal_coloring = len(authors_display) > 1 or max_count > 1
+                    count_values = authors_display["Count"].fillna(0).astype(int).tolist()
+                    use_signal_coloring = any(count > 1 for count in count_values)
                     styled_authors = (
                         authors_display.style
                         .apply(
                             lambda col: [
                                 (
-                                    highlight_color if in_signal else low_signal_color
+                                    highlight_color if (in_signal and count > 1) else low_signal_color
                                 ) if use_signal_coloring else ""
-                                for in_signal in signal_mask
+                                for in_signal, count in zip(signal_mask, count_values)
                             ],
                             axis=0,
                             subset=["Possible Author(s)"],
@@ -479,25 +512,19 @@ def render_authors_page() -> None:
 
         st.divider()
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns([1, 1], gap="large")
         with col1:
-            st.write("**Original Top Authors**")
-            media_type_column = "Type" if "Type" in st.session_state.df_untouched.columns else "Media Type"
-            filtered_df = st.session_state.df_untouched[
-                st.session_state.df_untouched[media_type_column].isin(["PRINT", "ONLINE_NEWS", "ONLINE", "BLOGS", "PRESS_RELEASE"])
-            ].copy()
-            if "Mentions" not in filtered_df.columns:
-                filtered_df["Mentions"] = 1
-            st.dataframe(top_x_by_mentions(filtered_df, "Author"), use_container_width=True, hide_index=True)
-        with col2:
             st.write("**Current Top Authors**")
             st.dataframe(top_x_by_mentions(author_working_df, "Author"), use_container_width=True, hide_index=True)
-        with col3:
+        with col2:
             st.write("**Fixable Author Stats**")
             remaining_count = max(len(headline_table) - st.session_state.auth_skip_counter, 0)
-            st.metric("Reviewed", len(headline_table) - remaining_count + reviewed if len(headline_table) > 0 else reviewed)
-            st.metric("Updated", reviewed)
-            st.metric("Remaining in this view", remaining_count)
+            metric_col1, metric_col2 = st.columns(2, gap="medium")
+            with metric_col1:
+                st.metric("Reviewed", len(headline_table) - remaining_count + reviewed if len(headline_table) > 0 else reviewed)
+                st.metric("Remaining in this view", remaining_count)
+            with metric_col2:
+                st.metric("Updated", reviewed)
 
     def render_author_outlets_tab() -> None:
         st.session_state.authors_section = "Outlets"
@@ -539,6 +566,58 @@ def render_authors_page() -> None:
         if auto_assigned_rows:
             with st.expander("Auto-assigned this session", expanded=False):
                 st.dataframe(pd.DataFrame(auto_assigned_rows), use_container_width=True, hide_index=True)
+                review_options = []
+                for row in auto_assigned_rows:
+                    author_name = str(row.get("Author", "") or "").strip()
+                    outlet_name = str(row.get("Outlet", "") or "").strip()
+                    if author_name:
+                        review_options.append((author_name, outlet_name))
+
+                if review_options:
+                    option_labels = [
+                        f"{author_name} | {outlet_name}" if outlet_name else author_name
+                        for author_name, outlet_name in review_options
+                    ]
+                    selected_label = st.selectbox(
+                        "Review auto-assigned name",
+                        option_labels,
+                        key="authors_auto_assigned_review_target",
+                        help="Choose an auto-assigned author name to correct without leaving this queue.",
+                    )
+                    selected_index = option_labels.index(selected_label)
+                    selected_author, selected_outlet = review_options[selected_index]
+                    corrected_name = st.text_input(
+                        "Corrected author name",
+                        value=selected_author,
+                        key="authors_auto_assigned_review_name",
+                        help="Update the author name across the cleaned dataset and keep the outlet assignment workflow aligned.",
+                    )
+                    if st.button(
+                        "Apply auto-assigned name fix",
+                        key="authors_auto_assigned_apply_fix",
+                        type="primary",
+                        use_container_width=False,
+                    ):
+                        new_name = corrected_name.strip()
+                        if not new_name:
+                            st.warning("Please enter a corrected author name.")
+                        elif new_name == selected_author:
+                            st.info("No change to apply.")
+                        else:
+                            apply_author_name_fix(st.session_state, selected_author, new_name)
+                            invalidate_author_outlet_cache([selected_author, new_name])
+                            updated_rows = []
+                            for row in auto_assigned_rows:
+                                row_author = str(row.get("Author", "") or "").strip()
+                                if row_author == selected_author:
+                                    updated = dict(row)
+                                    updated["Author"] = new_name
+                                    updated_rows.append(updated)
+                                else:
+                                    updated_rows.append(row)
+                            st.session_state.author_outlet_auto_assigned_rows = updated_rows
+                            st.session_state.author_outlet_state_dirty = True
+                            st.rerun()
 
         if st.session_state.auth_outlet_skipped < len(auth_outlet_todo):
             original_author_name = auth_outlet_todo.iloc[st.session_state.auth_outlet_skipped]["Author"]
@@ -1218,13 +1297,17 @@ def render_authors_page() -> None:
                 )
                 inspect_author = st.session_state["authors_insights_active_author"]
                 inspect_index = valid_authors.index(inspect_author) if inspect_author in valid_authors else 0
-                nav_col1, nav_col2, nav_col3 = st.columns([1, 1, 1.3], gap="small")
+                nav_col1, nav_col2, nav_col3 = st.columns(
+                    [1, 1, 1.3],
+                    gap="small",
+                    vertical_alignment="bottom",
+                )
                 with nav_col1:
-                    if st.button("", key="authors_inspector_prev", use_container_width=True, disabled=inspect_index <= 0, icon=":material/skip_previous:", help="Previous author"):
+                    if st.button("Prev", key="authors_inspector_prev", use_container_width=True, disabled=inspect_index <= 0, icon=":material/skip_previous:", help="Previous author"):
                         st.session_state["authors_insights_pending_active_author"] = valid_authors[inspect_index - 1]
                         st.rerun()
                 with nav_col2:
-                    if st.button("", key="authors_inspector_next", use_container_width=True, disabled=inspect_index >= len(valid_authors) - 1, icon=":material/skip_next:", help="Next author"):
+                    if st.button("Next", key="authors_inspector_next", use_container_width=True, disabled=inspect_index >= len(valid_authors) - 1, icon=":material/skip_next:", help="Next author"):
                         st.session_state["authors_insights_pending_active_author"] = valid_authors[inspect_index + 1]
                         st.rerun()
                 with nav_col3:
