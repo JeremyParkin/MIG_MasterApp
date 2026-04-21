@@ -218,7 +218,39 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
                     return disagreements
             return out
 
+        if review_mode == "All Toned Coverage":
+            return out
+
         return out
+
+
+    def build_all_toned_candidates(unique_df: pd.DataFrame) -> pd.DataFrame:
+        if unique_df is None or unique_df.empty:
+            return pd.DataFrame()
+
+        working = unique_df.copy()
+        ai_label = working.get("AI Sentiment", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.strip()
+        pool = working[ai_label != ""].copy()
+        if pool.empty:
+            return pool
+
+        for col in ["Mentions", "Impressions", "Effective Reach"]:
+            if col not in pool.columns:
+                pool[col] = 0
+            pool[col] = pd.to_numeric(pool[col], errors="coerce").fillna(0)
+
+        pool["AI Sentiment Confidence"] = pd.to_numeric(
+            pool.get("AI Sentiment Confidence", pd.Series(index=pool.index, dtype="float")),
+            errors="coerce",
+        ).fillna(-1)
+        pool = (
+            pool.sort_values(
+                ["Mentions", "Impressions", "Effective Reach", "AI Sentiment Confidence"],
+                ascending=[False, False, False, False],
+            )
+            .reset_index(drop=True)
+        )
+        return pool
     
     
     # def build_sentiment_distribution(df_unique: pd.DataFrame, sentiment_type: str) -> pd.DataFrame:
@@ -338,6 +370,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         sentiment_type=sentiment_type,
         conf_thresh=DEFAULT_CONF_THRESH,
     )
+    all_toned_candidates = build_all_toned_candidates(st.session_state.df_sentiment_unique)
     
     checked = len(st.session_state.spot_checked_groups)
     accepted = len(st.session_state.accepted_initial)
@@ -463,15 +496,17 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
     
     review_mode = st.radio(
         "Review queue",
-        ["Flagged for human review", "Disagreements only", "All unresolved stories"],
+        ["Flagged for human review", "Disagreements only", "All unresolved stories", "All Toned Coverage"],
         horizontal=True,
         label_visibility="collapsed",
         key="spotcheck_review_mode",
     )
-    
+
+    review_source_df = all_toned_candidates if review_mode == "All Toned Coverage" else base_candidates
+
     if spot_checks_mode == "spot_checks":
         pending_candidates = filter_candidates_for_review_mode(
-            base_candidates,
+            review_source_df,
             review_mode=review_mode,
             low_conf_threshold=low_conf_threshold,
         )
@@ -486,11 +521,11 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
             st.metric("In review queue", f"{len(pending_candidates):,}")
     
     candidates = filter_candidates_for_review_mode(
-        base_candidates,
+        review_source_df,
         review_mode=review_mode,
         low_conf_threshold=low_conf_threshold,
     )
-    st.caption("This filter changes the queue used by Prev/Next. Flagged focuses on stories marked for human review, and Disagreements focuses only on first-vs-second AI mismatches.")
+    st.caption("This filter changes the queue used by Prev/Next. Flagged focuses on stories marked for human review, Disagreements focuses only on first-vs-second AI mismatches, and All Toned Coverage shows every story the AI has labeled.")
     
     if candidates.empty:
         st.info("No stories match the current view.")

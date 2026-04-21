@@ -582,7 +582,39 @@ def filter_tag_candidates_for_review_mode(
                 return disagreements
         return out
 
+    if review_mode == "All Tagged Coverage":
+        return out
+
     return out
+
+
+def compute_all_tagged_candidates(df_unique: pd.DataFrame) -> pd.DataFrame:
+    if df_unique is None or df_unique.empty:
+        return pd.DataFrame()
+
+    working = df_unique.copy()
+    ai_tag = working.get("AI Tag", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.strip()
+    pool = working[ai_tag != ""].copy()
+    if pool.empty:
+        return pool
+
+    for col in ["Mentions", "Impressions", "Effective Reach"]:
+        if col not in pool.columns:
+            pool[col] = 0
+        pool[col] = pd.to_numeric(pool[col], errors="coerce").fillna(0)
+
+    pool["AI Tag Confidence"] = pd.to_numeric(
+        pool.get("AI Tag Confidence", pd.Series(index=pool.index, dtype="float")),
+        errors="coerce",
+    ).fillna(-1)
+    pool = (
+        pool.sort_values(
+            ["Mentions", "Impressions", "Effective Reach", "AI Tag Confidence"],
+            ascending=[False, False, False, False],
+        )
+        .reset_index()
+    )
+    return pool
 
 
 def write_review_tag_to_group(
