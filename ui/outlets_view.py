@@ -602,9 +602,12 @@ def render_outlets_page() -> None:
             cluster_copy["mentions"] = int(sum(int(pd.to_numeric(row.get("Mentions", 0), errors="coerce") or 0) for row in unresolved_candidates))
             cluster_copy["impressions"] = int(sum(int(pd.to_numeric(row.get("Impressions", 0), errors="coerce") or 0) for row in unresolved_candidates))
             cluster_copy["effective_reach"] = int(sum(int(pd.to_numeric(row.get("Effective Reach", 0), errors="coerce") or 0) for row in unresolved_candidates))
-            if str(cluster_copy.get("suggested_master", "")).strip() not in {
-                str(row.get("Outlet", "")).strip() for row in unresolved_candidates
-            }:
+            if (
+                str(cluster_copy.get("reason", "")).strip() != "Suggested network rollup"
+                and str(cluster_copy.get("suggested_master", "")).strip() not in {
+                    str(row.get("Outlet", "")).strip() for row in unresolved_candidates
+                }
+            ):
                 cluster_copy["suggested_master"] = str(unresolved_candidates[0].get("Outlet", "")).strip()
             filtered_cleanup_clusters.append(cluster_copy)
 
