@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_mode: str | None = None) -> None:
+    from datetime import datetime
+
     import streamlit as st
     if embedded_review is not None:
         st.session_state["sentiment_review_embedded"] = embedded_review
@@ -354,9 +356,10 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
     ) if not reviewed_candidates.empty else 0
     
     
-    last_batch = st.session_state.get("__last_spot_check_ai_summary__")
-    if last_batch and spot_checks_mode == "pre_review":
-        st.success("AI pre-review batch complete. Review counts updated below.")
+    pre_review_message = st.session_state.get("spotcheck_pre_review_message")
+    if pre_review_message and spot_checks_mode == "pre_review":
+        st.success(pre_review_message)
+        st.session_state.spotcheck_pre_review_message = None
     
     if base_candidates.empty:
         st.success("All set — no remaining stories need spot checks.")
@@ -429,6 +432,10 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
                         "elapsed": 0.0,
                         "errors": batch_errors,
                     }
+                    completed_at = datetime.now().astimezone().strftime("%b %-d, %Y at %-I:%M %p")
+                    st.session_state.spotcheck_pre_review_message = (
+                        f"AI pre-review batch completed {completed_at}. Review counts updated below."
+                    )
                     st.rerun()
     
             with action2:
