@@ -7,7 +7,11 @@ import warnings
 import pandas as pd
 import streamlit as st
 
-from processing.download_exports import build_clean_workbook_bytes, build_report_copy_docx_bytes
+from processing.download_exports import (
+    build_clean_workbook_bytes,
+    build_report_copy_docx_bytes,
+    build_scoped_traditional_export_bundle,
+)
 from processing.notebooklm_exports import build_notebooklm_zip
 
 warnings.filterwarnings("ignore")
@@ -99,8 +103,9 @@ build_nlm = st.button(
 if build_nlm:
     try:
         with st.spinner("Building NotebookLM bundle..."):
+            scoped_traditional, _excluded_rows, _excluded_counts = build_scoped_traditional_export_bundle(st.session_state)
             nlm_zip_io, nlm_info = build_notebooklm_zip(
-                st.session_state.df_traditional,
+                scoped_traditional,
                 st.session_state.df_social,
                 client_name=st.session_state.client_name,
             )

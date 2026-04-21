@@ -391,6 +391,7 @@ def build_sentiment_configuration(
     alternate_names: list[str],
     spokespeople: list[str],
     products: list[str],
+    highlight_keywords: list[str] | None,
     toning_rationale: str,
     sentiment_type: str,
     model: str,
@@ -410,7 +411,7 @@ def build_sentiment_configuration(
     prods = session_state.ui_products
     rationale_str = session_state.ui_toning_rationale.strip() if session_state.ui_toning_rationale else None
 
-    display_keywords = list(session_state.ui_primary_names) + aliases + spokes + prods
+    display_keywords = list(session_state.ui_primary_names) + aliases + spokes + prods + _clean_list(highlight_keywords or [])
     seen_cf, deduped_display = set(), []
     for k in display_keywords:
         cf = k.casefold()

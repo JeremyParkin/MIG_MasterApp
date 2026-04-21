@@ -8,8 +8,24 @@ from typing import Any
 
 import pandas as pd
 
+from processing.analysis_context import (
+    _build_dataset_scope_masks,
+    apply_session_coverage_flag_policy,
+    build_coverage_row_key_series,
+    build_dataset_scope_preview,
+    get_dataset_coverage_flag_exclusions,
+    get_dataset_coverage_keep_keys,
+    get_dataset_scope_date_range,
+    get_dataset_scope_media_types,
+    get_qualitative_coverage_flag_exclusions,
+)
 from processing.author_insights import build_author_headline_table, build_author_metrics
 from processing.outlet_insights import build_outlet_headline_table, build_outlet_metrics
+from processing.regions import (
+    build_region_rankings,
+    build_regions_source_df,
+    filter_regions_df,
+)
 from processing.top_story_summaries import normalize_summary_df
 
 
@@ -88,6 +104,141 @@ def add_mapped_outlet_column(df: pd.DataFrame, outlet_rollup_map: dict[str, str]
     return out
 
 
+def build_scoped_traditional_export_bundle(session_state) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    traditional = session_state.get("df_traditional", pd.DataFrame()).copy()
+    if traditional.empty:
+        empty = pd.DataFrame()
+        return empty, empty, empty
+
+    start_date, end_date = get_dataset_scope_date_range(session_state)
+    selected_media_types = get_dataset_scope_media_types(session_state)
+    excluded_flags = get_dataset_coverage_flag_exclusions(session_state)
+    keep_row_keys = get_dataset_coverage_keep_keys(session_state)
+
+    masks = _build_dataset_scope_masks(
+        traditional,
+        start_date=start_date,
+        end_date=end_date,
+        selected_media_types=selected_media_types,
+        excluded_flags=excluded_flags,
+    )
+    if not masks:
+        empty = pd.DataFrame()
+        return traditional.reset_index(drop=True), empty, empty
+
+    working = traditional.copy()
+    working["_row_key"] = build_coverage_row_key_series(working)
+    working["_removal_reasons"] = [[] for _ in range(len(working))]
+
+    for reason, mask in masks.items():
+        matched_indexes = working.index[mask.reindex(working.index, fill_value=False)]
+        for idx in matched_indexes:
+            working.at[idx, "_removal_reasons"] = list(working.at[idx, "_removal_reasons"]) + [reason]
+
+    keep_row_keys = {str(key).strip() for key in keep_row_keys if str(key).strip()}
+    removal_mask = working["_removal_reasons"].map(bool) & ~working["_row_key"].isin(keep_row_keys)
+
+    removed = working[removal_mask].copy()
+    removed["Removal Reason"] = removed["_removal_reasons"].map(lambda values: "; ".join(values))
+    removed = removed.drop(columns=["_removal_reasons"], errors="ignore").reset_index(drop=True)
+
+    scoped = working[~removal_mask].copy()
+    scoped = scoped.drop(columns=["_row_key", "_removal_reasons"], errors="ignore").reset_index(drop=True)
+
+    preview = build_dataset_scope_preview(
+        traditional,
+        start_date=start_date,
+        end_date=end_date,
+        selected_media_types=selected_media_types,
+        excluded_flags=excluded_flags,
+        keep_row_keys=keep_row_keys,
+    )
+    counts_df = preview.get("counts_df", pd.DataFrame()).copy()
+
+    return scoped, removed, counts_df
+
+
+def _build_regions_signature_for_export(session_state, filtered_df: pd.DataFrame) -> tuple:
+    return (
+        session_state.get("regions_metric", "Mentions"),
+        tuple(session_state.get("regions_analysis_levels", [])),
+        tuple(session_state.get("regions_exclude_coverage_flags", [])),
+        tuple(session_state.get("regions_include_countries", [])),
+        tuple(session_state.get("regions_exclude_countries", [])),
+        int(len(filtered_df)),
+        int(filtered_df["Mentions"].sum()) if not filtered_df.empty else 0,
+        int(filtered_df["Impressions"].sum()) if not filtered_df.empty else 0,
+        int(filtered_df["Effective Reach"].sum()) if not filtered_df.empty else 0,
+    )
+
+
+def build_regions_export_table(session_state) -> pd.DataFrame:
+    if not bool(session_state.get("regions_prepared", False)):
+        return pd.DataFrame()
+
+    df_traditional = session_state.get("df_traditional", pd.DataFrame()).copy()
+    if df_traditional.empty:
+        return pd.DataFrame()
+
+    prepared = build_regions_source_df(
+        df_traditional,
+        outlet_rollup_map=session_state.get("outlet_rollup_map", {}),
+    )
+    qualitative_flags = tuple(get_qualitative_coverage_flag_exclusions(session_state))
+    prepared = apply_session_coverage_flag_policy(prepared, session_state, list(qualitative_flags))
+    filtered_df = filter_regions_df(
+        prepared,
+        exclude_coverage_flags=[],
+        include_countries=session_state.get("regions_include_countries", []),
+        exclude_countries=session_state.get("regions_exclude_countries", []),
+    )
+    if filtered_df.empty:
+        return pd.DataFrame()
+
+    current_signature = _build_regions_signature_for_export(session_state, filtered_df)
+    generated_store = session_state.get("regions_generated_output", {}) or {}
+    metric_label = session_state.get("regions_metric", "Mentions")
+    selected_levels = session_state.get("regions_analysis_levels", ["Countries", "States / Provinces", "Cities"])
+
+    level_specs: list[tuple[str, str]] = []
+    if "Countries" in selected_levels:
+        level_specs.append(("Countries", "Country"))
+    if "States / Provinces" in selected_levels:
+        level_specs.append(("States / Provinces", "State / Province"))
+    if "Cities" in selected_levels:
+        level_specs.append(("Cities", "City"))
+
+    frames: list[pd.DataFrame] = []
+    for label, level_key in level_specs:
+        rankings = build_region_rankings(filtered_df, level_key, metric_label=metric_label).head(15).copy()
+        if rankings.empty:
+            continue
+
+        level_entry = generated_store.get(label, {})
+        level_copy: dict[str, Any] = {}
+        if isinstance(level_entry, dict) and "content" in level_entry and level_entry.get("signature") == current_signature:
+            level_copy = level_entry.get("content", {}) or {}
+        elif isinstance(level_entry, dict) and "content" not in level_entry:
+            level_copy = level_entry
+
+        profiles = {
+            str(item.get("region", "")).strip(): str(item.get("blurb", "") or "").strip()
+            for item in level_copy.get("top_region_profiles", []) or []
+            if str(item.get("region", "")).strip()
+        }
+
+        rankings.insert(0, "Analysis Level", label)
+        rankings["Overall Observation"] = str(level_copy.get("overall_observation", "") or "").strip()
+        rankings["Top Region Profile"] = rankings["Region"].map(lambda region: profiles.get(str(region), ""))
+        rankings["Tail Observation"] = str(level_copy.get("tail_observation", "") or "").strip()
+        frames.append(rankings)
+
+    if not frames:
+        return pd.DataFrame()
+
+    return pd.concat(frames, ignore_index=True)
+
+
 def build_authors_export_table(
     df: pd.DataFrame,
     existing_assignments: pd.DataFrame | None = None,
@@ -136,14 +287,14 @@ def build_authors_export_table(
     return rebuilt[["Author", "Outlet", "Mentions", "Impressions"]].copy()
 
 
-def build_author_insights_export_table(session_state) -> pd.DataFrame:
-    df_traditional = session_state.get("df_traditional", pd.DataFrame()).copy()
+def build_author_insights_export_table(session_state, df_traditional: pd.DataFrame | None = None) -> pd.DataFrame:
+    df_traditional = (df_traditional.copy() if isinstance(df_traditional, pd.DataFrame) else session_state.get("df_traditional", pd.DataFrame()).copy())
     auth_outlet_table = session_state.get("auth_outlet_table", pd.DataFrame()).copy()
     auth_outlet_table = auth_outlet_table if isinstance(auth_outlet_table, pd.DataFrame) and not auth_outlet_table.empty else None
 
     summary, _story_level = build_author_metrics(df_traditional, auth_outlet_table=auth_outlet_table)
     if summary.empty:
-        return pd.DataFrame(columns=["Author", "Assigned Outlet", "Mentions", "Unique Mentions", "Impressions", "Effective Reach", "Good Outlet Rate", "Coverage Themes"])
+        return pd.DataFrame(columns=["Author", "Assigned Outlet", "Mentions", "Impressions", "Effective Reach"])
 
     selected_authors = [
         str(author).strip()
@@ -159,37 +310,28 @@ def build_author_insights_export_table(session_state) -> pd.DataFrame:
     else:
         export_df = summary.sort_values(["Mention_Total", "Impressions", "Unique_Stories"], ascending=False).copy()
 
-    export_df["Coverage Themes"] = export_df["Author"].map(lambda author: summaries.get(author, ""))
-    export_df["Good Outlet Rate"] = (
-        export_df["Good_Outlet_Stories"] / export_df["Unique_Stories"].replace(0, pd.NA)
-    ).fillna(0.0) * 100
-
     return export_df[[
         "Author",
         "Assigned Outlet",
         "Mention_Total",
-        "Unique_Stories",
         "Impressions",
         "Effective_Reach",
-        "Good Outlet Rate",
-        "Coverage Themes",
     ]].rename(
         columns={
             "Mention_Total": "Mentions",
-            "Unique_Stories": "Unique Mentions",
             "Effective_Reach": "Effective Reach",
         }
     ).copy()
 
 
-def build_outlets_export_table(session_state) -> pd.DataFrame:
-    df_traditional = session_state.get("df_traditional", pd.DataFrame()).copy()
+def build_outlets_export_table(session_state, df_traditional: pd.DataFrame | None = None) -> pd.DataFrame:
+    df_traditional = (df_traditional.copy() if isinstance(df_traditional, pd.DataFrame) else session_state.get("df_traditional", pd.DataFrame()).copy())
     summary, _story_level = build_outlet_metrics(
         df_traditional,
         outlet_rollup_map=session_state.get("outlet_rollup_map", {}),
     )
     if summary.empty:
-        return pd.DataFrame(columns=["Outlet", "Media Types", "Mentions", "Unique Mentions", "Impressions", "Effective Reach", "Good Outlet Rate", "Coverage Themes"])
+        return pd.DataFrame(columns=["Outlet", "Media Types", "Mentions", "Impressions", "Effective Reach"])
 
     selected_outlets = [
         str(outlet).strip()
@@ -205,24 +347,17 @@ def build_outlets_export_table(session_state) -> pd.DataFrame:
     else:
         export_df = summary.sort_values(["Mention_Total", "Impressions", "Unique_Mentions"], ascending=False).copy()
 
-    export_df["Coverage Themes"] = export_df["Outlet"].map(lambda outlet: summaries.get(outlet, ""))
-
     return export_df[[
         "Outlet",
         "Top_Types",
         "Mention_Total",
-        "Unique_Mentions",
         "Impressions",
         "Effective_Reach",
-        "Good_Outlet_Rate",
-        "Coverage Themes",
     ]].rename(
         columns={
             "Top_Types": "Media Types",
             "Mention_Total": "Mentions",
-            "Unique_Mentions": "Unique Mentions",
             "Effective_Reach": "Effective Reach",
-            "Good_Outlet_Rate": "Good Outlet Rate",
         }
     ).copy()
 
@@ -389,8 +524,16 @@ def build_tagging_sample_export(session_state) -> pd.DataFrame:
         "Mentions",
         "Impressions",
         "Effective Reach",
+        "Assigned Tag",
+        "AI Tag",
+        "AI Tag Confidence",
+        "AI Tag Agreement",
+        "Needs Human Review",
+        "Review AI Tag",
+        "Review AI Confidence",
         "AI Tags",
         "AI Tag Rationale",
+        "Review AI Rationale",
         "Tag_Processed",
     ]
 
@@ -436,7 +579,22 @@ def merge_full_scope_ai_columns_into_clean_trad(session_state, traditional: pd.D
 
     if should_merge_tagging_into_clean_trad(session_state):
         tag_rows = session_state.get("df_tagging_rows", pd.DataFrame()).copy()
-        tag_cols = [c for c in ["Group ID", "AI Tags", "AI Tag Rationale", "Tag_Processed"] if c in tag_rows.columns]
+        tag_cols = [
+            c for c in [
+                "Group ID",
+                "Assigned Tag",
+                "AI Tag",
+                "AI Tag Confidence",
+                "AI Tag Rationale",
+                "Review AI Tag",
+                "Review AI Confidence",
+                "Review AI Rationale",
+                "AI Tag Agreement",
+                "Needs Human Review",
+                "AI Tags",
+                "Tag_Processed",
+            ] if c in tag_rows.columns
+        ]
         binary_tag_cols = [c for c in tag_rows.columns if str(c).startswith("AI Tag: ")]
         tag_cols = tag_cols + binary_tag_cols
 
@@ -471,12 +629,27 @@ def merge_full_scope_ai_columns_into_clean_trad(session_state, traditional: pd.D
 
 # ---------- Metadata sheet ----------
 
-def build_export_metadata_sheet(session_state) -> pd.DataFrame:
+def build_export_metadata_sheet(
+    session_state,
+    *,
+    scoped_traditional_rows: int | None = None,
+    excluded_rows_df: pd.DataFrame | None = None,
+    excluded_counts_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     original_rows = len(session_state.get("df_untouched", pd.DataFrame()))
     clean_trad_rows = len(session_state.get("df_traditional", pd.DataFrame()))
     clean_social_rows = len(session_state.get("df_social", pd.DataFrame()))
     dupes_rows = len(session_state.get("df_dupes", pd.DataFrame()))
     row_check = clean_trad_rows + clean_social_rows + dupes_rows
+    excluded_rows_df = excluded_rows_df if isinstance(excluded_rows_df, pd.DataFrame) else pd.DataFrame()
+    excluded_counts_df = excluded_counts_df if isinstance(excluded_counts_df, pd.DataFrame) else pd.DataFrame()
+    scoped_trad_rows = clean_trad_rows if scoped_traditional_rows is None else int(scoped_traditional_rows)
+    excluded_rows = int(len(excluded_rows_df))
+    excluded_mentions = int(pd.to_numeric(excluded_rows_df.get("Mentions", pd.Series(dtype="float")), errors="coerce").fillna(0).sum()) if not excluded_rows_df.empty else 0
+    start_date, end_date = get_dataset_scope_date_range(session_state)
+    media_types = ", ".join(get_dataset_scope_media_types(session_state))
+    excluded_flags = ", ".join(get_dataset_coverage_flag_exclusions(session_state))
+    keep_overrides = len(get_dataset_coverage_keep_keys(session_state))
 
     tag_rows = session_state.get("df_tagging_rows", pd.DataFrame())
     tag_unique = session_state.get("df_tagging_unique", pd.DataFrame())
@@ -500,10 +673,18 @@ def build_export_metadata_sheet(session_state) -> pd.DataFrame:
         ("Client Name", session_state.get("client_name", "")),
         ("Original Rows", original_rows),
         ("Clean Traditional Rows", clean_trad_rows),
+        ("Scoped Traditional Rows", scoped_trad_rows),
         ("Clean Social Rows", clean_social_rows),
         ("Deleted Duplicate Rows", dupes_rows),
         ("Row Check Total", row_check),
         ("Row Check Matches Original", "Yes" if row_check == original_rows else "No"),
+        ("Data Scope Start Date", start_date.isoformat() if start_date else ""),
+        ("Data Scope End Date", end_date.isoformat() if end_date else ""),
+        ("Data Scope Media Types", media_types),
+        ("Data Scope Excluded Flags", excluded_flags),
+        ("Data Scope Keep Overrides", keep_overrides),
+        ("Data Scope Excluded Rows", excluded_rows),
+        ("Data Scope Excluded Mentions", excluded_mentions),
         ("Canonical Group ID Present", "Yes" if "Group ID" in session_state.get("df_traditional", pd.DataFrame()).columns else "No"),
         ("Prime Example Present", "Yes" if "Prime Example" in session_state.get("df_traditional", pd.DataFrame()).columns else "No"),
 
@@ -521,6 +702,11 @@ def build_export_metadata_sheet(session_state) -> pd.DataFrame:
         ("Sentiment Rows in Working Set", len(sent_rows) if isinstance(sent_rows, pd.DataFrame) else 0),
         ("Sentiment Merged Into Clean Trad", "Yes" if should_merge_sentiment_into_clean_trad(session_state) else "No"),
     ]
+
+    if not excluded_counts_df.empty:
+        rows.append(("", ""))
+        for _, row in excluded_counts_df.iterrows():
+            rows.append((f"Excluded · {row.get('Reason', '')}", int(row.get("Rows", 0) or 0)))
 
     return pd.DataFrame(rows, columns=["Field", "Value"])
 
@@ -789,6 +975,62 @@ def _iter_sentiment_report_sections(session_state) -> tuple[str, list[dict[str, 
     return overall, sections
 
 
+def _iter_regions_report_sections(session_state) -> list[dict[str, Any]]:
+    if not bool(session_state.get("regions_prepared", False)):
+        return []
+
+    df_traditional = session_state.get("df_traditional", pd.DataFrame()).copy()
+    if df_traditional.empty:
+        return []
+
+    prepared = build_regions_source_df(
+        df_traditional,
+        outlet_rollup_map=session_state.get("outlet_rollup_map", {}),
+    )
+    qualitative_flags = tuple(get_qualitative_coverage_flag_exclusions(session_state))
+    prepared = apply_session_coverage_flag_policy(prepared, session_state, list(qualitative_flags))
+    filtered_df = filter_regions_df(
+        prepared,
+        exclude_coverage_flags=[],
+        include_countries=session_state.get("regions_include_countries", []),
+        exclude_countries=session_state.get("regions_exclude_countries", []),
+    )
+    current_signature = _build_regions_signature_for_export(session_state, filtered_df)
+    generated_store = session_state.get("regions_generated_output", {}) or {}
+
+    selected_levels = session_state.get("regions_analysis_levels", ["Countries", "States / Provinces", "Cities"])
+    level_labels = [label for label in ["Countries", "States / Provinces", "Cities"] if label in selected_levels]
+    sections: list[dict[str, Any]] = []
+
+    for label in level_labels:
+        level_entry = generated_store.get(label, {})
+        level_copy: dict[str, Any] = {}
+        if isinstance(level_entry, dict) and "content" in level_entry and level_entry.get("signature") == current_signature:
+            level_copy = level_entry.get("content", {}) or {}
+        elif isinstance(level_entry, dict) and "content" not in level_entry:
+            level_copy = level_entry
+        if not level_copy:
+            continue
+
+        sections.append(
+            {
+                "title": label,
+                "overall": _safe_string(level_copy.get("overall_observation", "")),
+                "profiles": [
+                    {
+                        "region": _safe_string(item.get("region", "")),
+                        "blurb": _safe_string(item.get("blurb", "")),
+                    }
+                    for item in level_copy.get("top_region_profiles", []) or []
+                    if _safe_string(item.get("region", "")) and _safe_string(item.get("blurb", ""))
+                ],
+                "tail": _safe_string(level_copy.get("tail_observation", "")),
+            }
+        )
+
+    return sections
+
+
 def _iter_tag_report_sections(session_state) -> tuple[str, list[dict[str, Any]]]:
     observation_output = session_state.get("tagging_observation_output", {}) or {}
     overall = _safe_string(observation_output.get("overall_observation", ""))
@@ -953,6 +1195,23 @@ def build_report_copy_docx_bytes(session_state) -> bytes:
                 for example in section["examples"]:
                     _docx_add_example_block(document, example["headline"], example.get("url", ""), example.get("metrics", ""))
 
+    regions_sections = _iter_regions_report_sections(session_state)
+    if regions_sections:
+        has_content = True
+        document.add_heading("Regions", level=1)
+        for section in regions_sections:
+            document.add_heading(section["title"], level=2)
+            if section.get("overall"):
+                document.add_heading("Overall Observation", level=3)
+                document.add_paragraph(section["overall"])
+            if section.get("profiles"):
+                document.add_heading("Top Region Profiles", level=3)
+                for item in section["profiles"]:
+                    document.add_paragraph(f"{item['region']}: {item['blurb']}")
+            if section.get("tail"):
+                document.add_heading("Tail Observation", level=3)
+                document.add_paragraph(section["tail"])
+
     if not has_content:
         raise ValueError("No report-copy content is available yet. Generate at least one set of insights or observations first.")
 
@@ -965,7 +1224,7 @@ def build_report_copy_docx_bytes(session_state) -> bytes:
 # ---------- Workbook builder ----------
 
 def build_clean_workbook_bytes(session_state) -> bytes:
-    traditional = session_state.get("df_traditional", pd.DataFrame()).copy()
+    traditional, excluded_rows, excluded_counts = build_scoped_traditional_export_bundle(session_state)
     social = session_state.get("df_social", pd.DataFrame()).copy()
     top_stories = session_state.get("added_df", pd.DataFrame()).copy()
     dupes = session_state.get("df_dupes", pd.DataFrame()).copy()
@@ -1045,10 +1304,10 @@ def build_clean_workbook_bytes(session_state) -> bytes:
                 cleaned_exports.append(("SENTIMENT SAMPLE", sentiment_export, ws))
 
         # AUTHORS
-        authors = build_author_insights_export_table(session_state)
+        authors = build_author_insights_export_table(session_state, df_traditional=traditional)
         if authors.empty:
             authors = build_authors_export_table(
-                session_state.get("df_traditional", pd.DataFrame()).copy(),
+                traditional.copy(),
                 existing_assignments=session_state.get("auth_outlet_table", pd.DataFrame()).copy()
                 if len(session_state.get("auth_outlet_table", pd.DataFrame())) > 0 else None,
             )
@@ -1066,12 +1325,20 @@ def build_clean_workbook_bytes(session_state) -> bytes:
             cleaned_exports.append(("Authors", authors, ws))
 
         # OUTLETS
-        outlets = build_outlets_export_table(session_state)
+        outlets = build_outlets_export_table(session_state, df_traditional=traditional)
         if len(outlets) > 0:
             outlets.to_excel(writer, sheet_name="Outlets", header=True, index=False)
             ws = writer.sheets["Outlets"]
             ws.set_tab_color("green")
             cleaned_exports.append(("Outlets", outlets, ws))
+
+        # REGIONS
+        regions_export = build_regions_export_table(session_state)
+        if len(regions_export) > 0:
+            regions_export.to_excel(writer, sheet_name="Regions", header=True, index=False)
+            ws = writer.sheets["Regions"]
+            ws.set_tab_color("green")
+            cleaned_exports.append(("Regions", regions_export, ws))
 
         # TOP STORIES
         if len(top_stories) > 0:
@@ -1107,6 +1374,17 @@ def build_clean_workbook_bytes(session_state) -> bytes:
             ws.set_tab_color("#c26f4f")
             cleaned_exports.append(("DLTD DUPES", dupes_export, ws))
 
+        # EXCLUDED ROWS
+        if len(excluded_rows) > 0:
+            excluded_export = rename_ave(excluded_rows.copy(), original_ave_col=original_ave_col)
+            excluded_export = add_mapped_outlet_column(excluded_export, outlet_rollup_map=outlet_rollup_map)
+            if "Impressions" in excluded_export.columns:
+                excluded_export = excluded_export.sort_values(by=["Impressions"], ascending=False)
+            excluded_export.to_excel(writer, sheet_name="EXCLUDED ROWS", header=True, index=False)
+            ws = writer.sheets["EXCLUDED ROWS"]
+            ws.set_tab_color("#c26f4f")
+            cleaned_exports.append(("EXCLUDED ROWS", excluded_export, ws))
+
         # RAW
         raw_export = rename_ave(raw.copy(), original_ave_col=original_ave_col)
         raw_export = add_mapped_outlet_column(raw_export, outlet_rollup_map=outlet_rollup_map)
@@ -1117,7 +1395,12 @@ def build_clean_workbook_bytes(session_state) -> bytes:
         cleaned_exports.append(("RAW", raw_export, ws))
 
         # EXPORT METADATA
-        metadata_export = build_export_metadata_sheet(session_state)
+        metadata_export = build_export_metadata_sheet(
+            session_state,
+            scoped_traditional_rows=len(traditional),
+            excluded_rows_df=excluded_rows,
+            excluded_counts_df=excluded_counts,
+        )
         metadata_export.to_excel(writer, sheet_name="EXPORT METADATA", header=True, index=False)
         ws = writer.sheets["EXPORT METADATA"]
         ws.set_tab_color("#4f81bd")

@@ -282,6 +282,15 @@ def reset_tagging_config_state(session_state) -> None:
     session_state.df_tagging_unique = pd.DataFrame()
     session_state.tagging_elapsed_time = 0.0
     session_state.tagging_excluded_flags = []
+    for key in [
+        "tagging_review_idx",
+        "tagging_review_mode",
+        "tagging_pre_review_n",
+        "tagging_review_low_conf_threshold",
+        "tagging_pre_review_message",
+        "__last_tagging_pre_review_summary__",
+    ]:
+        session_state.pop(key, None)
 
 
 def get_reusable_sentiment_sample(session_state) -> pd.DataFrame:

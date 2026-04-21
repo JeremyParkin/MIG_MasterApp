@@ -34,6 +34,7 @@ if "analysis_context_draft_initialized" not in st.session_state:
     st.session_state.analysis_context_draft_alternate_names = list(payload["alternate_names"])
     st.session_state.analysis_context_draft_spokespeople = list(payload["spokespeople"])
     st.session_state.analysis_context_draft_products = list(payload["products"])
+    st.session_state.analysis_context_draft_highlight_keywords = list(payload.get("highlight_keywords", []))
     st.session_state.analysis_context_draft_guidance = payload["guidance"]
     st.session_state.analysis_context_draft_exclude_aggregators = payload["exclude_aggregators_from_outlet_insights"]
     st.session_state.analysis_context_draft_qualitative_flags = list(payload["qualitative_excluded_flags"])
@@ -45,6 +46,11 @@ if "analysis_context_draft_initialized" not in st.session_state:
     st.session_state.analysis_context_draft_dataset_media_types = list(payload.get("dataset_media_types", []))
     st.session_state.analysis_context_draft_qualitative_keep_keys = list(payload.get("qualitative_exclusion_keep_keys", []))
     st.session_state.analysis_context_draft_dataset_keep_keys = list(payload.get("dataset_exclusion_keep_keys", []))
+
+st.session_state.setdefault(
+    "analysis_context_draft_highlight_keywords",
+    list(payload.get("highlight_keywords", [])),
+)
 
 pending_suggestions = st.session_state.pop("analysis_context_pending_suggestions", None)
 if pending_suggestions:
@@ -118,6 +124,7 @@ with st.container(border=True):
             st.session_state.analysis_context_draft_alternate_names = []
             st.session_state.analysis_context_draft_spokespeople = []
             st.session_state.analysis_context_draft_products = []
+            st.session_state.analysis_context_draft_highlight_keywords = []
             st.session_state.analysis_context_draft_guidance = ""
             st.session_state.analysis_context_suggestion_payload = None
             st.session_state.analysis_context_tag_widget_version += 1
@@ -149,9 +156,18 @@ with st.container(border=True):
         value=st.session_state.analysis_context_draft_products,
         key=f"analysis_context_products_tags_{tag_key_suffix}",
     )
+    highlight_keywords = st_tags(
+        label="Other keywords to highlight in Sentiment / Tagging",
+        text="Press enter to add more",
+        maxtags=30,
+        value=st.session_state.analysis_context_draft_highlight_keywords,
+        key=f"analysis_context_highlight_keywords_tags_{tag_key_suffix}",
+    )
+    st.caption("Highlight-only terms for spot checks. These are not added to AI prompt context.")
     st.session_state.analysis_context_draft_alternate_names = alternate_names
     st.session_state.analysis_context_draft_spokespeople = spokespeople
     st.session_state.analysis_context_draft_products = products
+    st.session_state.analysis_context_draft_highlight_keywords = highlight_keywords
     guidance = st.text_area(
         "Additional rationale, context, or guidance (optional)",
         key="analysis_context_draft_guidance",
@@ -364,6 +380,7 @@ with save_col:
             alternate_names=alternate_names,
             spokespeople=spokespeople,
             products=products,
+            highlight_keywords=highlight_keywords,
             guidance=guidance,
             qualitative_excluded_flags=qualitative_excluded_flags,
             dataset_excluded_flags=dataset_excluded_flags,

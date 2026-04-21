@@ -431,6 +431,7 @@ if st.session_state.sentiment_section == "Setup":
             alternate_names=analysis_payload["alternate_names"],
             spokespeople=analysis_payload["spokespeople"],
             products=analysis_payload["products"],
+            highlight_keywords=analysis_payload.get("highlight_keywords", []),
             toning_rationale=analysis_payload["guidance"],
             sentiment_type=sentiment_type,
             model=model,

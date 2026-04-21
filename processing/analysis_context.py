@@ -896,6 +896,10 @@ def init_analysis_context_state(session_state) -> None:
         or session_state.get("top_story_products")
         or []
     )
+    highlight_keywords_seed = _clean_list(
+        session_state.get("analysis_highlight_keywords")
+        or []
+    )
     guidance_seed = str(
         session_state.get("analysis_guidance")
         or session_state.get("ui_toning_rationale")
@@ -907,6 +911,7 @@ def init_analysis_context_state(session_state) -> None:
     session_state.setdefault("analysis_alternate_names", alternate_seed)
     session_state.setdefault("analysis_spokespeople", spokes_seed)
     session_state.setdefault("analysis_products", products_seed)
+    session_state.setdefault("analysis_highlight_keywords", highlight_keywords_seed)
     session_state.setdefault("analysis_guidance", guidance_seed)
     session_state.setdefault("analysis_exclude_aggregators_from_outlet_insights", True)
     session_state.setdefault("analysis_dataset_start_date", dataset_start.isoformat() if dataset_start else None)
@@ -940,6 +945,7 @@ def save_analysis_context(
     alternate_names: list[str],
     spokespeople: list[str],
     products: list[str],
+    highlight_keywords: list[str],
     guidance: str,
     qualitative_excluded_flags: list[str],
     dataset_excluded_flags: list[str],
@@ -955,6 +961,7 @@ def save_analysis_context(
     alternate_names = _clean_list(alternate_names)
     spokespeople = _clean_list(spokespeople)
     products = _clean_list(products)
+    highlight_keywords = _clean_list(highlight_keywords)
     guidance = str(guidance or "").strip()
 
     session_state.client_name = client_name
@@ -962,6 +969,7 @@ def save_analysis_context(
     session_state.analysis_alternate_names = alternate_names
     session_state.analysis_spokespeople = spokespeople
     session_state.analysis_products = products
+    session_state.analysis_highlight_keywords = highlight_keywords
     session_state.analysis_guidance = guidance
     session_state.analysis_qualitative_excluded_flags = [
         flag for flag in _clean_list(qualitative_excluded_flags) if flag in AVAILABLE_JUNKY_COVERAGE_FLAGS
@@ -1005,6 +1013,7 @@ def get_analysis_context_payload(session_state) -> dict[str, Any]:
         "alternate_names": _clean_list(session_state.get("analysis_alternate_names", [])),
         "spokespeople": _clean_list(session_state.get("analysis_spokespeople", [])),
         "products": _clean_list(session_state.get("analysis_products", [])),
+        "highlight_keywords": _clean_list(session_state.get("analysis_highlight_keywords", [])),
         "guidance": str(session_state.get("analysis_guidance", "") or "").strip(),
         "available_junky_flags": present_junky_flags,
         "available_media_types": present_media_types,

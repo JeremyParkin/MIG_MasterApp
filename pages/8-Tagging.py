@@ -30,6 +30,8 @@ from processing.ai_tagging import (
     build_default_tags_text,
     parse_tag_definitions,
     get_remaining_tagging_rows,
+    get_effective_tag_series,
+    normalize_tag_list,
     analyze_story_worker,
     apply_tagging_result_to_unique_df,
     cascade_tags_to_rows,
@@ -44,6 +46,7 @@ from utils.api_meter import (
     get_api_cost_usd,
     init_api_meter,
 )
+from ui.tagging_review_view import render_tagging_review_page
 
 warnings.filterwarnings("ignore")
 
@@ -52,6 +55,8 @@ DEFAULT_TAGGING_MODEL = "gpt-5.4-nano"
 st.title("AI Tagging")
 st.caption("Prepare a grouped coverage sample, configure tag definitions, and apply AI tags back onto the dataset.")
 st.session_state.setdefault("tagging_section", "Setup")
+if st.session_state.get("tagging_section") == "Review":
+    st.session_state.tagging_section = "Insights"
 
 if not st.session_state.get("standard_step", False):
     st.error("Please complete Basic Cleaning before trying this step.")
@@ -87,26 +92,31 @@ def _format_sample_mode(mode: str) -> str:
 
 
 def build_tag_distribution(df_tagging_unique: pd.DataFrame) -> pd.DataFrame:
-    tag_col = "AI Tag" if "AI Tag" in df_tagging_unique.columns else ("AI Tags" if "AI Tags" in df_tagging_unique.columns else None)
-    if tag_col is None:
+    effective_tags = get_effective_tag_series(df_tagging_unique)
+    if effective_tags.empty:
         return pd.DataFrame(columns=["Tag", "Count", "Share"])
 
-    tags = (
-        df_tagging_unique[tag_col]
-        .fillna("")
-        .astype(str)
-        .str.split(",")
-        .explode()
-        .astype(str)
-        .str.strip()
+    working = df_tagging_unique.copy()
+    working["_effective_tag_list"] = effective_tags.apply(normalize_tag_list)
+    working = working[working["_effective_tag_list"].map(bool)].copy()
+
+    if working.empty:
+        return pd.DataFrame(columns=["Tag", "Count", "Share"])
+
+    total_stories = int(len(working))
+    tag_counter: dict[str, int] = {}
+    for tags in working["_effective_tag_list"]:
+        for tag in tags:
+            tag_counter[tag] = tag_counter.get(tag, 0) + 1
+
+    out = (
+        pd.Series(tag_counter)
+        .rename_axis("Tag")
+        .reset_index(name="Count")
+        .sort_values(["Count", "Tag"], ascending=[False, True])
+        .reset_index(drop=True)
     )
-    tags = tags[tags != ""]
-
-    if tags.empty:
-        return pd.DataFrame(columns=["Tag", "Count", "Share"])
-
-    out = tags.value_counts().rename_axis("Tag").reset_index(name="Count")
-    out["Share"] = out["Count"] / int(out["Count"].sum())
+    out["Share"] = out["Count"] / total_stories if total_stories > 0 else 0.0
     return out
 
 
@@ -176,7 +186,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-step1, step2, step3 = st.columns(3, gap="small")
+step1, step2, step3, step4, step5 = st.columns(5, gap="small")
 with step1:
     if st.button(
         "1. Setup",
@@ -197,16 +207,34 @@ with step2:
         st.rerun()
 with step3:
     if st.button(
-        "3. Insights",
-        key="tagging_nav_review",
+        "3. AI Pre-Review",
+        key="tagging_nav_pre_review",
         use_container_width=True,
-        type="primary" if st.session_state.tagging_section == "Review" else "secondary",
+        type="primary" if st.session_state.tagging_section == "AI Pre-Review" else "secondary",
     ):
-        st.session_state.tagging_section = "Review"
+        st.session_state.tagging_section = "AI Pre-Review"
+        st.rerun()
+with step4:
+    if st.button(
+        "4. Spot Checks",
+        key="tagging_nav_spot_checks",
+        use_container_width=True,
+        type="primary" if st.session_state.tagging_section == "Spot Checks" else "secondary",
+    ):
+        st.session_state.tagging_section = "Spot Checks"
+        st.rerun()
+with step5:
+    if st.button(
+        "5. Insights",
+        key="tagging_nav_insights",
+        use_container_width=True,
+        type="primary" if st.session_state.tagging_section == "Insights" else "secondary",
+    ):
+        st.session_state.tagging_section = "Insights"
         st.rerun()
 
 st.markdown(
-    '<div class="tagging-step-note">Work left to right: prepare the tagging dataset, run AI tagging, then review the output-ready insights.</div>',
+    '<div class="tagging-step-note">Work left to right: prepare the tagging dataset, run AI tagging, run AI pre-review, complete human spot checks, then review output-ready insights.</div>',
     unsafe_allow_html=True,
 )
 
@@ -373,7 +401,7 @@ if st.session_state.tagging_section == "Setup":
 # STEP 2: RUN AI TAGGING
 # =========================
 if not st.session_state.tagging_config_step:
-    if st.session_state.tagging_section in {"Run", "Review"}:
+    if st.session_state.tagging_section in {"Run", "AI Pre-Review", "Spot Checks", "Insights"}:
         st.info("Prepare the tagging dataset in Setup before running or reviewing AI tagging.")
     st.stop()
 
@@ -530,9 +558,23 @@ if st.session_state.tagging_section == "Run":
     st.stop()
 
 # =========================
-# STEP 3: REVIEW OUTPUTS
+# STEP 3: AI PRE-REVIEW
 # =========================
-st.subheader("Step 3: Tagging Insights")
+if st.session_state.tagging_section == "AI Pre-Review":
+    render_tagging_review_page(review_stage="pre_review")
+    st.stop()
+
+# =========================
+# STEP 4: SPOT CHECKS
+# =========================
+if st.session_state.tagging_section == "Spot Checks":
+    render_tagging_review_page(review_stage="spot_checks")
+    st.stop()
+
+# =========================
+# STEP 5: REVIEW OUTPUTS
+# =========================
+st.subheader("Step 5: Tagging Insights")
 st.caption("Review the current tag distribution, generate report-ready tag observations, and inspect the grouped dataset when needed.")
 
 review_col1, review_col2, review_col3 = st.columns(3)
@@ -562,8 +604,6 @@ else:
         filtered_dist = filtered_dist[
             filtered_dist["Tag"].fillna("").astype(str).str.strip().str.lower() != "other"
         ].copy()
-        total = int(filtered_dist["Count"].sum())
-        filtered_dist["Share"] = filtered_dist["Count"] / total if total > 0 else 0.0
 
     dist_col1, dist_col2 = st.columns([1.35, 1], gap="large")
     with dist_col1:

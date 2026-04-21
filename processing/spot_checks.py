@@ -104,7 +104,10 @@ def init_spot_check_state(session_state) -> None:
 # ====================
 def escape_markdown(text: str) -> str:
     text = str(text or "")
-    markdown_special_chars = r"\`*_{}[]()#+-.!$"
+    # Avoid escaping hyphens globally here. The highlight regex runs on the escaped
+    # text, and turning "-" into "\-" breaks tolerant matching for hyphenated
+    # keywords like "Mont-Tremblant".
+    markdown_special_chars = r"\`*_{}[]()#+.!$"
     url_pattern = r"https?:\/\/[^\s]+"
 
     def esc(part: str) -> str:
