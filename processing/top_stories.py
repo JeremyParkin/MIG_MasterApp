@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 import numpy as np
@@ -118,7 +119,10 @@ def normalize_top_stories_df(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _normalize_recommendation_text(text: str) -> str:
-    text = str(text or "").casefold()
+    text = str(text or "")
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.casefold()
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
