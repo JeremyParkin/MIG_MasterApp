@@ -15,6 +15,7 @@ def render_top_stories_validation() -> None:
     top_stories_module = importlib.reload(top_stories_module)
 
     build_prime_grouped_story_candidates = top_stories_module.build_prime_grouped_story_candidates
+    build_story_identity_key = top_stories_module.build_story_identity_key
     build_source_candidate_table_from_candidates = top_stories_module.build_source_candidate_table_from_candidates
     normalize_top_stories_df = top_stories_module.normalize_top_stories_df
     parse_source_group_ids = top_stories_module.parse_source_group_ids
@@ -79,9 +80,41 @@ def render_top_stories_validation() -> None:
         st.stop()
 
     saved_df = saved_df.reset_index(drop=True)
+    source_group_ids = (
+        saved_df["Source Group IDs"]
+        if "Source Group IDs" in saved_df.columns
+        else pd.Series(index=saved_df.index, data="")
+    )
+    saved_df["_story_identity_key"] = [
+        build_story_identity_key(source_group_ids.iloc[idx], saved_df.iloc[idx].get("Group ID"))
+        for idx in range(len(saved_df))
+    ]
+    saved_keys = saved_df["_story_identity_key"].fillna("").astype(str).str.strip().tolist()
+    saved_signature = tuple(saved_keys)
+    prior_signature = st.session_state.get("top_stories_validation_saved_signature")
+    validated_keys = {
+        str(key).strip()
+        for key in st.session_state.get("top_stories_validation_confirmed_keys", [])
+        if str(key).strip()
+    }
+    if prior_signature != saved_signature:
+        validated_keys = validated_keys.intersection(set(saved_keys))
+        st.session_state.top_stories_validation_confirmed_keys = sorted(validated_keys)
+        st.session_state.top_stories_validation_saved_signature = saved_signature
+        st.session_state.top_stories_validation_index = 0
+
+    queue_df = saved_df[
+        ~saved_df["_story_identity_key"].fillna("").astype(str).str.strip().isin(validated_keys)
+    ].copy().reset_index(drop=True)
+    if queue_df.empty:
+        st.success("All saved top stories have confirmed sources.")
+        if saved_keys:
+            st.caption(f"Confirmed {len(validated_keys)} of {len(saved_keys)} saved stories.")
+        st.stop()
+
     st.session_state.setdefault("top_stories_validation_index", 0)
     current_index = int(st.session_state.get("top_stories_validation_index", 0) or 0)
-    current_index = max(0, min(current_index, len(saved_df) - 1))
+    current_index = max(0, min(current_index, len(queue_df) - 1))
     st.session_state.top_stories_validation_index = current_index
 
     nav_left, nav_right = st.columns([3.8, 2.2], gap="medium")
@@ -96,17 +129,18 @@ def render_top_stories_validation() -> None:
                 st.session_state.top_stories_validation_index = current_index - 1
                 st.rerun()
         with nav3:
-            if st.button("", key="top_story_validation_next", use_container_width=True, disabled=current_index >= len(saved_df) - 1, icon=":material/skip_next:", help="Next story"):
+            if st.button("", key="top_story_validation_next", use_container_width=True, disabled=current_index >= len(queue_df) - 1, icon=":material/skip_next:", help="Next story"):
                 st.session_state.top_stories_validation_index = current_index + 1
                 st.rerun()
         with nav4:
-            if st.button("", key="top_story_validation_last", use_container_width=True, disabled=current_index >= len(saved_df) - 1, icon=":material/last_page:", help="Last story"):
-                st.session_state.top_stories_validation_index = len(saved_df) - 1
+            if st.button("", key="top_story_validation_last", use_container_width=True, disabled=current_index >= len(queue_df) - 1, icon=":material/last_page:", help="Last story"):
+                st.session_state.top_stories_validation_index = len(queue_df) - 1
                 st.rerun()
-        st.caption(f"Reviewing story {current_index + 1} of {len(saved_df)}")
+        st.caption(f"Reviewing story {current_index + 1} of {len(queue_df)}")
 
-    row = saved_df.iloc[current_index]
+    row = queue_df.iloc[current_index]
     story_group_id = row.get("Group ID")
+    story_identity_key = str(row.get("_story_identity_key", "") or "").strip()
     source_ids = parse_source_group_ids(row.get("Source Group IDs", ""), fallback_group_id=story_group_id)
     source_candidates = build_source_candidate_table_from_candidates(
         candidates=prime_source_candidates,
@@ -152,7 +186,7 @@ def render_top_stories_validation() -> None:
         st.caption(" | ".join(meta_parts))
         st.caption(f"Source option {current_rank} of {source_count}")
 
-        action1, action2, action3 = st.columns([1, 1, 3], gap="small")
+        action1, action2, action3, action4 = st.columns([1, 1, 1, 2], gap="small")
         with action1:
             if current_url:
                 st.link_button("Open current link", current_url, use_container_width=True)
@@ -169,5 +203,17 @@ def render_top_stories_validation() -> None:
                 st.session_state.top_story_observation_output = None
                 st.rerun()
         with action3:
+            if st.button("Confirm source", key=f"top_story_confirm_source_{current_index}", use_container_width=True):
+                confirmed = {
+                    str(key).strip()
+                    for key in st.session_state.get("top_stories_validation_confirmed_keys", [])
+                    if str(key).strip()
+                }
+                if story_identity_key:
+                    confirmed.add(story_identity_key)
+                st.session_state.top_stories_validation_confirmed_keys = sorted(confirmed)
+                st.session_state.top_stories_validation_index = min(current_index, max(len(queue_df) - 2, 0))
+                st.rerun()
+        with action4:
             if source_ids:
                 st.caption(f"{len(source_ids)} source instance(s) available in this story family.")
