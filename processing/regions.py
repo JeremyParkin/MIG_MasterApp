@@ -62,8 +62,12 @@ def init_regions_state(session_state) -> None:
     session_state.setdefault("regions_generated_signature", None)
 
 
+# def _normalize_text_column(series: pd.Series) -> pd.Series:
+#     return series.fillna("").astype(str).str.strip()
+
 def _normalize_text_column(series: pd.Series) -> pd.Series:
-    return series.fillna("").astype(str).str.strip()
+    s = pd.Series(series)
+    return s.astype("string").fillna("").str.strip()
 
 
 def build_regions_source_df(
