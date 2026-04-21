@@ -8,6 +8,17 @@ import dill
 import pandas as pd
 import streamlit as st
 
+SNAPSHOT_VERSION = 2
+EXCLUDED_SESSION_KEYS = {
+    "clean_excel_bytes",
+    "clean_excel_built_at",
+    "report_copy_docx_bytes",
+    "report_copy_built_at",
+    "notebooklm_zip_bytes",
+    "notebooklm_info",
+    "notebooklm_built_at",
+}
+
 
 st.title("Save & Load")
 st.caption("Save the current session to resume later, or load a previous session snapshot back into the app.")
@@ -25,14 +36,17 @@ def _discover_dataframe_keys() -> list[str]:
 
 
 def _build_serializable_session_payload() -> tuple[dict, list[str]]:
-    payload: dict = {}
+    payload: dict = {
+        "_snapshot_version": SNAPSHOT_VERSION,
+        "_saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
     skipped: list[str] = []
 
     dataframe_keys = _discover_dataframe_keys()
     payload["df_names"] = dataframe_keys
 
     for key, value in st.session_state.items():
-        if key.startswith("_"):
+        if key.startswith("_") or key in EXCLUDED_SESSION_KEYS:
             continue
 
         try:
@@ -66,6 +80,8 @@ def _restore_dataframe_value(value) -> pd.DataFrame | None:
 def load_session_state(uploaded_file) -> None:
     uploaded_file.seek(0)
     session_data = dill.loads(uploaded_file.read())
+    loaded_saved_at = session_data.get("_saved_at")
+    loaded_snapshot_version = session_data.get("_snapshot_version")
 
     for key in list(st.session_state.keys()):
         del st.session_state[key]
@@ -85,12 +101,16 @@ def load_session_state(uploaded_file) -> None:
         restored_df_names.append(df_name)
 
     for key, value in session_data.items():
-        if key in restored_df_names or key == "df_names":
+        if key in restored_df_names or key in {"df_names", "_snapshot_version", "_saved_at"}:
             continue
         st.session_state[key] = value
 
     st.session_state.df_names = restored_df_names if restored_df_names else saved_df_names
     st.session_state.pickle_load = True
+    if loaded_saved_at:
+        st.session_state.loaded_session_saved_at = loaded_saved_at
+    if loaded_snapshot_version is not None:
+        st.session_state.loaded_session_snapshot_version = loaded_snapshot_version
 
 
 st.header("Save")
@@ -120,6 +140,7 @@ else:
             "Skipped non-serializable keys: "
             + ", ".join(sorted(skipped_keys))
         )
+    st.caption("Generated download files are excluded from the session snapshot and can be rebuilt after loading.")
 
 st.divider()
 st.header("Load")
@@ -130,6 +151,10 @@ uploaded_file = st.file_uploader("Restore a Previous Session", type="pkl", label
 if uploaded_file is not None:
     try:
         load_session_state(uploaded_file)
-        st.success("Session state loaded successfully.")
+        loaded_saved_at = st.session_state.get("loaded_session_saved_at")
+        if loaded_saved_at:
+            st.success(f"Session state loaded successfully. Snapshot saved at {loaded_saved_at}.")
+        else:
+            st.success("Session state loaded successfully.")
     except Exception as e:
         st.error(f"Could not load session file: {e}")
