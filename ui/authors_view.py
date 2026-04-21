@@ -537,7 +537,7 @@ def render_authors_page() -> None:
         """
         st.markdown(hide_table_row_index, unsafe_allow_html=True)
 
-        control_col1, control_col2 = st.columns([1, 1], gap="medium")
+        control_col1, control_col2 = st.columns([1, 1], gap="medium", vertical_alignment="bottom")
         with control_col1:
             st.selectbox(
                 "Ranking metric",
@@ -546,7 +546,6 @@ def render_authors_page() -> None:
                 on_change=lambda: reset_outlet_skips(st.session_state),
             )
         with control_col2:
-            st.write("")
             auto_assign_requested = st.button(
                 "Auto-assign perfect matches",
                 key="authors_outlets_auto_assign",
@@ -1051,7 +1050,7 @@ def render_authors_page() -> None:
             "Mention_Total",
             "Impressions",
             "Effective_Reach",
-        ]].copy()
+        ]].copy().reset_index(drop=True)
         shortlist_view["Delete"] = False
         shortlist_output_df = shortlist_df[[
             "Author",
@@ -1183,7 +1182,7 @@ def render_authors_page() -> None:
                 shortlist_view,
                 use_container_width=True,
                 hide_index=True,
-                key=f"authors_shortlist_editor_{key_suffix}",
+                key=f"authors_shortlist_editor_{key_suffix}_{st.session_state.get('author_selection_editor_version', 0)}",
                 column_config={
                     "Mention_Total": st.column_config.NumberColumn("Mentions", width="small", format="%d"),
                     "Impressions": st.column_config.NumberColumn("Impressions", width="small", format="%,d"),
@@ -1194,7 +1193,7 @@ def render_authors_page() -> None:
             rows_to_delete = shortlist_editor[shortlist_editor["Delete"]].index.tolist()
             if rows_to_delete:
                 st.session_state.authors_section = "Selection"
-                authors_to_remove = shortlist_df.iloc[rows_to_delete]["Author"].tolist()
+                authors_to_remove = shortlist_view.iloc[rows_to_delete]["Author"].tolist()
                 remaining = [
                     author for author in st.session_state.get("author_insights_selected_authors", [])
                     if author not in authors_to_remove
@@ -1204,6 +1203,7 @@ def render_authors_page() -> None:
                     k: v for k, v in st.session_state.get("author_insights_summaries", {}).items()
                     if k in remaining
                 }
+                st.session_state.author_selection_editor_version += 1
                 st.rerun()
 
         def render_generate_button(key_suffix: str) -> None:

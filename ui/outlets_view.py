@@ -1100,7 +1100,7 @@ def render_outlets_page() -> None:
                 "Mention_Total",
                 "Impressions",
                 "Effective_Reach",
-            ]].copy()
+            ]].copy().reset_index(drop=True)
             shortlist_view["Delete"] = False
             shortlist_editor = st.data_editor(
                 shortlist_view,
@@ -1118,7 +1118,7 @@ def render_outlets_page() -> None:
             rows_to_delete = shortlist_editor[shortlist_editor["Delete"]].index.tolist()
             if rows_to_delete:
                 st.session_state.outlets_section = "Selection"
-                remove_outlets = shortlist_df.iloc[rows_to_delete]["Outlet"].tolist()
+                remove_outlets = shortlist_view.iloc[rows_to_delete]["Outlet"].tolist()
                 remaining = [o for o in selected_outlets if o not in remove_outlets]
                 st.session_state.outlet_insights_selected_outlets = remaining
                 st.session_state.outlet_insights_summaries = {
