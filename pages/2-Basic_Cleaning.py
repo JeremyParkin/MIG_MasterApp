@@ -7,6 +7,7 @@ import time
 import warnings
 import pandas as pd
 import streamlit as st
+from ui.page_help import set_page_help_context
 
 from processing.standard_cleaning import run_standard_cleaning
 from processing.coverage_flags import add_coverage_flags
@@ -30,6 +31,7 @@ STAGED_BASIC_CLEANING_THRESHOLD = 10_000
 
 st.title("Basic Cleaning")
 st.caption("Standardize the raw export, remove duplicates, calculate effective reach, and group similar coverage into unique stories.")
+set_page_help_context(st.session_state, "Basic Cleaning")
 
 
 def ensure_basic_cleaning_state() -> None:

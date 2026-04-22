@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 
 import streamlit as st
+from ui.page_help import set_page_help_context
 
 st.title("Top Stories")
 st.caption("Build the saved top-stories list, then generate report-ready insights in one combined workflow.")
@@ -83,6 +84,7 @@ st.markdown(
 )
 
 current_section = st.session_state.get("top_stories_section", "Selection")
+set_page_help_context(st.session_state, "Top Stories", current_section)
 
 if current_section == "Insights":
     render_top_story_summaries()

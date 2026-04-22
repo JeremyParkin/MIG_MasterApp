@@ -51,6 +51,7 @@ from utils.api_meter import (
     estimate_cost_usd,
     get_api_cost_usd,
 )
+from ui.page_help import set_page_help_context
 
 warnings.filterwarnings("ignore")
 
@@ -275,6 +276,11 @@ st.markdown(
     '<div class="sentiment-step-note">Work left to right: prepare the sentiment dataset, run AI sentiment in batches, run AI pre-review, complete spot checks, then review the final insights.</div>',
     unsafe_allow_html=True,
 )
+
+help_step = st.session_state.get("sentiment_section", "Setup")
+if help_step == "Distribution":
+    help_step = "Insights"
+set_page_help_context(st.session_state, "Sentiment", help_step)
 
 
 if st.session_state.sentiment_section == "Setup":

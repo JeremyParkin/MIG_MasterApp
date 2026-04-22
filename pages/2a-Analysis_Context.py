@@ -7,8 +7,10 @@ import streamlit as st
 from streamlit_tags import st_tags
 
 import processing.analysis_context as analysis_context
+from ui.page_help import set_page_help_context
 
 analysis_context = importlib.reload(analysis_context)
+set_page_help_context(st.session_state, "Analysis Context")
 
 
 st.title("Analysis Context")

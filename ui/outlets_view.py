@@ -9,6 +9,7 @@ import warnings
 import pandas as pd
 import streamlit as st
 
+from ui.page_help import set_page_help_context
 from processing.analysis_context import (
     apply_session_coverage_flag_policy,
     build_analysis_context_text,
@@ -1344,6 +1345,7 @@ def render_outlets_page() -> None:
             st.info("Generate outlet coverage themes to build the narrative block.")
 
     section = st.session_state.get("outlets_section", "Cleanup")
+    set_page_help_context(st.session_state, "Outlets", section)
     if section == "Selection":
         render_selection_section()
     elif section == "Insights":

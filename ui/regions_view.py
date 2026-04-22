@@ -5,6 +5,7 @@ import importlib
 import pandas as pd
 import streamlit as st
 
+from ui.page_help import set_page_help_context
 from processing.analysis_context import (
     apply_session_coverage_flag_policy,
     build_analysis_context_text,
@@ -199,6 +200,7 @@ def render_regions_page() -> None:
     if current_step not in {"Setup", "Insights"}:
         current_step = "Insights" if st.session_state.get("regions_prepared", False) else "Setup"
         st.session_state.regions_step = current_step
+    set_page_help_context(st.session_state, "Regions", current_step)
 
     st.markdown(
         """

@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 import processing.author_outlets as author_outlets_module
 from ui.insight_blocks import build_linked_example_blocks_html
+from ui.page_help import set_page_help_context
 
 from processing.analysis_context import (
     apply_session_coverage_flag_policy,
@@ -1644,6 +1645,7 @@ def render_authors_page() -> None:
     st.markdown('<div class="authors-step-note">Work left to right: fill missing authors, assign outlets, curate key authors, then review output-ready insights.</div>', unsafe_allow_html=True)
 
     section = st.session_state.authors_section
+    set_page_help_context(st.session_state, "Authors", section)
 
     if section == "Missing":
         render_missing_authors_tab()

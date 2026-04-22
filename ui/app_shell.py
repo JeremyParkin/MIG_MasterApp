@@ -3,29 +3,82 @@ from __future__ import annotations
 import streamlit as st
 
 from utils.api_meter import init_api_meter, get_api_cost_usd
+from ui.page_help import render_sidebar_page_help
 
 
 # ----------------------------
 # Sidebar
 # ----------------------------
-def standard_sidebar(target=None) -> None:
+def standard_sidebar(target=None, *, key_suffix: str = "default") -> None:
     """Render branding + feedback link + session cost meter."""
     target = target or st.sidebar
-    with target.container():
+    sidebar_container = target.container()
+    with sidebar_container:
+        st.markdown(
+            """
+            <style>
+            section[data-testid="stSidebar"] .block-container {
+                padding-top: 0.45rem;
+            }
+            section[data-testid="stSidebarNav"] {
+                margin-top: 0;
+            }
+            section[data-testid="stSidebarNav"] ul {
+                gap: 0.1rem;
+            }
+            section[data-testid="stSidebarNav"] li {
+                margin: 0;
+            }
+            section[data-testid="stSidebarNav"] a {
+                padding-top: 0.22rem !important;
+                padding-bottom: 0.22rem !important;
+                min-height: 0 !important;
+            }
+            section[data-testid="stSidebar"] [data-testid="stImage"] {
+                margin-bottom: 0.35rem;
+            }
+            section[data-testid="stSidebar"] p {
+                margin-bottom: 0.2rem;
+            }
+            .sidebar-app-meta {
+                margin: 0.05rem 0 0.45rem 0;
+                line-height: 1.35;
+            }
+            .sidebar-app-title {
+                font-weight: 600;
+                margin-bottom: 0.05rem;
+            }
+            .sidebar-app-subtle {
+                color: rgba(250, 250, 250, 0.68);
+                font-size: 0.9rem;
+            }
+            .sidebar-cost {
+                margin: 0.2rem 0 0.45rem 0;
+                color: rgba(250, 250, 250, 0.78);
+                font-size: 0.92rem;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
         st.image(
             "https://www.agilitypr.com/wp-content/uploads/2024/12/agility-logo-white.png",
-            width=230,
+            width=210,
         )
-
-        st.markdown("MIG Master App")
-        st.caption(
-            "Version: April 2026 - "
-            "[Feedback](https://forms.office.com/Pages/ResponsePage.aspx?id=GvcJkLbBVUumZQrrWC6V07d2jCu79C5FsfEZJPZEfZxUNVlIVDRNNVBQVEgxQVFXNEM5VldUMkpXNS4u)"
+        st.markdown(
+            """
+            <div class="sidebar-app-meta">
+              <div class="sidebar-app-title">MIG Master App</div>
+              <div class="sidebar-app-subtle">Version: April 2026 · <a href="https://forms.office.com/Pages/ResponsePage.aspx?id=GvcJkLbBVUumZQrrWC6V07d2jCu79C5FsfEZJPZEfZxUNVlIVDRNNVBQVEgxQVFXNEM5VldUMkpXNS4u" target="_blank">Feedback</a></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
         init_api_meter()
         cost_usd = get_api_cost_usd()
-        st.caption(f"Est. session cost USD${cost_usd:,.4f}")
+        st.markdown(f'<div class="sidebar-cost">Est. session cost USD${cost_usd:,.4f}</div>', unsafe_allow_html=True)
+        render_sidebar_page_help(sidebar_container, key_suffix=key_suffix)
 
 
 # ----------------------------
@@ -52,7 +105,12 @@ def build_pages() -> list:
 def run_navigation(position: str = "sidebar") -> None:
     """Run navigation + sidebar shell."""
     nav = st.navigation(build_pages(), position=position)
+    nav_title = str(getattr(nav, "title", "") or "").strip()
+    st.session_state.page_help_page = nav_title
+    st.session_state.page_help_step = ""
     sidebar_shell = st.sidebar.empty()
-    standard_sidebar(sidebar_shell)
+    standard_sidebar(sidebar_shell, key_suffix="pre")
     nav.run()
-    standard_sidebar(sidebar_shell)
+    if not str(st.session_state.get("page_help_page", "") or "").strip():
+        st.session_state.page_help_page = nav_title
+    standard_sidebar(sidebar_shell, key_suffix="post")

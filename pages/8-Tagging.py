@@ -46,6 +46,7 @@ from utils.api_meter import (
     get_api_cost_usd,
     init_api_meter,
 )
+from ui.page_help import set_page_help_context
 from ui.tagging_review_view import render_tagging_review_page
 
 warnings.filterwarnings("ignore")
@@ -237,6 +238,8 @@ st.markdown(
     '<div class="tagging-step-note">Work left to right: prepare the tagging dataset, run AI tagging, run AI pre-review, complete human spot checks, then review output-ready insights.</div>',
     unsafe_allow_html=True,
 )
+
+set_page_help_context(st.session_state, "Tagging", st.session_state.get("tagging_section", "Setup"))
 
 
 # =========================
