@@ -29,6 +29,8 @@ DEFAULT_QUALITATIVE_COVERAGE_FLAGS = [
 ]
 DEFAULT_DATASET_COVERAGE_FLAGS: list[str] = []
 OUTLET_INSIGHT_AGGREGATOR_FLAG = "Aggregator"
+MEDIA_TYPE_COMMENTARY_OPTIONS = ["Auto", "Emphasize", "De-emphasize"]
+DEFAULT_MEDIA_TYPE_COMMENTARY_MODE = "Auto"
 
 ORG_LIKE_MARKERS = {
     "agency",
@@ -917,6 +919,7 @@ def init_analysis_context_state(session_state) -> None:
     session_state.setdefault("analysis_dataset_start_date", dataset_start.isoformat() if dataset_start else None)
     session_state.setdefault("analysis_dataset_end_date", dataset_end.isoformat() if dataset_end else None)
     session_state.setdefault("analysis_dataset_media_types", present_media_types)
+    session_state.setdefault("analysis_media_type_commentary_mode", DEFAULT_MEDIA_TYPE_COMMENTARY_MODE)
     session_state.setdefault("analysis_qualitative_exclusion_keep_keys", [])
     session_state.setdefault("analysis_dataset_exclusion_keep_keys", [])
     if "analysis_qualitative_excluded_flags" not in session_state:
@@ -950,6 +953,7 @@ def save_analysis_context(
     qualitative_excluded_flags: list[str],
     dataset_excluded_flags: list[str],
     exclude_aggregators_from_outlet_insights: bool,
+    media_type_commentary_mode: str = DEFAULT_MEDIA_TYPE_COMMENTARY_MODE,
     dataset_start_date: date | None = None,
     dataset_end_date: date | None = None,
     dataset_media_types: list[str] | None = None,
@@ -981,6 +985,10 @@ def save_analysis_context(
     session_state.analysis_dataset_end_date = _coerce_date_value(dataset_end_date).isoformat() if _coerce_date_value(dataset_end_date) else None
     session_state.analysis_dataset_media_types = _clean_list(dataset_media_types or [])
     session_state.analysis_exclude_aggregators_from_outlet_insights = bool(exclude_aggregators_from_outlet_insights)
+    normalized_commentary_mode = str(media_type_commentary_mode or DEFAULT_MEDIA_TYPE_COMMENTARY_MODE).strip()
+    if normalized_commentary_mode not in MEDIA_TYPE_COMMENTARY_OPTIONS:
+        normalized_commentary_mode = DEFAULT_MEDIA_TYPE_COMMENTARY_MODE
+    session_state.analysis_media_type_commentary_mode = normalized_commentary_mode
     session_state.analysis_qualitative_exclusion_keep_keys = _clean_list(qualitative_exclusion_keep_keys or [])
     session_state.analysis_dataset_exclusion_keep_keys = _clean_list(dataset_exclusion_keep_keys or [])
 
@@ -1037,6 +1045,11 @@ def get_analysis_context_payload(session_state) -> dict[str, Any]:
         "exclude_aggregators_from_outlet_insights": bool(
             session_state.get("analysis_exclude_aggregators_from_outlet_insights", True)
         ),
+        "media_type_commentary_mode": (
+            session_state.get("analysis_media_type_commentary_mode", DEFAULT_MEDIA_TYPE_COMMENTARY_MODE)
+            if session_state.get("analysis_media_type_commentary_mode", DEFAULT_MEDIA_TYPE_COMMENTARY_MODE) in MEDIA_TYPE_COMMENTARY_OPTIONS
+            else DEFAULT_MEDIA_TYPE_COMMENTARY_MODE
+        ),
         "outlet_insight_excluded_flags": get_outlet_insight_coverage_flag_exclusions(session_state),
         "qualitative_exclusion_keep_keys": _clean_list(session_state.get("analysis_qualitative_exclusion_keep_keys", [])),
         "dataset_exclusion_keep_keys": _clean_list(session_state.get("analysis_dataset_exclusion_keep_keys", [])),
@@ -1090,6 +1103,10 @@ def build_analysis_context_text(session_state) -> str:
         lines.append("Data scope media types: " + "; ".join(payload["dataset_media_types"]))
     if payload["exclude_aggregators_from_outlet_insights"]:
         lines.append("Outlet insights rule: exclude Aggregator coverage from outlet charts and narrative")
+    if payload["media_type_commentary_mode"] == "Emphasize":
+        lines.append("Media-type commentary: emphasize media-type mix when explaining coverage patterns")
+    elif payload["media_type_commentary_mode"] == "De-emphasize":
+        lines.append("Media-type commentary: de-emphasize media-type mix unless it is unusually important")
 
     return "\n".join(lines).strip()
 
@@ -1117,4 +1134,6 @@ def build_analysis_context_caption(session_state) -> str:
         parts.append("Data scope date range set")
     if payload["exclude_aggregators_from_outlet_insights"]:
         parts.append("Aggregators excluded from Outlet insights")
+    if payload["media_type_commentary_mode"] != DEFAULT_MEDIA_TYPE_COMMENTARY_MODE:
+        parts.append(f"Media-type commentary: {payload['media_type_commentary_mode']}")
     return " | ".join(parts)

@@ -981,7 +981,7 @@ def render_outlets_page() -> None:
                     st.session_state.outlet_insights_pending_active_outlet = valid_outlets[inspect_index + 1]
                     st.rerun()
             with nav_col3:
-                save_label = "Already saved" if inspect_outlet in current_selected else "Save this outlet"
+                save_label = "Already saved" if inspect_outlet in current_selected else "Save outlet"
                 if st.button(
                     save_label,
                     key="outlet_save_inspected",

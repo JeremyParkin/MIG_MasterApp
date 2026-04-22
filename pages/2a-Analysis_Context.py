@@ -37,6 +37,7 @@ if "analysis_context_draft_initialized" not in st.session_state:
     st.session_state.analysis_context_draft_highlight_keywords = list(payload.get("highlight_keywords", []))
     st.session_state.analysis_context_draft_guidance = payload["guidance"]
     st.session_state.analysis_context_draft_exclude_aggregators = payload["exclude_aggregators_from_outlet_insights"]
+    st.session_state.analysis_context_draft_media_type_commentary_mode = payload.get("media_type_commentary_mode", "Auto")
     st.session_state.analysis_context_draft_qualitative_flags = list(payload["qualitative_excluded_flags"])
     st.session_state.analysis_context_draft_dataset_flags = list(payload["dataset_excluded_flags"])
     st.session_state.analysis_context_draft_dataset_date_range = (
@@ -50,6 +51,10 @@ if "analysis_context_draft_initialized" not in st.session_state:
 st.session_state.setdefault(
     "analysis_context_draft_highlight_keywords",
     list(payload.get("highlight_keywords", [])),
+)
+st.session_state.setdefault(
+    "analysis_context_draft_media_type_commentary_mode",
+    payload.get("media_type_commentary_mode", "Auto"),
 )
 
 pending_suggestions = st.session_state.pop("analysis_context_pending_suggestions", None)
@@ -204,6 +209,14 @@ with st.container(border=True):
         "Exclude aggregators from Outlet metrics / insights",
         key="analysis_context_draft_exclude_aggregators",
         help="Recommended. Keeps aggregator coverage out of Outlet charts and narrative while leaving the rest of the dataset alone.",
+    )
+
+    media_type_commentary_mode = st.radio(
+        "Media type commentary",
+        options=analysis_context.MEDIA_TYPE_COMMENTARY_OPTIONS,
+        key="analysis_context_draft_media_type_commentary_mode",
+        horizontal=True,
+        help="Controls how much downstream qualitative outputs should talk about media-type mix when interpreting coverage patterns.",
     )
 
     qualitative_excluded_flags = st.multiselect(
@@ -385,6 +398,7 @@ with save_col:
             qualitative_excluded_flags=qualitative_excluded_flags,
             dataset_excluded_flags=dataset_excluded_flags,
             exclude_aggregators_from_outlet_insights=exclude_aggregators_from_outlet_insights,
+            media_type_commentary_mode=media_type_commentary_mode,
             dataset_start_date=dataset_start_date,
             dataset_end_date=dataset_end_date,
             dataset_media_types=dataset_media_types,

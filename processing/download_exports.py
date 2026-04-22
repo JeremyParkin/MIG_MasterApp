@@ -93,7 +93,12 @@ def add_mapped_outlet_column(df: pd.DataFrame, outlet_rollup_map: dict[str, str]
         for k, v in (outlet_rollup_map or {}).items()
         if str(k).strip()
     }
+    if not mapping:
+        return out
+
     mapped = out["Outlet"].fillna("").astype(str).map(lambda value: mapping.get(value.strip(), value.strip()))
+    if bool((mapped.fillna("").astype(str).str.strip() == out["Outlet"].fillna("").astype(str).str.strip()).all()):
+        return out
 
     if "Mapped Outlet" in out.columns:
         out["Mapped Outlet"] = mapped
@@ -101,6 +106,62 @@ def add_mapped_outlet_column(df: pd.DataFrame, outlet_rollup_map: dict[str, str]
 
     insert_at = out.columns.get_loc("Outlet") + 1
     out.insert(insert_at, "Mapped Outlet", mapped)
+    return out
+
+
+def remove_inactive_workflow_columns(df: pd.DataFrame, session_state) -> pd.DataFrame:
+    """Drop workflow-added columns when that workflow has not actually been used in this session."""
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame() if df is None else df.copy()
+
+    out = df.copy()
+
+    outlet_mapping_active = bool(
+        {
+            str(k).strip(): str(v).strip()
+            for k, v in (session_state.get("outlet_rollup_map", {}) or {}).items()
+            if str(k).strip() and str(v).strip() and str(k).strip() != str(v).strip()
+        }
+    )
+    if not outlet_mapping_active:
+        out = out.drop(columns=["Mapped Outlet"], errors="ignore")
+
+    sentiment_active = should_merge_sentiment_into_clean_trad(session_state) or sentiment_exists(session_state)
+    if not sentiment_active:
+        sentiment_cols = [
+            "Assigned Sentiment",
+            "AI Sentiment",
+            "AI Sentiment Confidence",
+            "AI Sentiment Rationale",
+            "Review AI Sentiment",
+            "Review AI Confidence",
+            "Review AI Rationale",
+            "AI Agreement",
+            "Needs Human Review",
+            "Hybrid Sentiment",
+            "Hybrid Sentiment Confidence",
+            "Final Sentiment",
+            "Final Sentiment Confidence",
+        ]
+        out = out.drop(columns=sentiment_cols, errors="ignore")
+
+    tagging_active = should_merge_tagging_into_clean_trad(session_state) or tagging_exists(session_state)
+    if not tagging_active:
+        tagging_cols = [
+            "Assigned Tag",
+            "AI Tag",
+            "AI Tag Confidence",
+            "AI Tag Rationale",
+            "Review AI Tag",
+            "Review AI Confidence",
+            "Review AI Rationale",
+            "AI Tag Agreement",
+            "AI Tags",
+            "Tag_Processed",
+        ]
+        binary_tag_cols = [c for c in out.columns if str(c).startswith("AI Tag: ")]
+        out = out.drop(columns=tagging_cols + binary_tag_cols, errors="ignore")
+
     return out
 
 
@@ -1257,6 +1318,7 @@ def build_clean_workbook_bytes(session_state) -> bytes:
         if len(traditional) > 0:
             trad_export = rename_ave(traditional.copy(), original_ave_col=original_ave_col)
             trad_export = add_mapped_outlet_column(trad_export, outlet_rollup_map=outlet_rollup_map)
+            trad_export = remove_inactive_workflow_columns(trad_export, session_state)
             if "Impressions" in trad_export.columns:
                 trad_export = trad_export.sort_values(by=["Impressions"], ascending=False)
             trad_export.to_excel(writer, sheet_name="CLEAN TRAD", startrow=1, header=False, index=False)
@@ -1268,6 +1330,7 @@ def build_clean_workbook_bytes(session_state) -> bytes:
         if len(social) > 0:
             social_export = rename_ave(social.copy(), original_ave_col=original_ave_col)
             social_export = add_mapped_outlet_column(social_export, outlet_rollup_map=outlet_rollup_map)
+            social_export = remove_inactive_workflow_columns(social_export, session_state)
             if "Impressions" in social_export.columns:
                 social_export = social_export.sort_values(by=["Impressions"], ascending=False)
             social_export.to_excel(writer, sheet_name="CLEAN SOCIAL", startrow=1, header=False, index=False)
@@ -1369,6 +1432,7 @@ def build_clean_workbook_bytes(session_state) -> bytes:
         if len(dupes) > 0:
             dupes_export = rename_ave(dupes.copy(), original_ave_col=original_ave_col)
             dupes_export = add_mapped_outlet_column(dupes_export, outlet_rollup_map=outlet_rollup_map)
+            dupes_export = remove_inactive_workflow_columns(dupes_export, session_state)
             dupes_export.to_excel(writer, sheet_name="DLTD DUPES", header=True, index=False)
             ws = writer.sheets["DLTD DUPES"]
             ws.set_tab_color("#c26f4f")
@@ -1378,6 +1442,7 @@ def build_clean_workbook_bytes(session_state) -> bytes:
         if len(excluded_rows) > 0:
             excluded_export = rename_ave(excluded_rows.copy(), original_ave_col=original_ave_col)
             excluded_export = add_mapped_outlet_column(excluded_export, outlet_rollup_map=outlet_rollup_map)
+            excluded_export = remove_inactive_workflow_columns(excluded_export, session_state)
             if "Impressions" in excluded_export.columns:
                 excluded_export = excluded_export.sort_values(by=["Impressions"], ascending=False)
             excluded_export.to_excel(writer, sheet_name="EXCLUDED ROWS", header=True, index=False)
@@ -1388,6 +1453,7 @@ def build_clean_workbook_bytes(session_state) -> bytes:
         # RAW
         raw_export = rename_ave(raw.copy(), original_ave_col=original_ave_col)
         raw_export = add_mapped_outlet_column(raw_export, outlet_rollup_map=outlet_rollup_map)
+        raw_export = remove_inactive_workflow_columns(raw_export, session_state)
         raw_export.drop(["Mentions"], axis=1, inplace=True, errors="ignore")
         raw_export.to_excel(writer, sheet_name="RAW", header=True, index=False)
         ws = writer.sheets["RAW"]

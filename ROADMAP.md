@@ -76,6 +76,27 @@ This file is a lightweight parking lot for product and workflow ideas that are w
   - Tagging
 - Goal: streamline analyst QA of linked examples before client-facing use, without requiring them to manually hunt through every workflow page.
 
+### Media Type Module
+- Consider a dedicated `Media Types` module that treats type mix as its own analytical lens rather than only mentioning it incidentally in other workflows.
+- Goal:
+  - help analysts quickly understand how coverage is distributed across `ONLINE`, `PRINT`, `TV`, `RADIO`, social platforms, and any other relevant media types
+  - provide a cleaner place for media-type breakdowns than scattering those observations across Regions, Outlets, or general narrative copy
+- Suggested outputs:
+  - count and share by media type
+  - mentions and share of mentions by media type
+  - impressions and effective reach by media type
+  - one or more representative example stories per media type
+  - AI-generated observations about media-type mix, concentration, and notable differences in story character or outlet mix by type
+- Possible workflow shape:
+  - overview chart / table with `#` and `%` breakdowns
+  - expandable detail by media type
+  - example-linked grouped stories for each major type
+  - report-ready narrative blurbs similar to Regions / Authors / Outlets
+- Important guardrails:
+  - avoid over-explaining media type when the dataset is effectively single-channel
+  - respect `Analysis Context > Analysis Focus` guidance about whether media-type commentary should be emphasized or de-emphasized
+  - keep the module useful both for mixed-media accounts and simpler online-only accounts
+
 ### Prominence Normalization
 - Consider an early workflow step that normalizes `Prominence...` columns across grouped or syndicated copies of the same story.
 - Problem:
@@ -230,6 +251,40 @@ This file is a lightweight parking lot for product and workflow ideas that are w
   - keep the scoring transparent enough that analysts can understand why a story ranked highly
   - avoid over-weighting syndication alone when the story is only weakly about the client
   - keep analyst override easy
+
+### Executive Summary / Overall Themes
+- Consider a dedicated high-level narrative module that generates an overarching summary of the coverage set, focused on themes, trends, patterns, and the strongest story arcs across the reporting period.
+- This could live as:
+  - its own standalone module
+  - or a late-stage section adjacent to `Top Stories`
+- Core idea:
+  - assemble a large but bounded payload of the most important grouped stories
+  - send that to an LLM with entity context, analysis guidance, and key metrics
+  - ask for output such as:
+    - executive summary
+    - overarching themes
+    - recurring product / issue / brand patterns
+    - notable momentum shifts or storyline changes
+    - coverage-shape observations such as concentration, spread, or major narrative tensions
+- Suggested first-pass source set:
+  - top ~100 unique grouped stories
+  - include fields like:
+    - headline
+    - date
+    - grouped snippet / example text
+    - mentions
+    - impressions
+    - effective reach
+    - maybe outlet / media-type context where useful
+- Why this could be valuable:
+  - lets the app reason across the full important coverage set, not just a handful of saved top stories
+  - gives analysts a strong first-draft narrative backbone for reports
+  - can surface broad themes that may not be obvious from any single module alone
+- Important guardrails:
+  - keep the source set bounded enough to stay performant and interpretable
+  - make it clear what story pool the summary was based on
+  - preserve evidence grounding so the model does not drift into unsupported generalities
+  - let analysts edit or regenerate rather than treating the output as final by default
 
 ### Client Relevance Review
 - Consider a lightweight early-stage QA module that checks whether coverage is actually about the client, rather than just mentioning the client in passing.

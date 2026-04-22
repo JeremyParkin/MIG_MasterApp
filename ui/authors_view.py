@@ -537,7 +537,7 @@ def render_authors_page() -> None:
         """
         st.markdown(hide_table_row_index, unsafe_allow_html=True)
 
-        control_col1, control_col2 = st.columns([1, 1], gap="medium", vertical_alignment="bottom")
+        control_col1, control_col2, control_col3 = st.columns([1.05, 1.0, 0.95], gap="medium", vertical_alignment="bottom")
         with control_col1:
             st.selectbox(
                 "Ranking metric",
@@ -552,6 +552,13 @@ def render_authors_page() -> None:
                 help="Assign only when there is exactly one clear overlap between coverage outlets and API result outlets in the prefetched author set.",
                 use_container_width=True,
             )
+        with control_col3:
+            open_auto_assigned_review = st.button(
+                "Review auto-assigned",
+                key="authors_auto_assigned_open_dialog",
+                use_container_width=True,
+                disabled=not bool(st.session_state.get("author_outlet_auto_assigned_rows", [])),
+            )
 
         ensure_author_outlet_state()
         auth_outlet_todo = get_auth_outlet_todo(st.session_state.auth_outlet_table)
@@ -562,61 +569,73 @@ def render_authors_page() -> None:
             st.rerun()
 
         auto_assigned_rows = st.session_state.get("author_outlet_auto_assigned_rows", [])
-        if auto_assigned_rows:
-            with st.expander("Auto-assigned this session", expanded=False):
-                st.dataframe(pd.DataFrame(auto_assigned_rows), use_container_width=True, hide_index=True)
-                review_options = []
-                for row in auto_assigned_rows:
-                    author_name = str(row.get("Author", "") or "").strip()
-                    outlet_name = str(row.get("Outlet", "") or "").strip()
-                    if author_name:
-                        review_options.append((author_name, outlet_name))
 
-                if review_options:
-                    option_labels = [
-                        f"{author_name} | {outlet_name}" if outlet_name else author_name
-                        for author_name, outlet_name in review_options
-                    ]
-                    selected_label = st.selectbox(
-                        "Review auto-assigned name",
-                        option_labels,
-                        key="authors_auto_assigned_review_target",
-                        help="Choose an auto-assigned author name to correct without leaving this queue.",
-                    )
-                    selected_index = option_labels.index(selected_label)
-                    selected_author, selected_outlet = review_options[selected_index]
-                    corrected_name = st.text_input(
-                        "Corrected author name",
-                        value=selected_author,
-                        key="authors_auto_assigned_review_name",
-                        help="Update the author name across the cleaned dataset and keep the outlet assignment workflow aligned.",
-                    )
-                    if st.button(
-                        "Apply auto-assigned name fix",
-                        key="authors_auto_assigned_apply_fix",
-                        type="primary",
-                        use_container_width=False,
-                    ):
-                        new_name = corrected_name.strip()
-                        if not new_name:
-                            st.warning("Please enter a corrected author name.")
-                        elif new_name == selected_author:
-                            st.info("No change to apply.")
+        @st.dialog("Review auto-assigned names")
+        def _render_auto_assigned_review_dialog() -> None:
+            current_auto_rows = st.session_state.get("author_outlet_auto_assigned_rows", [])
+            if not current_auto_rows:
+                st.info("No auto-assigned names are currently available to review.")
+                return
+
+            st.dataframe(pd.DataFrame(current_auto_rows), use_container_width=True, hide_index=True)
+            review_options = []
+            for row in current_auto_rows:
+                author_name = str(row.get("Author", "") or "").strip()
+                outlet_name = str(row.get("Outlet", "") or "").strip()
+                if author_name:
+                    review_options.append((author_name, outlet_name))
+
+            if not review_options:
+                st.info("No reviewable auto-assigned names are available.")
+                return
+
+            option_labels = [
+                f"{author_name} | {outlet_name}" if outlet_name else author_name
+                for author_name, outlet_name in review_options
+            ]
+            selected_label = st.selectbox(
+                "Review auto-assigned name",
+                option_labels,
+                key="authors_auto_assigned_review_target",
+                help="Choose an auto-assigned author name to correct without leaving this queue.",
+            )
+            selected_index = option_labels.index(selected_label)
+            selected_author, _selected_outlet = review_options[selected_index]
+            corrected_name = st.text_input(
+                "Corrected author name",
+                value=selected_author,
+                key="authors_auto_assigned_review_name",
+                help="Update the author name across the cleaned dataset and keep the outlet assignment workflow aligned.",
+            )
+            if st.button(
+                "Apply auto-assigned name fix",
+                key="authors_auto_assigned_apply_fix",
+                type="primary",
+                use_container_width=False,
+            ):
+                new_name = corrected_name.strip()
+                if not new_name:
+                    st.warning("Please enter a corrected author name.")
+                elif new_name == selected_author:
+                    st.info("No change to apply.")
+                else:
+                    apply_author_name_fix(st.session_state, selected_author, new_name)
+                    invalidate_author_outlet_cache([selected_author, new_name])
+                    updated_rows = []
+                    for row in current_auto_rows:
+                        row_author = str(row.get("Author", "") or "").strip()
+                        if row_author == selected_author:
+                            updated = dict(row)
+                            updated["Author"] = new_name
+                            updated_rows.append(updated)
                         else:
-                            apply_author_name_fix(st.session_state, selected_author, new_name)
-                            invalidate_author_outlet_cache([selected_author, new_name])
-                            updated_rows = []
-                            for row in auto_assigned_rows:
-                                row_author = str(row.get("Author", "") or "").strip()
-                                if row_author == selected_author:
-                                    updated = dict(row)
-                                    updated["Author"] = new_name
-                                    updated_rows.append(updated)
-                                else:
-                                    updated_rows.append(row)
-                            st.session_state.author_outlet_auto_assigned_rows = updated_rows
-                            st.session_state.author_outlet_state_dirty = True
-                            st.rerun()
+                            updated_rows.append(row)
+                    st.session_state.author_outlet_auto_assigned_rows = updated_rows
+                    st.session_state.author_outlet_state_dirty = True
+                    st.rerun()
+
+        if open_auto_assigned_review:
+            _render_auto_assigned_review_dialog()
 
         if st.session_state.auth_outlet_skipped < len(auth_outlet_todo):
             original_author_name = auth_outlet_todo.iloc[st.session_state.auth_outlet_skipped]["Author"]
@@ -634,28 +653,30 @@ def render_authors_page() -> None:
                     apply_author_name_fix(st.session_state, old_name, new_name)
                     invalidate_author_outlet_cache([old_name, new_name])
 
-            with st.expander("Author name fix tools", expanded=False):
-                st.text_input(
-                    "Correct author name",
-                    key="author_fix_input",
-                    on_change=apply_author_fix_callback,
-                    help="Edit the name and press Enter to apply the correction to all matching rows.",
-                )
-                st.caption(
-                    "This updates every instance of this author in the cleaned dataset and refreshes the author-outlet workflow."
-                )
-
-            header_col, controls_col = st.columns([2.9, 1.3], gap="medium")
+            header_col, controls_col = st.columns([3.25, 1.45], gap="medium")
 
             with header_col:
-                st.markdown(
-                    f"""
-                    <h2 style="color: goldenrod; padding-top:0!important; margin-top:0;">
-                        {original_author_name}
-                    </h2>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                name_col, fix_col = st.columns([2.7, 0.75], gap="small", vertical_alignment="center")
+                with name_col:
+                    st.markdown(
+                        f"""
+                        <h2 style="color: goldenrod; padding-top:0!important; margin-top:0;">
+                            {original_author_name}
+                        </h2>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                with fix_col:
+                    with st.popover("Fix name", use_container_width=True):
+                        st.text_input(
+                            "Correct author name",
+                            key="author_fix_input",
+                            on_change=apply_author_fix_callback,
+                            help="Edit the name and press Enter to apply the correction to all matching rows.",
+                        )
+                        st.caption(
+                            "This updates every instance of this author in the cleaned dataset and refreshes the author-outlet workflow."
+                        )
 
             with controls_col:
                 first_col, prev_col, next_col, last_col, undo_col = st.columns([0.42, 0.42, 0.42, 0.42, 0.7], gap="small")
@@ -1311,7 +1332,7 @@ def render_authors_page() -> None:
                         st.session_state["authors_insights_pending_active_author"] = valid_authors[inspect_index + 1]
                         st.rerun()
                 with nav_col3:
-                    save_label = "Already saved" if inspect_author in current_selected else "Save this author"
+                    save_label = "Already saved" if inspect_author in current_selected else "Save author"
                     if st.button(
                         save_label,
                         key="authors_save_inspected",

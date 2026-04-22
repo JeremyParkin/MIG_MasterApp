@@ -405,10 +405,10 @@ def render_regions_page() -> None:
             st.subheader(label)
         with button_col:
             button_label = {
-                "Countries": "Generate country observations",
-                "States / Provinces": "Generate state / province observations",
-                "Cities": "Generate city observations",
-            }.get(label, f"Generate {label.lower()} observations")
+                "Countries": "Analyze countries",
+                "States / Provinces": "Analyze regions",
+                "Cities": "Analyze cities",
+            }.get(label, f"Analyze {label.lower()}")
             if st.button(button_label, key=f"generate_regions_{label}", type="primary", use_container_width=True):
                 client_name = str(st.session_state.get("client_name", "") or "").strip()
                 analysis_context = build_analysis_context_text(st.session_state)
