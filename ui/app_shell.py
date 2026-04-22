@@ -61,10 +61,12 @@ def standard_sidebar(target=None, *, key_suffix: str = "default") -> None:
             """,
             unsafe_allow_html=True,
         )
-        st.image(
-            "https://www.agilitypr.com/wp-content/uploads/2024/12/agility-logo-white.png",
-            width=210,
-        )
+        st.logo(
+            "https://www.agilitypr.com/wp-content/uploads/2024/12/agility-logo-white.png", size="large")
+        # st.image(
+        #     "https://www.agilitypr.com/wp-content/uploads/2024/12/agility-logo-white.png",
+        #     width=210,
+        # )
         st.markdown(
             """
             <div class="sidebar-app-meta">

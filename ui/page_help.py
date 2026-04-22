@@ -36,12 +36,14 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "heading": "What to review manually",
                     "bullets": [
                         "Use the initial stats, top-author/top-outlet tables, and trend charts as a quick sanity check.",
+                        "Make sure the basic file shape looks right here before moving on, because later steps assume this upload baseline is trustworthy.",
                         "If the upload already looks wrong here, fix the file now rather than troubleshooting later.",
                     ],
                 },
                 {
                     "heading": "Key logic / heuristics",
                     "bullets": [
+                        "This page creates the post-upload baseline that later reset actions may return to.",
                         "No cleaning, deduping, social split, or effective-reach logic has happened yet at this stage.",
                     ],
                 },
@@ -92,7 +94,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                 {
                     "heading": "What this step does",
                     "bullets": [
-                        "Normalizes the uploaded file into the app's working structure before the rest of the workflow begins.",
+                        "Converts the uploaded file into the app's working datasets before the rest of the workflow begins.",
                         "Separates traditional and social coverage, removes duplicates when selected, and builds grouped-story tables for downstream modules.",
                         "Shows row reconciliation and dataset previews so you can confirm the cleaned output looks sensible.",
                     ],
@@ -101,7 +103,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "heading": "What the app does automatically",
                     "bullets": [
                         "Large datasets run in 3 parts for stability, while smaller datasets complete in one pass.",
-                        "Broadcast duplicate handling uses separate, more conservative logic than ordinary URL and field-based dedupe.",
+                        "Broadcast duplicate handling uses more conservative logic than ordinary URL and field-based dedupe.",
                         "Effective reach is calculated after cleaning, using different logic for traditional and social datasets.",
                     ],
                 },
@@ -110,7 +112,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "bullets": [
                         "Check row reconciliation first. Original rows should equal Traditional + Social + Deleted Duplicates.",
                         "Look at the dataset previews to make sure media types, social split, and duplicate removal all feel plausible.",
-                        "If something looks wrong here, fix it now. Most later workflows assume Basic Cleaning is trustworthy.",
+                        "If something looks wrong here, fix it now. Most later workflows assume these cleaned datasets are trustworthy.",
                     ],
                 },
                 {
@@ -138,7 +140,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "heading": "What the app does automatically",
                     "bullets": [
                         "Gold highlighting is used only for stronger candidate names, not single one-off suggestions.",
-                        "Accept obvious applies one-click fixes when a non-blank, name-like suggestion accounts for at least 80% of known author suggestions.",
+                        "Accept obvious applies one-click fixes only when a non-blank, name-like suggestion clears the consensus and minimum-count rules for obvious matches.",
                         "Undo can reverse the last author update, including a bulk obvious-match acceptance.",
                     ],
                 },
@@ -214,7 +216,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "heading": "What the app does automatically",
                     "bullets": [
                         "Sorts the inspector, candidate table, current shortlist, and downstream insights order together based on the selected ranking metric.",
-                        "Keeps the shortlist table in sync immediately when you remove saved authors.",
+                        "Builds shortlist rankings from the saved authors only, so the page reflects the curated selection rather than the full candidate pool.",
                     ],
                 },
                 {
@@ -493,14 +495,14 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "heading": "What this step does",
                     "bullets": [
                         "Builds a tagging sample or uses the full eligible dataset, then regroups it into unique stories for tagging.",
-                        "Lets you define the tag list and choose whether tagging is single-best or multiple applicable tags.",
+                        "Lets you define the tag list and choose whether each story should get one best-fit tag or multiple applicable tags.",
                     ],
                 },
                 {
                     "heading": "What the app does automatically",
                     "bullets": [
                         "Sampling happens at the row level first, then the sampled rows are regrouped into unique stories.",
-                        "Representative and reuse modes help keep cost and stability under control.",
+                        "Representative and reuse modes help control cost and keep large runs manageable.",
                     ],
                 },
                 {
@@ -508,12 +510,14 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "bullets": [
                         "Make sure the tags are distinct enough that an analyst could apply them consistently.",
                         "Use a full run only when the dataset is small enough to justify the extra cost and time.",
+                        "If the tag list feels fuzzy or overlapping here, fix it before running AI rather than trying to correct that confusion later in review.",
                     ],
                 },
                 {
                     "heading": "Key logic / heuristics",
                     "bullets": [
                         "Tagging works from grouped stories, then cascades final tags back to sampled row-level rows.",
+                        "Single-tag and multi-tag modes create different review behavior later, so choose the simpler mode unless you really need overlap.",
                     ],
                 },
             ],
@@ -525,20 +529,20 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                 {
                     "heading": "What this step does",
                     "bullets": [
-                        "Applies the first AI tagging pass across the prepared grouped-story dataset.",
+                        "Applies the first AI tagging pass across the prepared grouped-story dataset and writes an initial opinion for each story.",
                     ],
                 },
                 {
                     "heading": "What the app does automatically",
                     "bullets": [
                         "Writes the first AI tag, confidence, and rationale onto the grouped-story table.",
-                        "Cascades final/effective tags back to the sampled row-level rows for tables and exports.",
+                        "Carries effective tags back to the sampled row-level rows for tables and exports as the workflow progresses.",
                     ],
                 },
                 {
                     "heading": "What to review manually",
                     "bullets": [
-                        "You do not need to judge quality here yet. The real review happens in AI Pre-Review, Spot Checks, and Insights.",
+                        "You do not need to judge quality story by story here yet. The real review happens in AI Pre-Review, Spot Checks, and Insights.",
                     ],
                 },
             ],
@@ -558,7 +562,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "bullets": [
                         "Single-tag mode compares the first and second AI opinion directly.",
                         "Multi-tag mode compares normalized tag sets and only exact high-confidence matches auto-resolve.",
-                        "Timestamped completion messages appear right after the batch and do not persist when you leave and return.",
+                        "Exact high-confidence agreement can reduce the human review queue before you reach Spot Checks.",
                     ],
                 },
                 {
@@ -582,7 +586,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                 {
                     "heading": "What this step does",
                     "bullets": [
-                        "Lets you review flagged, disagreement, unresolved, or all tagged coverage queues.",
+                        "Lets you review flagged, disagreement, unresolved, or all-tagged coverage queues.",
                         "Uses button-based final tag assignment for single-tag mode and checkboxes for multi-tag mode.",
                     ],
                 },
@@ -615,7 +619,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                 {
                     "heading": "What this step does",
                     "bullets": [
-                        "Shows the final tag distribution and lets you generate narrative observations from the effective tags.",
+                        "Shows the final tag distribution and lets you generate narrative observations from the reviewed tag set.",
                     ],
                 },
                 {
@@ -646,14 +650,14 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "heading": "What this step does",
                     "bullets": [
                         "Builds the sentiment sample or full eligible set, then groups it into unique stories for AI analysis.",
-                        "Lets you choose 3-way or 5-way sentiment and define optional Analysis Context guidance.",
+                        "Lets you choose 3-way or 5-way sentiment and carry Analysis Context guidance into the workflow.",
                     ],
                 },
                 {
                     "heading": "What the app does automatically",
                     "bullets": [
                         "Sampling happens at the row level first, then the sampled rows are regrouped into unique stories.",
-                        "Representative and reuse modes help keep cost and stability under control.",
+                        "Representative and reuse modes help control cost and keep large runs manageable.",
                     ],
                 },
                 {
@@ -661,6 +665,13 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "bullets": [
                         "Choose the 3-way or 5-way tone scheme that actually fits how you want to interpret this account.",
                         "Use a full run only when the dataset is small enough to justify the extra cost and time.",
+                        "If the account needs tighter relevance or interpretation guidance, adjust Analysis Context before running sentiment rather than correcting the same mistake repeatedly later.",
+                    ],
+                },
+                {
+                    "heading": "Key logic / heuristics",
+                    "bullets": [
+                        "Sentiment works from grouped stories, then carries the final effective sentiment back to the sampled row-level rows used in tables and exports.",
                     ],
                 },
             ],
@@ -672,7 +683,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                 {
                     "heading": "What this step does",
                     "bullets": [
-                        "Applies the first AI sentiment pass across the prepared grouped-story dataset.",
+                        "Applies the first AI sentiment pass across the prepared grouped-story dataset and writes an initial opinion for each story.",
                     ],
                 },
                 {
@@ -704,7 +715,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "heading": "What the app does automatically",
                     "bullets": [
                         "Compares first and second AI sentiment opinions and auto-resolves exact high-confidence matches.",
-                        "Uses a timestamped, non-persistent completion message after each pre-review batch.",
+                        "Exact high-confidence agreement can reduce the human review queue before you reach Spot Checks.",
                     ],
                 },
                 {
@@ -722,7 +733,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                 {
                     "heading": "What this step does",
                     "bullets": [
-                        "Lets you review flagged, disagreements-only, unresolved, or all toned coverage queues.",
+                        "Lets you review flagged, disagreements-only, unresolved, or all-toned coverage queues.",
                         "Highlights entity-context keywords in the story text to help you focus on the relevant parts.",
                     ],
                 },
@@ -749,7 +760,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                 {
                     "heading": "What this step does",
                     "bullets": [
-                        "Shows the final sentiment distribution and lets you generate narrative observations from the effective sentiment set.",
+                        "Shows the final sentiment distribution and lets you generate narrative observations from the reviewed sentiment set.",
                     ],
                 },
                 {
@@ -889,7 +900,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                 {
                     "heading": "What the app does automatically",
                     "bullets": [
-                        "Applies Data Scope and qualitative exclusions where appropriate in the exported outputs.",
+                        "Uses the current session state when building each export, including the latest shortlist, review, and scope decisions that apply to that specific output.",
                         "Carries current workflow state such as tagging review fields, top-story validation, and regional outputs into the exports that support them.",
                         "Stores built export bytes in session so you can download without rebuilding immediately again.",
                     ],
@@ -899,13 +910,14 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "bullets": [
                         "If something looks wrong in an export, the better fix is usually upstream in the workflow rather than here on the Download page.",
                         "Rebuild the relevant file after changing shortlist, validation, scope, or review decisions so the export reflects your latest state.",
-                        "Use the workbook when you want the most complete audit trail, and the report copy document when you mainly want narrative text to work from.",
+                        "Use the workbook for tables and audit trail, the report copy document for narrative text, and the NotebookLM bundle when you want to work with the session in NotebookLM.",
                     ],
                 },
                 {
                     "heading": "Key logic / heuristics",
                     "bullets": [
                         "Download reflects current session state, not a frozen history of earlier builds.",
+                        "Different exports intentionally preserve different levels of detail, so scope and exclusion effects are not necessarily identical across every file.",
                         "NotebookLM bundle generation may sample or chunk content to stay within file-count and file-size limits.",
                     ],
                 },
