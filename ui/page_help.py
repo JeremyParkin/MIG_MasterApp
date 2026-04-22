@@ -12,6 +12,41 @@ def set_page_help_context(session_state, page: str, step: str | None = None) -> 
 
 def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
     return {
+        ("Getting Started", ""): {
+            "title": "Getting Started",
+            "intro": "Upload the source file, normalize it into the app's working structure, and set the basic client context used for exports and downstream workflows.",
+            "sections": [
+                {
+                    "heading": "What this page does",
+                    "bullets": [
+                        "Collects the client name, reporting period, and source upload that the rest of the workflow will use.",
+                        "Normalizes the uploaded file into the app's initial working dataset so later steps start from a consistent structure.",
+                        "Shows initial volume, author, outlet, and trend previews so you can confirm the upload looks sensible before moving on.",
+                    ],
+                },
+                {
+                    "heading": "What the app does automatically",
+                    "bullets": [
+                        "Detects CSV and XLSX uploads and reads them into the raw working session.",
+                        "Normalizes common column variations, builds a unified Date field, and sets up the initial traditional working dataset.",
+                        "Carries the client name into export naming and later AI/reporting workflows.",
+                    ],
+                },
+                {
+                    "heading": "What to review manually",
+                    "bullets": [
+                        "Use the initial stats, top-author/top-outlet tables, and trend charts as a quick sanity check.",
+                        "If the upload already looks wrong here, fix the file now rather than troubleshooting later.",
+                    ],
+                },
+                {
+                    "heading": "Key logic / heuristics",
+                    "bullets": [
+                        "No cleaning, deduping, social split, or effective-reach logic has happened yet at this stage.",
+                    ],
+                },
+            ],
+        },
         ("Analysis Context", ""): {
             "title": "Analysis Context",
             "intro": "Use this page to shape how downstream AI workflows interpret the coverage and what portion of the cleaned dataset stays in scope.",
@@ -798,6 +833,115 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "bullets": [
                         "The module can still be useful for single-country or single-channel datasets, but the geographic narrative should stay proportional to the real spread in the data.",
                         "Media-type commentary can be emphasized or de-emphasized through Analysis Context without changing the underlying geography data.",
+                    ],
+                },
+            ],
+        },
+        ("Translation", ""): {
+            "title": "Translation",
+            "intro": "Translate non-English headlines and snippets into English so later review and AI workflows can work from a more consistent text base.",
+            "sections": [
+                {
+                    "heading": "What this page does",
+                    "bullets": [
+                        "Identifies non-English rows in the traditional and social datasets.",
+                        "Lets you translate headlines, snippets, or both depending on how much text you want standardized.",
+                        "Shows the non-English rows so you can judge whether translation is worth doing before you run it.",
+                    ],
+                },
+                {
+                    "heading": "What the app does automatically",
+                    "bullets": [
+                        "Adds and maintains translation columns on both traditional and social datasets.",
+                        "Skips translation when there is no non-English content in scope.",
+                        "Tracks headline and snippet translation state separately so you can do them in stages if needed.",
+                    ],
+                },
+                {
+                    "heading": "What to review manually",
+                    "bullets": [
+                        "Translate headlines first if you mainly need later workflows to be readable and comparable in English.",
+                        "Use snippet translation more selectively, because it overwrites the original snippet text and is heavier than headline-only translation.",
+                        "If the dataset is already mostly English, it may be fine to skip this page entirely.",
+                    ],
+                },
+                {
+                    "heading": "Key logic / heuristics",
+                    "bullets": [
+                        "Snippet translation is the more invasive choice because it replaces the original text stored in the working dataset.",
+                        "Later AI workflows use whatever text is present after this step, so translation decisions carry forward into those modules.",
+                    ],
+                },
+            ],
+        },
+        ("Download", ""): {
+            "title": "Download",
+            "intro": "Build exports from the current session so you can take the cleaned data, narrative outputs, and NotebookLM bundle out of the app.",
+            "sections": [
+                {
+                    "heading": "What this page does",
+                    "bullets": [
+                        "Builds the cleaned workbook, report copy document, and NotebookLM bundle from the current session state.",
+                        "Lets you rebuild any export after changing upstream workflow decisions.",
+                        "Packages the current state of cleaned data, curated outputs, and selected narrative layers into downloadable files.",
+                    ],
+                },
+                {
+                    "heading": "What the app does automatically",
+                    "bullets": [
+                        "Applies Data Scope and qualitative exclusions where appropriate in the exported outputs.",
+                        "Carries current workflow state such as tagging review fields, top-story validation, and regional outputs into the exports that support them.",
+                        "Stores built export bytes in session so you can download without rebuilding immediately again.",
+                    ],
+                },
+                {
+                    "heading": "What to review manually",
+                    "bullets": [
+                        "If something looks wrong in an export, the better fix is usually upstream in the workflow rather than here on the Download page.",
+                        "Rebuild the relevant file after changing shortlist, validation, scope, or review decisions so the export reflects your latest state.",
+                        "Use the workbook when you want the most complete audit trail, and the report copy document when you mainly want narrative text to work from.",
+                    ],
+                },
+                {
+                    "heading": "Key logic / heuristics",
+                    "bullets": [
+                        "Download reflects current session state, not a frozen history of earlier builds.",
+                        "NotebookLM bundle generation may sample or chunk content to stay within file-count and file-size limits.",
+                    ],
+                },
+            ],
+        },
+        ("Save & Load", ""): {
+            "title": "Save & Load",
+            "intro": "Save the current app session to a snapshot file and restore it later so you can resume the workflow without rebuilding everything by hand.",
+            "sections": [
+                {
+                    "heading": "What this page does",
+                    "bullets": [
+                        "Creates a downloadable session snapshot containing the current working state of the app.",
+                        "Loads a previously saved snapshot back into session state so you can continue from where you left off.",
+                    ],
+                },
+                {
+                    "heading": "What the app does automatically",
+                    "bullets": [
+                        "Discovers dataframe keys dynamically and serializes most session-state content that can be safely stored.",
+                        "Excludes generated download artifacts so the snapshot stays cleaner and smaller.",
+                        "Restores saved dataframes and supporting state back into the app in one pass when you load a snapshot.",
+                    ],
+                },
+                {
+                    "heading": "What to review manually",
+                    "bullets": [
+                        "Save after major workflow milestones if you want a reliable return point before making more changes.",
+                        "After loading, spot-check the key workflow pages you care about most to confirm the restored session still looks as expected.",
+                    ],
+                },
+                {
+                    "heading": "Key logic / heuristics",
+                    "bullets": [
+                        "Save / Load restores working session state, not a separate archival export format.",
+                        "Generated workbook, document, and NotebookLM files are intentionally excluded because they can be rebuilt after loading.",
                     ],
                 },
             ],

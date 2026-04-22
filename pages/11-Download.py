@@ -6,6 +6,7 @@ import warnings
 
 import pandas as pd
 import streamlit as st
+from ui.page_help import set_page_help_context
 
 from processing.download_exports import (
     build_clean_workbook_bytes,
@@ -18,6 +19,7 @@ warnings.filterwarnings("ignore")
 
 st.title("Download")
 st.caption("Build and download the cleaned workbook and NotebookLM-ready bundle from the current session state.")
+set_page_help_context(st.session_state, "Download")
 
 if not st.session_state.get("standard_step", False):
     st.error("Please complete Basic Cleaning before trying this step.")

@@ -7,6 +7,7 @@ import io
 import dill
 import pandas as pd
 import streamlit as st
+from ui.page_help import set_page_help_context
 
 SNAPSHOT_VERSION = 2
 EXCLUDED_SESSION_KEYS = {
@@ -22,6 +23,7 @@ EXCLUDED_SESSION_KEYS = {
 
 st.title("Save & Load")
 st.caption("Save the current session to resume later, or load a previous session snapshot back into the app.")
+set_page_help_context(st.session_state, "Save & Load")
 st.divider()
 
 

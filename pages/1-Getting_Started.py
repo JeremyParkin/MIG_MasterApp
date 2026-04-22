@@ -4,6 +4,7 @@ import re
 import warnings
 import pandas as pd
 import streamlit as st
+from ui.page_help import set_page_help_context
 from utils.formatting import format_number
 from utils.io import (
     detect_original_ave_col,
@@ -18,6 +19,7 @@ warnings.filterwarnings("ignore")
 
 st.title("Getting Started")
 st.caption("Upload an Agility export, normalize the file structure, and set the client/reporting context for the rest of the workflow.")
+set_page_help_context(st.session_state, "Getting Started")
 
 init_getting_started_state()
 

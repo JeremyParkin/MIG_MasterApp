@@ -5,6 +5,7 @@ from __future__ import annotations
 import warnings
 
 import streamlit as st
+from ui.page_help import set_page_help_context
 
 from processing.translation import (
     init_translation_state,
@@ -20,6 +21,7 @@ warnings.filterwarnings("ignore")
 
 st.title("Translation")
 st.caption("Translate non-English headlines and snippets so the rest of the workflow can be reviewed and summarized in English.")
+set_page_help_context(st.session_state, "Translation")
 
 
 def display_non_english_records(df, title: str) -> None:
