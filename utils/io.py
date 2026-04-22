@@ -5,6 +5,28 @@ import re
 import pandas as pd
 import streamlit as st
 
+
+def _normalize_numeric_upload_series(series: pd.Series, *, prefer_integer: bool = False) -> pd.Series:
+    """
+    Coerce uploaded numeric columns safely.
+
+    If `prefer_integer` is True, keep nullable Int64 only when every non-null
+    parsed value is effectively whole-numbered; otherwise preserve as float.
+    """
+    numeric = pd.to_numeric(series, errors="coerce")
+    if not prefer_integer:
+        return numeric.fillna(0)
+
+    non_null = numeric.dropna()
+    if non_null.empty:
+        return numeric.fillna(0).astype("Int64")
+
+    whole_number_mask = (non_null % 1).abs() < 1e-9
+    if bool(whole_number_mask.all()):
+        return numeric.fillna(0).astype("Int64")
+
+    return numeric.fillna(0)
+
 def detect_original_ave_col(df: pd.DataFrame) -> str | None:
     """
     Detect the original AVE column name from uploaded data, such as:
@@ -42,9 +64,10 @@ def normalize_uploaded_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     # Normalize Impressions safely
     if "Impressions" in df.columns:
-        df["Impressions"] = pd.to_numeric(
-            df["Impressions"], errors="coerce"
-        ).fillna(0).astype("Int64")
+        df["Impressions"] = _normalize_numeric_upload_series(
+            df["Impressions"],
+            prefer_integer=True,
+        )
 
     # Normalize AVE column variants to internal working name: AVE
     ave_candidates = [
