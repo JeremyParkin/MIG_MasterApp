@@ -89,6 +89,17 @@ def render_outlets_page() -> None:
         st.stop()
 
     init_outlet_workflow_state(st.session_state)
+    if "outlets_workflow_rank_by" not in st.session_state:
+        st.session_state.outlets_workflow_rank_by = str(
+            st.session_state.get("outlets_rank_by", "Mentions") or "Mentions"
+        )
+    st.session_state.outlets_rank_by = str(
+        st.session_state.get("outlets_workflow_rank_by", "Mentions") or "Mentions"
+    )
+    st.session_state.setdefault(
+        "outlets_last_rank_by",
+        str(st.session_state.get("outlets_workflow_rank_by", "Mentions") or "Mentions"),
+    )
     init_analysis_context_state(st.session_state)
     st.session_state.setdefault("outlet_selection_checked_outlets", [])
     st.session_state.setdefault("outlet_selection_editor_version", 0)
@@ -156,8 +167,8 @@ def render_outlets_page() -> None:
             )
 
             domain_working = df_traditional.copy()
-            domain_working["Outlet"] = domain_working.get("Outlet", "").fillna("").astype(str).str.strip()
-            domain_working["URL"] = domain_working.get("URL", "").fillna("").astype(str).str.strip()
+            domain_working["Outlet"] = domain_working.get("Outlet", "").astype("string").fillna("").str.strip()
+            domain_working["URL"] = domain_working.get("URL", "").astype("string").fillna("").str.strip()
             domain_working["Canonical Outlet"] = domain_working["Outlet"].map(
                 lambda name: outlet_map.get(str(name).strip(), str(name).strip())
             )
@@ -179,8 +190,8 @@ def render_outlets_page() -> None:
                 current_entities["Domain"] = ""
 
             type_working = df_traditional.copy()
-            type_working["Outlet"] = type_working.get("Outlet", "").fillna("").astype(str).str.strip()
-            type_working["Type"] = type_working.get("Type", "").fillna("").astype(str).str.strip()
+            type_working["Outlet"] = type_working.get("Outlet", "").astype("string").fillna("").str.strip()
+            type_working["Type"] = type_working.get("Type", "").astype("string").fillna("").str.strip()
             type_working["Canonical Outlet"] = type_working["Outlet"].map(
                 lambda name: outlet_map.get(str(name).strip(), str(name).strip())
             )
@@ -200,8 +211,8 @@ def render_outlets_page() -> None:
                 current_entities["Media Type"] = ""
 
             country_working = df_traditional.copy()
-            country_working["Outlet"] = country_working.get("Outlet", "").fillna("").astype(str).str.strip()
-            country_working["Country"] = country_working.get("Country", "").fillna("").astype(str).str.strip()
+            country_working["Outlet"] = country_working.get("Outlet", "").astype("string").fillna("").str.strip()
+            country_working["Country"] = country_working.get("Country", "").astype("string").fillna("").str.strip()
             country_working["Canonical Outlet"] = country_working["Outlet"].map(
                 lambda name: outlet_map.get(str(name).strip(), str(name).strip())
             )
@@ -220,9 +231,9 @@ def render_outlets_page() -> None:
             else:
                 current_entities["Country"] = ""
 
-            current_entities["Country"] = current_entities["Country"].fillna("")
-            current_entities["Domain"] = current_entities["Domain"].fillna("")
-            current_entities["Media Type"] = current_entities["Media Type"].fillna("")
+            current_entities["Country"] = current_entities["Country"].astype("string").fillna("")
+            current_entities["Domain"] = current_entities["Domain"].astype("string").fillna("")
+            current_entities["Media Type"] = current_entities["Media Type"].astype("string").fillna("")
             current_entities = current_entities[[
                 "Outlet",
                 "Country",
@@ -402,11 +413,16 @@ def render_outlets_page() -> None:
     )
 
     def get_ranked_outlet_metrics() -> pd.DataFrame:
-        rank_by = st.session_state.get("outlets_rank_by", "Mentions")
+        rank_by = st.session_state.get("outlets_workflow_rank_by", "Mentions")
         metric_col = METRIC_FIELD_MAP.get(rank_by, "Mention_Total")
         sort_cols = [metric_col, "Impressions", "Mention_Total", "Unique_Mentions"]
         metrics_df = get_metrics_df()
         return metrics_df.sort_values(sort_cols, ascending=False).reset_index(drop=True)
+
+    def sync_outlet_rank_from_widget(widget_key: str) -> None:
+        value = str(st.session_state.get(widget_key, "Mentions") or "Mentions")
+        st.session_state.outlets_workflow_rank_by = value
+        st.session_state.outlets_rank_by = value
 
     def render_cleanup_section() -> None:
         def render_cleanup_section_legacy() -> None:
@@ -922,12 +938,18 @@ def render_outlets_page() -> None:
 
     def render_selection_section() -> None:
         st.session_state.outlets_section = "Selection"
+        previous_rank_by = str(st.session_state.get("outlets_last_rank_by", st.session_state.get("outlets_rank_by", "Mentions")) or st.session_state.get("outlets_rank_by", "Mentions"))
+        if st.session_state.get("outlets_rank_by_selection_widget") != st.session_state.get("outlets_rank_by", "Mentions"):
+            st.session_state.outlets_rank_by_selection_widget = str(st.session_state.get("outlets_rank_by", "Mentions") or "Mentions")
         rank_by = st.radio(
             "Ranking metric",
             ["Mentions", "Impressions", "Effective Reach"],
             horizontal=True,
-            key="outlets_rank_by",
+            key="outlets_rank_by_selection_widget",
+            on_change=lambda: sync_outlet_rank_from_widget("outlets_rank_by_selection_widget"),
         )
+        st.session_state.outlets_rank_by = rank_by
+        st.session_state.outlets_last_rank_by = rank_by
         ranked = get_ranked_outlet_metrics()
         valid_outlets = ranked["Outlet"].tolist()
         if not valid_outlets:
@@ -938,7 +960,9 @@ def render_outlets_page() -> None:
         pending_active_outlet = str(st.session_state.pop("outlet_insights_pending_active_outlet", "") or "")
         if pending_active_outlet:
             active_outlet = pending_active_outlet
-        if active_outlet not in valid_outlets:
+        if rank_by != previous_rank_by:
+            active_outlet = valid_outlets[0]
+        elif active_outlet not in valid_outlets:
             active_outlet = valid_outlets[0]
 
         st.session_state.outlet_insights_active_outlet = active_outlet
@@ -1135,12 +1159,17 @@ def render_outlets_page() -> None:
             st.info("Save outlets in Selection before reviewing insights.")
             return
 
+        if st.session_state.get("outlets_rank_by_insights_widget") != st.session_state.get("outlets_rank_by", "Mentions"):
+            st.session_state.outlets_rank_by_insights_widget = str(st.session_state.get("outlets_rank_by", "Mentions") or "Mentions")
         metric_label = st.radio(
             "Ranking metric",
             ["Mentions", "Impressions", "Effective Reach"],
             horizontal=True,
-            key="outlets_rank_by",
+            key="outlets_rank_by_insights_widget",
+            on_change=lambda: sync_outlet_rank_from_widget("outlets_rank_by_insights_widget"),
         )
+        st.session_state.outlets_rank_by = metric_label
+        st.session_state.outlets_last_rank_by = metric_label
 
         ranked = get_ranked_outlet_metrics()
         shortlist_df = ranked[ranked["Outlet"].isin(selected_outlets)].copy()

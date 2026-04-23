@@ -16,6 +16,18 @@ set_page_help_context(st.session_state, "Analysis Context")
 st.title("Analysis Context")
 st.caption("Optionally define the topic, aliases, spokespeople, products, and analytical guidance that should shape AI outputs across the app.")
 
+st.markdown(
+    """
+    <style>
+    div.st-key-analysis_context_draft_exclude_aggregators [data-testid="stCheckbox"] {
+        padding-top: 8px;
+        padding-bottom: 8px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 if not st.session_state.get("standard_step", False):
     st.error("Please complete Basic Cleaning before trying this step.")
     st.stop()
@@ -207,27 +219,40 @@ with st.container(border=True):
     st.subheader("Analysis Focus")
     st.caption("Set shared rules for what should be excluded from qualitative workflows like Top Stories, Tagging, Sentiment, Authors, Outlets, and Regions.")
 
-    exclude_aggregators_from_outlet_insights = st.checkbox(
-        "Exclude aggregators from Outlet metrics / insights",
-        key="analysis_context_draft_exclude_aggregators",
-        help="Recommended. Keeps aggregator coverage out of Outlet charts and narrative while leaving the rest of the dataset alone.",
-    )
+    focus_col1, focus_col2 = st.columns(2, gap="medium")
+    with focus_col1:
+        with st.container(border=True):
+            st.markdown("**Outlet treatment**")
+            st.caption("Control whether aggregator coverage should count in Outlet metrics and narrative outputs.")
+            exclude_aggregators_from_outlet_insights = st.checkbox(
+                "Exclude aggregators from Outlet metrics / insights",
+                key="analysis_context_draft_exclude_aggregators",
+                help="Recommended. Keeps aggregator coverage out of Outlet charts and narrative while leaving the rest of the dataset alone.",
+            )
 
-    media_type_commentary_mode = st.radio(
-        "Media type commentary",
-        options=analysis_context.MEDIA_TYPE_COMMENTARY_OPTIONS,
-        key="analysis_context_draft_media_type_commentary_mode",
-        horizontal=True,
-        help="Controls how much downstream qualitative outputs should talk about media-type mix when interpreting coverage patterns.",
-    )
+    with focus_col2:
+        with st.container(border=True):
+            st.markdown("**Narrative emphasis**")
+            st.caption("Control how much downstream AI outputs should talk about media-type mix when interpreting coverage patterns.")
+            media_type_commentary_mode = st.radio(
+                "Media type commentary",
+                options=analysis_context.MEDIA_TYPE_COMMENTARY_OPTIONS,
+                key="analysis_context_draft_media_type_commentary_mode",
+                horizontal=True,
+                label_visibility="collapsed",
+                help="Controls how much downstream qualitative outputs should talk about media-type mix when interpreting coverage patterns.",
+            )
 
-    qualitative_excluded_flags = st.multiselect(
-        "Exclude junky coverage flags from qualitative insights",
-        options=payload["available_junky_flags"],
-        default=st.session_state.analysis_context_draft_qualitative_flags,
-        help="Recommended defaults are Press Release and Advertorial. Add others when the dataset warrants it.",
-        key="analysis_context_draft_qualitative_flags_widget",
-    )
+    with st.container(border=True):
+        st.markdown("**Qualitative exclusions**")
+        st.caption("Exclude low-value or non-editorial coverage from qualitative workflows while keeping the main cleaned dataset intact.")
+        qualitative_excluded_flags = st.multiselect(
+            "Exclude junky coverage flags from qualitative insights",
+            options=payload["available_junky_flags"],
+            default=st.session_state.analysis_context_draft_qualitative_flags,
+            help="Recommended defaults are Press Release and Advertorial. Add others when the dataset warrants it.",
+            key="analysis_context_draft_qualitative_flags_widget",
+        )
     st.session_state.analysis_context_draft_qualitative_flags = qualitative_excluded_flags
 
     qualitative_exclusion_keep_keys = list(st.session_state.analysis_context_draft_qualitative_keep_keys)

@@ -100,10 +100,16 @@ def render_authors_page() -> None:
     st.session_state.setdefault("author_selection_editor_version", 0)
     st.session_state.setdefault("author_outlet_state_dirty", True)
     st.session_state.setdefault("author_outlet_state_last_sort", None)
+    if "authors_workflow_rank_by" not in st.session_state:
+        st.session_state.authors_workflow_rank_by = str(
+            st.session_state.get("authors_rank_by", st.session_state.get("top_auths_by", "Mentions")) or "Mentions"
+        )
     st.session_state.setdefault(
-        "authors_rank_by",
-        str(st.session_state.get("top_auths_by", "Mentions") or "Mentions"),
+        "authors_last_rank_by",
+        str(st.session_state.get("authors_workflow_rank_by", "Mentions") or "Mentions"),
     )
+    st.session_state.authors_rank_by = str(st.session_state.get("authors_workflow_rank_by", "Mentions") or "Mentions")
+    st.session_state.top_auths_by = str(st.session_state.get("authors_workflow_rank_by", "Mentions") or "Mentions")
 
     if st.session_state.get("pickle_load", False) is True and len(st.session_state.get("auth_outlet_table", [])) > 0:
         st.session_state.auth_outlet_table = st.session_state.auth_outlet_table.copy()
@@ -112,7 +118,13 @@ def render_authors_page() -> None:
     st.session_state.df_traditional = prepare_traditional_for_author_outlets(st.session_state.df_traditional)
 
     def get_author_rank_metric() -> str:
-        return str(st.session_state.get("authors_rank_by", "Mentions") or "Mentions")
+        return str(st.session_state.get("authors_workflow_rank_by", "Mentions") or "Mentions")
+
+    def sync_author_rank_from_widget(widget_key: str) -> None:
+        value = str(st.session_state.get(widget_key, "Mentions") or "Mentions")
+        st.session_state.authors_workflow_rank_by = value
+        st.session_state.authors_rank_by = value
+        st.session_state.top_auths_by = value
 
     def get_author_qualitative_df() -> pd.DataFrame:
         excluded_flags = get_qualitative_coverage_flag_exclusions(st.session_state)
@@ -427,16 +439,24 @@ def render_authors_page() -> None:
                     low_signal_color = "color: #985331;"
                     authors_display = headline_authors_df[["Possible Author(s)", "Count"]].copy()
                     signal_mask = headline_authors_df["In Signal"].tolist()
+                    person_like_mask = (
+                        headline_authors_df["Looks Like Person"].tolist()
+                        if "Looks Like Person" in headline_authors_df.columns
+                        else [False] * len(headline_authors_df)
+                    )
                     count_values = authors_display["Count"].fillna(0).astype(int).tolist()
-                    use_signal_coloring = any(count > 1 for count in count_values)
+                    use_signal_coloring = any(
+                        in_signal and looks_like_person and count > 1
+                        for in_signal, looks_like_person, count in zip(signal_mask, person_like_mask, count_values)
+                    )
                     styled_authors = (
                         authors_display.style
                         .apply(
                             lambda col: [
                                 (
-                                    highlight_color if (in_signal and count > 1) else low_signal_color
+                                    highlight_color if (in_signal and looks_like_person) else low_signal_color
                                 ) if use_signal_coloring else ""
-                                for in_signal, count in zip(signal_mask, count_values)
+                                for in_signal, looks_like_person, count in zip(signal_mask, person_like_mask, count_values)
                             ],
                             axis=0,
                             subset=["Possible Author(s)"],
@@ -540,11 +560,16 @@ def render_authors_page() -> None:
 
         control_col1, control_col2, control_col3 = st.columns([1.05, 1.0, 0.95], gap="medium", vertical_alignment="bottom")
         with control_col1:
+            if st.session_state.get("authors_rank_by_outlets_widget") != get_author_rank_metric():
+                st.session_state.authors_rank_by_outlets_widget = get_author_rank_metric()
             st.selectbox(
                 "Ranking metric",
                 ["Mentions", "Impressions", "Effective Reach"],
-                key="authors_rank_by",
-                on_change=lambda: reset_outlet_skips(st.session_state),
+                key="authors_rank_by_outlets_widget",
+                on_change=lambda: (
+                    sync_author_rank_from_widget("authors_rank_by_outlets_widget"),
+                    reset_outlet_skips(st.session_state),
+                ),
             )
         with control_col2:
             auto_assign_requested = st.button(
@@ -590,17 +615,14 @@ def render_authors_page() -> None:
                 st.info("No reviewable auto-assigned names are available.")
                 return
 
-            option_labels = [
-                f"{author_name} | {outlet_name}" if outlet_name else author_name
-                for author_name, outlet_name in review_options
-            ]
-            selected_label = st.selectbox(
+            option_indices = list(range(len(review_options)))
+            selected_index = st.selectbox(
                 "Review auto-assigned name",
-                option_labels,
+                option_indices,
+                format_func=lambda idx: review_options[idx][0],
                 key="authors_auto_assigned_review_target",
                 help="Choose an auto-assigned author name to correct without leaving this queue.",
             )
-            selected_index = option_labels.index(selected_label)
             selected_author, _selected_outlet = review_options[selected_index]
             corrected_name = st.text_input(
                 "Corrected author name",
@@ -654,10 +676,10 @@ def render_authors_page() -> None:
                     apply_author_name_fix(st.session_state, old_name, new_name)
                     invalidate_author_outlet_cache([old_name, new_name])
 
-            header_col, controls_col = st.columns([3.25, 1.45], gap="medium")
+            header_col, controls_col = st.columns([3.25, 1.45], gap="medium", vertical_alignment="bottom")
 
             with header_col:
-                name_col, fix_col = st.columns([2.7, 0.75], gap="small", vertical_alignment="center")
+                name_col, fix_col = st.columns([2.7, 0.75], gap="small", vertical_alignment="bottom")
                 with name_col:
                     st.markdown(
                         f"""
@@ -680,7 +702,7 @@ def render_authors_page() -> None:
                         )
 
             with controls_col:
-                first_col, prev_col, next_col, last_col, undo_col = st.columns([0.42, 0.42, 0.42, 0.42, 0.7], gap="small")
+                first_col, prev_col, next_col, last_col, undo_col = st.columns([0.42, 0.42, 0.42, 0.42, 0.7], gap="small", vertical_alignment="bottom")
 
                 with first_col:
                     if st.button(
@@ -936,16 +958,19 @@ def render_authors_page() -> None:
     def render_author_insights_tab(mode: str = "selection") -> None:
         st.session_state.authors_section = "Selection" if mode == "selection" else "Insights"
         ensure_author_outlet_state()
+        previous_rank_by = str(st.session_state.get("authors_last_rank_by", get_author_rank_metric()) or get_author_rank_metric())
         if mode == "selection":
-            previous_rank_by = get_author_rank_metric()
             current_assigned_only = bool(st.session_state.get("author_selection_assigned_only", False))
             control_col1, control_col2 = st.columns([1.3, 1.2], gap="large")
             with control_col1:
+                if st.session_state.get("authors_rank_by_selection_widget") != get_author_rank_metric():
+                    st.session_state.authors_rank_by_selection_widget = get_author_rank_metric()
                 st.radio(
                     "Ranking metric",
                     ["Mentions", "Impressions", "Effective Reach"],
                     horizontal=True,
-                    key="authors_rank_by",
+                    key="authors_rank_by_selection_widget",
+                    on_change=lambda: sync_author_rank_from_widget("authors_rank_by_selection_widget"),
                 )
             with control_col2:
                 show_authors_mode = st.radio(
@@ -957,8 +982,9 @@ def render_authors_page() -> None:
                     help="Apply the outlet-assignment filter to both the inspector and the candidate table.",
                 )
                 st.session_state.author_selection_assigned_only = show_authors_mode == "With outlet"
-        else:
-            previous_rank_by = get_author_rank_metric()
+        current_rank_by = get_author_rank_metric()
+        st.session_state.top_auths_by = current_rank_by
+        st.session_state.authors_last_rank_by = current_rank_by
         author_metrics, author_story_rows = build_author_metrics(
             get_author_qualitative_df(),
             auth_outlet_table=st.session_state.auth_outlet_table,
@@ -996,7 +1022,7 @@ def render_authors_page() -> None:
         pending_active_author = str(st.session_state.pop("authors_insights_pending_active_author", "") or "")
         if pending_active_author:
             active_author = pending_active_author
-        if get_author_rank_metric() != previous_rank_by:
+        if current_rank_by != previous_rank_by:
             active_author = valid_authors[0]
         elif active_author not in valid_authors:
             active_author = valid_authors[0]
@@ -1378,11 +1404,14 @@ def render_authors_page() -> None:
 
         if mode == "insights":
             st.divider()
+            if st.session_state.get("authors_rank_by_insights_widget") != get_author_rank_metric():
+                st.session_state.authors_rank_by_insights_widget = get_author_rank_metric()
             metric_label = st.radio(
                 "Ranking metric",
                 ["Mentions", "Impressions", "Effective Reach"],
                 horizontal=True,
-                key="authors_rank_by",
+                key="authors_rank_by_insights_widget",
+                on_change=lambda: sync_author_rank_from_widget("authors_rank_by_insights_widget"),
             )
 
             chart_table = shortlist_output_df[[

@@ -10,6 +10,41 @@ import pandas as pd
 
 
 HIDDEN_FLAGS = {"Good Outlet", "Aggregator"}
+NON_PERSON_AUTHOR_MARKERS = {
+    "agency",
+    "advertising",
+    "associates",
+    "brand",
+    "bureau",
+    "business",
+    "co",
+    "comms",
+    "communications",
+    "company",
+    "corp",
+    "corporation",
+    "desk",
+    "editorial",
+    "group",
+    "holding",
+    "holdings",
+    "inc",
+    "insights",
+    "llc",
+    "ltd",
+    "media",
+    "news",
+    "press",
+    "pr",
+    "reuters",
+    "service",
+    "services",
+    "staff",
+    "studio",
+    "studios",
+    "team",
+    "wire",
+}
 
 
 def _required_known_author_count(total_rows: int) -> int:
@@ -49,6 +84,41 @@ def _is_quality_author_string(value: object) -> bool:
         return False
 
     if (alpha_chars / total_chars) < 0.65:
+        return False
+
+    return True
+
+
+def _looks_like_person_name(value: object) -> bool:
+    text = str(value or "").strip()
+    if not _is_quality_author_string(text):
+        return False
+
+    words = [word for word in re.split(r"\s+", text) if word]
+    if not 2 <= len(words) <= 4:
+        return False
+
+    normalized_tokens = [
+        re.sub(r"[^A-Za-z]", "", token).lower()
+        for token in words
+        if re.sub(r"[^A-Za-z]", "", token)
+    ]
+    if len(normalized_tokens) < 2:
+        return False
+
+    if any(token in NON_PERSON_AUTHOR_MARKERS for token in normalized_tokens):
+        return False
+
+    uppercase_words = sum(
+        1
+        for token in words
+        if re.sub(r"[^A-Za-z]", "", token)
+        and re.sub(r"[^A-Za-z]", "", token).isupper()
+    )
+    if uppercase_words >= 2:
+        return False
+
+    if any(len(token) == 1 for token in normalized_tokens):
         return False
 
     return True
@@ -504,12 +574,12 @@ def get_headline_authors(df: pd.DataFrame, headline_text: str) -> pd.DataFrame:
     along with how many times each appears.
     """
     if df is None or df.empty or "Headline" not in df.columns:
-        return pd.DataFrame(columns=["Possible Author(s)", "Count", "In Signal"])
+        return pd.DataFrame(columns=["Possible Author(s)", "Count", "In Signal", "Looks Like Person"])
 
     working = df[df["Headline"] == headline_text].copy()
 
     if "Author" not in working.columns:
-        return pd.DataFrame(columns=["Possible Author(s)", "Count", "In Signal"])
+        return pd.DataFrame(columns=["Possible Author(s)", "Count", "In Signal", "Looks Like Person"])
 
     working["Author"] = working["Author"].replace("", np.nan)
     working = working[working["Author"].notna()].copy()
@@ -517,13 +587,13 @@ def get_headline_authors(df: pd.DataFrame, headline_text: str) -> pd.DataFrame:
     working = working[working["Author"] != ""]
     working = working[working["Author"].apply(_is_quality_author_string)].copy()
     if working.empty:
-        return pd.DataFrame(columns=["Possible Author(s)", "Count", "In Signal"])
+        return pd.DataFrame(columns=["Possible Author(s)", "Count", "In Signal", "Looks Like Person"])
 
     working["_cluster_key"] = working["Author"].apply(_author_cluster_key)
     working = working[working["_cluster_key"] != ""].copy()
 
     if working.empty:
-        return pd.DataFrame(columns=["Possible Author(s)", "Count", "In Signal"])
+        return pd.DataFrame(columns=["Possible Author(s)", "Count", "In Signal", "Looks Like Person"])
 
     cluster_counts = (
         working.groupby("_cluster_key")
@@ -531,7 +601,7 @@ def get_headline_authors(df: pd.DataFrame, headline_text: str) -> pd.DataFrame:
         .sort_values(ascending=False)
     )
     if cluster_counts.empty:
-        return pd.DataFrame(columns=["Possible Author(s)", "Count", "In Signal"])
+        return pd.DataFrame(columns=["Possible Author(s)", "Count", "In Signal", "Looks Like Person"])
 
     best_cluster_key = str(cluster_counts.index[0])
     author_counts = (
@@ -566,6 +636,7 @@ def get_headline_authors(df: pd.DataFrame, headline_text: str) -> pd.DataFrame:
             or str(name) in expanded_signal_names
         )
     )
+    author_counts["Looks Like Person"] = author_counts["Author"].map(_looks_like_person_name)
     author_counts = author_counts.rename(columns={"Author": "Possible Author(s)"})
     return author_counts
 

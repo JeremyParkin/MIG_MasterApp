@@ -60,7 +60,7 @@ def _clean_outlet_df(df: pd.DataFrame) -> pd.DataFrame:
 
     text_cols = ["Outlet", "Headline", "Author", "URL", "Type", "Country", "Coverage Flags"]
     for col in text_cols:
-        working[col] = working[col].fillna("").astype(str).str.strip()
+        working[col] = working[col].astype("string").fillna("").str.strip()
 
     for col in ["Mentions", "Impressions", "Effective Reach", "Prime Example"]:
         working[col] = pd.to_numeric(working[col], errors="coerce").fillna(0)

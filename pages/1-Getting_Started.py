@@ -27,6 +27,17 @@ init_getting_started_state()
 # Upload step
 # ----------------------------
 if not st.session_state.upload_step:
+    uploaded_file = st.file_uploader(
+        label="Upload your CSV or XLSX*",
+        type=["csv", "xlsx"],
+        accept_multiple_files=False,
+        help="Use CSV files exported from the Agility Platform or XLSX files produced by this app.",
+    )
+
+    if uploaded_file is not None:
+        st.session_state.df_untouched = read_uploaded_file(uploaded_file)
+        st.session_state.uploaded_filename = uploaded_file.name
+
     client = st.text_input(
         "Client organization name*",
         placeholder="eg. Air Canada",
@@ -39,16 +50,6 @@ if not st.session_state.upload_step:
         key="period",
         help="Required to build export file name.",
     )
-    uploaded_file = st.file_uploader(
-        label="Upload your CSV or XLSX*",
-        type=["csv", "xlsx"],
-        accept_multiple_files=False,
-        help="Use CSV files exported from the Agility Platform or XLSX files produced by this app.",
-    )
-
-    if uploaded_file is not None:
-        st.session_state.df_untouched = read_uploaded_file(uploaded_file)
-        st.session_state.uploaded_filename = uploaded_file.name
 
     submitted = st.button("Submit", type="primary")
 
