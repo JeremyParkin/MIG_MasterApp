@@ -40,6 +40,41 @@ if "analysis_context_suggestion_success" not in st.session_state:
 if "analysis_context_tag_widget_version" not in st.session_state:
     st.session_state.analysis_context_tag_widget_version = 0
 
+
+def _has_meaningful_downstream_work() -> bool:
+    list_keys = [
+        "author_insights_selected_authors",
+        "outlet_insights_selected_outlets",
+        "top_stories_validation_confirmed_keys",
+    ]
+    for key in list_keys:
+        if st.session_state.get(key):
+            return True
+
+    dict_keys = [
+        "author_insights_summaries",
+        "outlet_insights_summaries",
+        "regions_generated_output",
+        "tagging_observation_output",
+        "sentiment_observation_output",
+    ]
+    for key in dict_keys:
+        value = st.session_state.get(key)
+        if isinstance(value, dict) and len(value) > 0:
+            return True
+
+    df_keys = [
+        "added_df",
+        "df_tagging_unique",
+        "df_sentiment_unique",
+    ]
+    for key in df_keys:
+        value = st.session_state.get(key)
+        if hasattr(value, "empty") and not value.empty:
+            return True
+
+    return False
+
 payload = analysis_context.get_analysis_context_payload(st.session_state)
 if "analysis_context_draft_initialized" not in st.session_state:
     st.session_state.analysis_context_draft_initialized = True
@@ -70,6 +105,11 @@ st.session_state.setdefault(
     "analysis_context_draft_media_type_commentary_mode",
     payload.get("media_type_commentary_mode", "Auto"),
 )
+
+if _has_meaningful_downstream_work():
+    st.warning(
+        "You have already done work in downstream workflows. Changes saved here may affect ranked outputs and generated insights in Authors, Outlets, Top Stories, Regions, Tagging, and Sentiment. Revisit and regenerate affected outputs if needed."
+    )
 
 pending_suggestions = st.session_state.pop("analysis_context_pending_suggestions", None)
 if pending_suggestions:

@@ -133,6 +133,23 @@ This file is a lightweight parking lot for product and workflow ideas that are w
   - do not invent prominence when no valid value exists in the group
   - be explicit when multiple `Prominence...` columns are present and normalize each independently
 
+### Prominence Signal Controls In Analysis Context
+- If `Prominence...` columns exist in the dataset, consider adding an `Analysis Context` control that lets the analyst choose which of those columns should count as meaningful signal for this analysis.
+- Goal:
+  - let the analyst say which prominence dimensions actually matter for this account or report
+  - avoid treating every available prominence column as equally important when recommending top stories or prioritizing qualitative review
+- Suggested first version:
+  - detect available `Prominence...` columns automatically
+  - show a multiselect in `Analysis Context` for `Which prominence columns should count as meaningful signal?`
+  - optionally add a threshold control later for minimum signal level such as `High / Very High` vs `Moderate and above`
+- Likely downstream uses:
+  - `Recommend Top Stories`
+  - qualitative prioritization and review queues
+  - possible later weighting in Authors / Outlets / Regions if analysts find it valuable
+- Important guardrails:
+  - do not silently change row data; this is a weighting / signal interpretation choice, not normalization
+  - keep it optional when no prominence fields exist or when prominence is not useful for the account
+
 ## Later Exploration
 
 ### Automated / Assisted Link Validation
