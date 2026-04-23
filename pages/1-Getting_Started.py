@@ -94,30 +94,32 @@ if not st.session_state.upload_step:
 # ----------------------------
 if st.session_state.upload_step:
     uploaded_filename = str(st.session_state.get("uploaded_filename", "") or "").strip()
-    st.success(f"File uploaded: {uploaded_filename}" if uploaded_filename else "File uploaded.")
-
-    if st.button("Start Over?"):
-        clear_all_session_state()
-        st.rerun()
-
-    st.header("Initial Stats")
+    conf_col, button_col = st.columns([4,1])
+    with conf_col:
+        st.success(f"File uploaded: {uploaded_filename}" if uploaded_filename else "File uploaded.")
+    with button_col:
+        if st.button("Start Over?"):
+            clear_all_session_state()
+            st.rerun()
 
     df_display = st.session_state.df_traditional.copy()
+    impressions = df_display["Impressions"].sum() if "Impressions" in df_display.columns else 0
 
-    col1, col2, col3 = st.columns(3, gap="medium")
+    st.divider()
 
-    with col1:
+    header_col, metric_col1, metric_col2 = st.columns([3, 1, 1], gap="medium", vertical_alignment="bottom")
+    with header_col:
+        st.header("Initial Stats")
+    with metric_col1:
         st.metric(label="Mentions", value="{:,}".format(len(df_display)))
-
-        impressions = df_display["Impressions"].sum() if "Impressions" in df_display.columns else 0
+    with metric_col2:
         st.metric(label="Impressions", value=format_number(impressions))
 
-        if "Type" in df_display.columns:
-            st.write(df_display["Type"].value_counts())
-        else:
-            st.info("No media type column available.")
+    st.divider()
 
-    with col2:
+    col1, col2, col3 = st.columns(3, gap="small")
+
+    with col1:
         st.subheader("Top Authors")
         if "Author" in df_display.columns:
             authors_df = df_display.copy()
@@ -137,7 +139,7 @@ if st.session_state.upload_step:
         else:
             st.info("No Author column available.")
 
-    with col3:
+    with col2:
         st.subheader("Top Outlets")
         if "Outlet" in df_display.columns:
             outlets_df = df_display.copy()
@@ -155,6 +157,30 @@ if st.session_state.upload_step:
                 st.info("No non-blank outlets available.")
         else:
             st.info("No Outlet column available.")
+
+    with col3:
+        st.subheader("Media Type")
+        if "Type" in df_display.columns:
+            media_type_df = (
+                df_display["Type"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .loc[lambda s: s != ""]
+                .value_counts()
+                .rename_axis("Type")
+                .reset_index(name="count")
+            )
+            if not media_type_df.empty:
+                st.dataframe(
+                    media_type_df,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.info("No non-blank media types available.")
+        else:
+            st.info("No media type column available.")
 
     df_trend = df_display.copy()
 
