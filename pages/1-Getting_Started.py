@@ -110,36 +110,28 @@ if st.session_state.upload_step:
     upload_quality_report = st.session_state.get("upload_quality_report") or {}
     upload_warnings = upload_quality_report.get("warnings", [])
     if upload_warnings:
-        for warning in upload_warnings:
-            st.warning(warning.get("message", "Some uploaded values could not be normalized cleanly."))
-
         date_issue_indices = upload_quality_report.get("date_issue_indices") or []
-        date_issue_row_numbers = upload_quality_report.get("date_issue_row_numbers") or []
-        if 0 < len(date_issue_indices) <= 5:
-            row_numbers_text = ", ".join(str(row_num) for row_num in date_issue_row_numbers)
-            drop_label = (
-                f"Drop {len(date_issue_indices)} invalid date/time row"
-                f"{'' if len(date_issue_indices) == 1 else 's'} and continue"
-            )
-            button_col, note_col = st.columns([1, 3], gap="medium", vertical_alignment="center")
-            with button_col:
-                if st.button(drop_label, key="drop_invalid_upload_date_rows", type="secondary", use_container_width=True):
-                    st.session_state.df_traditional = st.session_state.df_traditional.drop(index=date_issue_indices, errors="ignore")
-                    st.session_state.df_untouched = st.session_state.df_untouched.drop(index=date_issue_indices, errors="ignore")
-                    st.session_state.upload_quality_report = build_upload_quality_report(
-                        st.session_state.df_untouched,
-                        st.session_state.df_traditional,
-                    )
-                    st.success(
-                        f"Dropped {len(date_issue_indices)} uploaded row"
-                        f"{'' if len(date_issue_indices) == 1 else 's'} with invalid date/time values."
-                    )
-                    st.rerun()
-            with note_col:
-                st.caption(
-                    f"Use this only when the affected uploaded row numbers ({row_numbers_text}) "
-                    "are clearly isolated bad values."
-                )
+        for warning in upload_warnings:
+            if warning.get("title") == "Some date values could not be parsed" and 0 < len(date_issue_indices) <= 5:
+                warning_col, action_col = st.columns([7, 1], gap="small", vertical_alignment="center")
+                with warning_col:
+                    st.warning(warning.get("message", "Some uploaded values could not be normalized cleanly."))
+                with action_col:
+                    drop_label = f"Drop {len(date_issue_indices)} row{'' if len(date_issue_indices) == 1 else 's'}"
+                    if st.button(drop_label, key="drop_invalid_upload_date_rows", type="secondary", use_container_width=True):
+                        st.session_state.df_traditional = st.session_state.df_traditional.drop(index=date_issue_indices, errors="ignore")
+                        st.session_state.df_untouched = st.session_state.df_untouched.drop(index=date_issue_indices, errors="ignore")
+                        st.session_state.upload_quality_report = build_upload_quality_report(
+                            st.session_state.df_untouched,
+                            st.session_state.df_traditional,
+                        )
+                        st.success(
+                            f"Dropped {len(date_issue_indices)} uploaded row"
+                            f"{'' if len(date_issue_indices) == 1 else 's'} with invalid date/time values."
+                        )
+                        st.rerun()
+            else:
+                st.warning(warning.get("message", "Some uploaded values could not be normalized cleanly."))
 
         date_issue_examples = upload_quality_report.get("date_issue_examples")
         if isinstance(date_issue_examples, pd.DataFrame) and not date_issue_examples.empty:
