@@ -72,7 +72,7 @@ if not st.session_state.tags_text.strip():
     st.session_state.tags_text = build_default_tags_text(client_name)
 
 _last = st.session_state.get("__last_tagging_batch_summary__")
-if _last:
+if _last and st.session_state.get("tagging_section") == "Run":
     st.success(f"Completed AI tagging for {_last['done']} grouped storie(s) in {_last['elapsed']:.1f}s.")
     if _last["errors"]:
         with st.expander(f"Completed with {len(_last['errors'])} error(s)", expanded=False):

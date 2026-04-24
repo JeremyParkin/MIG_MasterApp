@@ -91,14 +91,14 @@ def build_pages() -> list:
     return [
         st.Page("pages/1-Getting_Started.py", title="Getting Started", icon=":material/play_arrow:"),
         st.Page("pages/2-Basic_Cleaning.py", title="Basic Cleaning", icon=":material/mop:"),
-        st.Page("pages/2a-Analysis_Context.py", title="Analysis Context", icon=":material/tune:"),
+        st.Page("pages/Analysis_Context.py", title="Analysis Context", icon=":material/tune:"),
         st.Page("pages/3-Authors.py", title="Authors", icon=":material/groups:"),
         st.Page("pages/4-Outlets.py", title="Outlets", icon=":material/apartment:"),
         st.Page("pages/5-Translation.py", title="Translation", icon=":material/mediation:"),
-        st.Page("pages/6-Top_Stories_Workflow.py", title="Top Stories", icon=":material/newspaper:"),
+        st.Page("pages/Top_Stories.py", title="Top Stories", icon=":material/newspaper:"),
         st.Page("pages/7-Regions.py", title="Regions", icon=":material/public:"),
         st.Page("pages/8-Tagging.py", title="Tagging", icon=":material/sell:"),
-        st.Page("pages/9-AI_Sentiment.py", title="Sentiment", icon=":material/auto_awesome:"),
+        st.Page("pages/Sentiment.py", title="Sentiment", icon=":material/auto_awesome:"),
         st.Page("pages/11-Download.py", title="Download", icon=":material/download:"),
         st.Page("pages/12-Save_Load.py", title="Save & Load", icon=":material/save:"),
     ]
