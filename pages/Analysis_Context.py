@@ -23,6 +23,19 @@ st.markdown(
         padding-top: 8px;
         padding-bottom: 8px;
     }
+    .entity-field-note {
+        margin-top: -0.02rem;
+        margin-bottom: 1rem;
+        color: rgba(250, 250, 250, 0.58);
+        font-size: 0.82rem;
+        line-height: 1.38;
+    }
+    .entity-card-gap {
+        height: 0.55rem;
+    }
+    .entity-subfield-gap {
+        height: 0.4rem;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -145,94 +158,129 @@ if pending_suggestions:
 
 with st.container(border=True):
     st.subheader("Entity Context")
-    col1, col2 = st.columns(2, gap="medium")
-    with col1:
-        client_name = st.text_input(
-            "Client name",
-            key="analysis_context_draft_client_name",
-            help="Usually carried over from Getting Started, but you can adjust it here if needed.",
-        )
-    with col2:
-        primary_name = st.text_input(
-            "Primary topic or entity of interest",
-            key="analysis_context_draft_primary_name",
-            help="This can be the client itself, or a broader topic you want the AI to focus on instead.",
-        )
+    st.caption("Define the subject of the analysis, then add reference names and optional prompt-shaping guidance for downstream AI workflows.")
 
-    helper_col1, helper_col2, helper_col3 = st.columns([1, 0.55, 1.85], gap="small")
-    with helper_col1:
-        if st.button("Suggest context items with AI", type="primary", key="analysis_context_ai_suggest", use_container_width=True):
-            try:
-                with st.spinner("Generating context suggestions..."):
-                    suggestions, _, _ = analysis_context.generate_analysis_context_suggestions(
-                        client_name=client_name,
-                        primary_name=primary_name,
-                        alternate_names=st.session_state.analysis_context_draft_alternate_names,
-                        spokespeople=st.session_state.analysis_context_draft_spokespeople,
-                        products=st.session_state.analysis_context_draft_products,
-                        guidance=st.session_state.analysis_context_draft_guidance,
-                        api_key=st.secrets["key"],
-                        model=analysis_context.DEFAULT_ANALYSIS_CONTEXT_MODEL,
-                    )
-                st.session_state.analysis_context_pending_suggestions = suggestions
+    with st.container(border=True):
+        st.markdown("**Core identity**")
+        st.caption("Start with the main entity or topic the app should orient around.")
+        col1, col2 = st.columns(2, gap="medium")
+        with col1:
+            client_name = st.text_input(
+                "Client name",
+                key="analysis_context_draft_client_name",
+                help="Usually carried over from Getting Started, but you can adjust it here if needed.",
+            )
+        with col2:
+            primary_name = st.text_input(
+                "Primary topic or entity of interest",
+                key="analysis_context_draft_primary_name",
+                help="This can be the client itself, or a broader topic you want the AI to focus on instead.",
+            )
+
+        helper_col1, helper_col2, _ = st.columns([1, 0.95, 1.05], gap="small")
+        with helper_col1:
+            if st.button("Suggest context items with AI", type="primary", key="analysis_context_ai_suggest", use_container_width=True):
+                try:
+                    with st.spinner("Generating context suggestions..."):
+                        suggestions, _, _ = analysis_context.generate_analysis_context_suggestions(
+                            client_name=client_name,
+                            primary_name=primary_name,
+                            alternate_names=st.session_state.analysis_context_draft_alternate_names,
+                            spokespeople=st.session_state.analysis_context_draft_spokespeople,
+                            products=st.session_state.analysis_context_draft_products,
+                            guidance=st.session_state.analysis_context_draft_guidance,
+                            api_key=st.secrets["key"],
+                            model=analysis_context.DEFAULT_ANALYSIS_CONTEXT_MODEL,
+                        )
+                    st.session_state.analysis_context_pending_suggestions = suggestions
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Could not generate context suggestions: {e}")
+        with helper_col2:
+            if st.button("Clear entity context below", key="analysis_context_clear_below", use_container_width=True):
+                st.session_state.analysis_context_draft_alternate_names = []
+                st.session_state.analysis_context_draft_spokespeople = []
+                st.session_state.analysis_context_draft_products = []
+                st.session_state.analysis_context_draft_highlight_keywords = []
+                st.session_state.analysis_context_draft_guidance = ""
+                st.session_state.analysis_context_suggestion_payload = None
+                st.session_state.analysis_context_tag_widget_version += 1
                 st.rerun()
-            except Exception as e:
-                st.error(f"Could not generate context suggestions: {e}")
-    with helper_col2:
-        if st.button("Clear all below", key="analysis_context_clear_below", use_container_width=True):
-            st.session_state.analysis_context_draft_alternate_names = []
-            st.session_state.analysis_context_draft_spokespeople = []
-            st.session_state.analysis_context_draft_products = []
-            st.session_state.analysis_context_draft_highlight_keywords = []
-            st.session_state.analysis_context_draft_guidance = ""
-            st.session_state.analysis_context_suggestion_payload = None
-            st.session_state.analysis_context_tag_widget_version += 1
-            st.rerun()
 
-    if st.session_state.get("analysis_context_suggestion_success"):
-        st.success("AI context suggestions added to the fields above.")
-        st.session_state.analysis_context_suggestion_success = False
+        if st.session_state.get("analysis_context_suggestion_success"):
+            st.success("AI context suggestions added to the fields below.")
+            st.session_state.analysis_context_suggestion_success = False
+
+    st.markdown('<div class="entity-card-gap"></div>', unsafe_allow_html=True)
 
     tag_key_suffix = st.session_state.analysis_context_tag_widget_version
-    alternate_names = st_tags(
-        label="Alternate names / aliases",
-        text="Press enter to add more",
-        maxtags=20,
-        value=st.session_state.analysis_context_draft_alternate_names,
-        key=f"analysis_context_aliases_tags_{tag_key_suffix}",
-    )
-    spokespeople = st_tags(
-        label="Key spokespeople",
-        text="Press enter to add more",
-        maxtags=20,
-        value=st.session_state.analysis_context_draft_spokespeople,
-        key=f"analysis_context_spokespeople_tags_{tag_key_suffix}",
-    )
-    products = st_tags(
-        label="Products / sub-brands / initiatives",
-        text="Press enter to add more",
-        maxtags=20,
-        value=st.session_state.analysis_context_draft_products,
-        key=f"analysis_context_products_tags_{tag_key_suffix}",
-    )
-    highlight_keywords = st_tags(
-        label="Other keywords to highlight in Sentiment / Tagging",
-        text="Press enter to add more",
-        maxtags=30,
-        value=st.session_state.analysis_context_draft_highlight_keywords,
-        key=f"analysis_context_highlight_keywords_tags_{tag_key_suffix}",
-    )
-    st.caption("Highlight-only terms for spot checks. These are not added to AI prompt context.")
+    with st.container(border=True):
+        st.markdown("**Reference names**")
+        st.caption("Add the names and related entities that should help the app recognize relevant coverage.")
+        ref_col1, ref_col2 = st.columns(2, gap="medium")
+        with ref_col1:
+            alternate_names = st_tags(
+                label="Alternate names / aliases",
+                text="Press enter to add more",
+                maxtags=20,
+                value=st.session_state.analysis_context_draft_alternate_names,
+                key=f"analysis_context_aliases_tags_{tag_key_suffix}",
+            )
+            st.markdown(
+                '<div class="entity-field-note">Include alternate spellings, abbreviations, or commonly used shorthand.</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown('<div class="entity-subfield-gap"></div>', unsafe_allow_html=True)
+            products = st_tags(
+                label="Products / sub-brands / initiatives",
+                text="Press enter to add more",
+                maxtags=20,
+                value=st.session_state.analysis_context_draft_products,
+                key=f"analysis_context_products_tags_{tag_key_suffix}",
+            )
+            st.markdown(
+                '<div class="entity-field-note">Use this for product names, program names, campaigns, or sub-brands that meaningfully define the story.</div>',
+                unsafe_allow_html=True,
+            )
+        with ref_col2:
+            spokespeople = st_tags(
+                label="Key spokespeople",
+                text="Press enter to add more",
+                maxtags=20,
+                value=st.session_state.analysis_context_draft_spokespeople,
+                key=f"analysis_context_spokespeople_tags_{tag_key_suffix}",
+            )
+            st.markdown(
+                '<div class="entity-field-note">Add people central to the coverage.</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown('<div class="entity-subfield-gap"></div>', unsafe_allow_html=True)
+            highlight_keywords = st_tags(
+                label="Other keywords to highlight in Sentiment / Tagging",
+                text="Press enter to add more",
+                maxtags=30,
+                value=st.session_state.analysis_context_draft_highlight_keywords,
+                key=f"analysis_context_highlight_keywords_tags_{tag_key_suffix}",
+            )
+            st.markdown(
+                '<div class="entity-field-note">Highlight-only terms for spot checks. These are not added to AI prompt context.</div>',
+                unsafe_allow_html=True,
+            )
+
+    with st.container(border=True):
+        st.markdown("**Prompt shaping**")
+        st.caption("Add optional analytical framing that should shape how downstream AI outputs interpret the coverage.")
+        guidance = st.text_area(
+            "Additional rationale, context, or guidance (optional)",
+            key="analysis_context_draft_guidance",
+            height=110,
+            help="Use this for analytical framing, nuances, or focus that should shape AI-generated summaries and observations.",
+        )
+
     st.session_state.analysis_context_draft_alternate_names = alternate_names
     st.session_state.analysis_context_draft_spokespeople = spokespeople
     st.session_state.analysis_context_draft_products = products
     st.session_state.analysis_context_draft_highlight_keywords = highlight_keywords
-    guidance = st.text_area(
-        "Additional rationale, context, or guidance (optional)",
-        key="analysis_context_draft_guidance",
-        height=110,
-        help="Use this for analytical framing, nuances, or focus that should shape AI-generated summaries and observations.",
-    )
 
     with st.expander("AI suggestion rationale", expanded=False):
         suggestion_payload = st.session_state.get("analysis_context_suggestion_payload")
