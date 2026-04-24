@@ -22,7 +22,12 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         set_assigned_tag,
     )
     from processing.sentiment_config import build_tolerant_regex_str
-    from processing.spot_checks import escape_markdown, highlight_with_tolerant_regex
+    from processing.spot_checks import (
+        escape_markdown,
+        highlight_with_tolerant_regex,
+        translate_text,
+        apply_translation_to_group,
+    )
     from utils.api_meter import apply_usage_to_session
 
     def sync_tagging_state(unique_df: pd.DataFrame, rows_df: pd.DataFrame) -> None:
@@ -183,18 +188,28 @@ def render_tagging_review_page(*, review_stage: str) -> None:
     idx = int(st.session_state.tagging_review_idx)
     row = candidates.iloc[idx]
     current_group_id = int(row["Group ID"])
-    url = str(row.get("URL", "") or "").strip()
-    headline = str(row.get("Headline", "") or "").strip()
-    snippet = str(row.get("Snippet", row.get("Example Snippet", "")) or "").strip()
 
-    ai_tag = str(row.get("AI Tag", "") or "").strip()
+    def _safe_text(value) -> str:
+        if pd.isna(value):
+            return ""
+        return str(value).strip()
+
+    url = _safe_text(row.get("URL", ""))
+    head_raw = _safe_text(row.get("Headline", ""))
+    body_raw = _safe_text(row.get("Snippet", row.get("Example Snippet", "")))
+    trans_head = _safe_text(row.get("Translated Headline", ""))
+    trans_body = _safe_text(row.get("Translated Body", ""))
+    headline = trans_head if trans_head else head_raw
+    snippet = trans_body if trans_body else body_raw
+
+    ai_tag = _safe_text(row.get("AI Tag", ""))
     ai_conf = pd.to_numeric(pd.Series([row.get("AI Tag Confidence")]), errors="coerce").iloc[0]
-    ai_rsn = str(row.get("AI Tag Rationale", "") or "").strip()
-    review_tag = str(row.get("Review AI Tag", "") or "").strip()
+    ai_rsn = _safe_text(row.get("AI Tag Rationale", ""))
+    review_tag = _safe_text(row.get("Review AI Tag", ""))
     review_conf = pd.to_numeric(pd.Series([row.get("Review AI Confidence")]), errors="coerce").iloc[0]
-    review_rsn = str(row.get("Review AI Rationale", "") or "").strip()
-    agreement = str(row.get("AI Tag Agreement", "") or "").strip()
-    needs_review = str(row.get("Needs Human Review", "") or "").strip()
+    review_rsn = _safe_text(row.get("Review AI Rationale", ""))
+    agreement = _safe_text(row.get("AI Tag Agreement", ""))
+    needs_review = _safe_text(row.get("Needs Human Review", ""))
 
     def _fmt_tag(label: str, conf) -> str:
         if not label.strip():
@@ -202,11 +217,6 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         if pd.notna(conf):
             return f"{label} ({int(conf)})"
         return label
-
-    def _safe_text(value) -> str:
-        if pd.isna(value):
-            return ""
-        return str(value or "").strip()
 
     analysis_payload = get_analysis_context_payload(st.session_state)
     display_keywords = []
@@ -218,7 +228,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
     seen_cf: set[str] = set()
     keywords: list[str] = []
     for item in display_keywords:
-        cleaned = str(item or "").strip()
+        cleaned = _safe_text(item)
         if not cleaned:
             continue
         cf = cleaned.casefold()
@@ -227,6 +237,23 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         seen_cf.add(cf)
         keywords.append(cleaned)
     tolerant_pat_str = build_tolerant_regex_str(keywords)
+
+    with st.sidebar:
+        if st.button("Translate"):
+            try:
+                th = translate_text(head_raw) if head_raw else None
+                tb = translate_text(body_raw) if body_raw else None
+                unique2, rows2 = apply_translation_to_group(
+                    st.session_state.df_tagging_unique,
+                    st.session_state.df_tagging_rows,
+                    current_group_id,
+                    th,
+                    tb,
+                )
+                sync_tagging_state(unique2, rows2)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Translation failed: {e}")
 
     left, right = st.columns([3.8, 1.4], gap="large")
 
@@ -248,9 +275,9 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         if url:
             st.markdown(url)
         meta_bits = [
-            str(row.get("Date", "") or "").strip(),
-            str(row.get("Outlet", "") or "").strip(),
-            str(row.get("Type", "") or "").strip(),
+            _safe_text(row.get("Date", "")),
+            _safe_text(row.get("Outlet", "")),
+            _safe_text(row.get("Type", "")),
             f"Mentions: {int(pd.to_numeric(pd.Series([row.get('Mentions', 0)]), errors='coerce').fillna(0).iloc[0]):,}",
             f"Impressions: {int(pd.to_numeric(pd.Series([row.get('Impressions', 0)]), errors='coerce').fillna(0).iloc[0]):,}",
         ]
