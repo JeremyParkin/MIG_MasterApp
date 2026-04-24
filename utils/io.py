@@ -144,6 +144,9 @@ def build_upload_quality_report(df_raw: pd.DataFrame, df_normalized: pd.DataFram
         "date_issue_examples": pd.DataFrame(),
         "date_issue_indices": [],
         "date_issue_row_numbers": [],
+        "media_type_issue_examples": pd.DataFrame(),
+        "media_type_issue_indices": [],
+        "media_type_issue_row_numbers": [],
     }
 
     if df_raw is None or df_raw.empty:
@@ -210,6 +213,45 @@ def build_upload_quality_report(df_raw: pd.DataFrame, df_normalized: pd.DataFram
             examples = date_example_df.loc[invalid_mask].copy().head(5)
             examples.insert(0, "Source Row", (examples.index + 2).astype(int))
             report["date_issue_examples"] = examples.reset_index(drop=True)
+
+    media_type_source_col = None
+    if "Media Type" in raw.columns:
+        media_type_source_col = "Media Type"
+    elif "Type" in raw.columns:
+        media_type_source_col = "Type"
+
+    if media_type_source_col and "Type" in normalized.columns:
+        raw_media_type = _non_blank_text(raw[media_type_source_col])
+        normalized_media_type = _non_blank_text(normalized["Type"])
+        missing_media_type_mask = normalized_media_type == ""
+        missing_media_type_row_numbers = (raw.index[missing_media_type_mask] + 2).tolist()
+        missing_media_type_indices = raw.index[missing_media_type_mask].tolist()
+
+        if missing_media_type_row_numbers:
+            report["media_type_issue_indices"] = missing_media_type_indices
+            report["media_type_issue_row_numbers"] = missing_media_type_row_numbers
+            example_numbers = missing_media_type_row_numbers[:5]
+            example_text = ", ".join(str(num) for num in example_numbers)
+            if len(missing_media_type_row_numbers) > 5:
+                example_text += ", ..."
+
+            report["warnings"].append(
+                {
+                    "title": "Some rows are missing media type",
+                    "message": (
+                        f"{len(missing_media_type_row_numbers)} uploaded row(s) have no media type value. "
+                        f"Example row numbers: {example_text}."
+                    ),
+                }
+            )
+
+            examples = pd.DataFrame(
+                {
+                    "Source Row": (raw.index[missing_media_type_mask] + 2).astype(int),
+                    media_type_source_col: raw_media_type.loc[missing_media_type_mask],
+                }
+            ).head(5)
+            report["media_type_issue_examples"] = examples.reset_index(drop=True)
 
     return report
 

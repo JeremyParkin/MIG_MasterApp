@@ -111,6 +111,7 @@ if st.session_state.upload_step:
     upload_warnings = upload_quality_report.get("warnings", [])
     if upload_warnings:
         date_issue_indices = upload_quality_report.get("date_issue_indices") or []
+        media_type_issue_indices = upload_quality_report.get("media_type_issue_indices") or []
         for warning in upload_warnings:
             if warning.get("title") == "Some date values could not be parsed" and 0 < len(date_issue_indices) <= 5:
                 warning_col, action_col = st.columns([7, 1], gap="small", vertical_alignment="center")
@@ -130,6 +131,24 @@ if st.session_state.upload_step:
                             f"{'' if len(date_issue_indices) == 1 else 's'} with invalid date/time values."
                         )
                         st.rerun()
+            elif warning.get("title") == "Some rows are missing media type" and 0 < len(media_type_issue_indices) <= 5:
+                warning_col, action_col = st.columns([7, 1], gap="small", vertical_alignment="center")
+                with warning_col:
+                    st.warning(warning.get("message", "Some uploaded values could not be normalized cleanly."))
+                with action_col:
+                    drop_label = f"Drop {len(media_type_issue_indices)} row{'' if len(media_type_issue_indices) == 1 else 's'}"
+                    if st.button(drop_label, key="drop_missing_media_type_rows", type="secondary", use_container_width=True):
+                        st.session_state.df_traditional = st.session_state.df_traditional.drop(index=media_type_issue_indices, errors="ignore")
+                        st.session_state.df_untouched = st.session_state.df_untouched.drop(index=media_type_issue_indices, errors="ignore")
+                        st.session_state.upload_quality_report = build_upload_quality_report(
+                            st.session_state.df_untouched,
+                            st.session_state.df_traditional,
+                        )
+                        st.success(
+                            f"Dropped {len(media_type_issue_indices)} uploaded row"
+                            f"{'' if len(media_type_issue_indices) == 1 else 's'} with missing media type values."
+                        )
+                        st.rerun()
             else:
                 st.warning(warning.get("message", "Some uploaded values could not be normalized cleanly."))
 
@@ -138,6 +157,11 @@ if st.session_state.upload_step:
             with st.expander("Review example rows with upload date issues", expanded=False):
                 st.caption("These source row numbers refer to the uploaded file and can help you find the problematic values.")
                 st.dataframe(date_issue_examples, use_container_width=True, hide_index=True)
+        media_type_issue_examples = upload_quality_report.get("media_type_issue_examples")
+        if isinstance(media_type_issue_examples, pd.DataFrame) and not media_type_issue_examples.empty:
+            with st.expander("Review example rows with missing media type", expanded=False):
+                st.caption("These source row numbers refer to the uploaded file and can help you find the problematic values.")
+                st.dataframe(media_type_issue_examples, use_container_width=True, hide_index=True)
 
     df_display = st.session_state.df_traditional.copy()
     impressions = df_display["Impressions"].sum() if "Impressions" in df_display.columns else 0

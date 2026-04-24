@@ -17,6 +17,14 @@ def standard_sidebar(target=None, *, key_suffix: str = "default") -> None:
         st.markdown(
             """
             <style>
+            section[data-testid="stSidebar"] {
+                width: 230px !important;
+                min-width: 230px !important;
+            }
+            section[data-testid="stSidebar"] > div:first-child {
+                width: 230px !important;
+                min-width: 230px !important;
+            }
             section[data-testid="stSidebar"] .block-container {
                 padding-top: 0.45rem;
             }
