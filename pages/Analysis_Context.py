@@ -262,7 +262,7 @@ with st.container(border=True):
     focus_col1, focus_col2 = st.columns(2, gap="medium")
     with focus_col1:
         with st.container(border=True):
-            st.markdown("**Outlet treatment**")
+            st.markdown("**Aggregator handling**")
             st.caption("Control whether aggregator coverage should count in Outlet metrics and narrative outputs.")
             exclude_aggregators_from_outlet_insights = st.checkbox(
                 "Exclude aggregators from Outlet metrics / insights",
@@ -272,7 +272,7 @@ with st.container(border=True):
 
     with focus_col2:
         with st.container(border=True):
-            st.markdown("**Narrative emphasis**")
+            st.markdown("**Media type emphasis**")
             st.caption("Control how much downstream AI outputs should talk about media-type mix when interpreting coverage patterns.")
             media_type_commentary_mode = st.radio(
                 "Media type commentary",
