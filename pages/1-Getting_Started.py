@@ -7,6 +7,7 @@ import streamlit as st
 from ui.page_help import set_page_help_context
 from utils.formatting import format_number
 from utils.io import (
+    build_upload_quality_report,
     detect_original_ave_col,
     normalize_uploaded_dataframe,
     read_uploaded_file,
@@ -65,6 +66,10 @@ if not st.session_state.upload_step:
             st.session_state.df_traditional = normalize_uploaded_dataframe(
                 st.session_state.df_untouched
             )
+            st.session_state.upload_quality_report = build_upload_quality_report(
+                st.session_state.df_untouched,
+                st.session_state.df_traditional,
+            )
 
             if "AVE" in st.session_state.df_traditional.columns:
                 st.session_state.ave_col = "AVE"
@@ -101,6 +106,17 @@ if st.session_state.upload_step:
         if st.button("Start Over?"):
             clear_all_session_state()
             st.rerun()
+
+    upload_quality_report = st.session_state.get("upload_quality_report") or {}
+    upload_warnings = upload_quality_report.get("warnings", [])
+    if upload_warnings:
+        for warning in upload_warnings:
+            st.warning(warning.get("message", "Some uploaded values could not be normalized cleanly."))
+        date_issue_examples = upload_quality_report.get("date_issue_examples")
+        if isinstance(date_issue_examples, pd.DataFrame) and not date_issue_examples.empty:
+            with st.expander("Review example rows with upload date issues", expanded=False):
+                st.caption("These source row numbers refer to the uploaded file and can help you find the problematic values.")
+                st.dataframe(date_issue_examples, use_container_width=True, hide_index=True)
 
     df_display = st.session_state.df_traditional.copy()
     impressions = df_display["Impressions"].sum() if "Impressions" in df_display.columns else 0

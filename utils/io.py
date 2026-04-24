@@ -134,6 +134,81 @@ def normalize_uploaded_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def build_upload_quality_report(df_raw: pd.DataFrame, df_normalized: pd.DataFrame) -> dict:
+    """
+    Build a lightweight upload-quality report for issues that were recoverable
+    during normalization but may affect downstream workflows.
+    """
+    report = {
+        "warnings": [],
+        "date_issue_examples": pd.DataFrame(),
+    }
+
+    if df_raw is None or df_raw.empty:
+        return report
+
+    raw = df_raw.copy()
+    normalized = df_normalized.copy() if isinstance(df_normalized, pd.DataFrame) else pd.DataFrame()
+
+    def _non_blank_text(series: pd.Series) -> pd.Series:
+        return series.fillna("").astype(str).str.strip()
+
+    date_source_mask = pd.Series(False, index=raw.index)
+    date_source_description = None
+
+    if "Published Date" in raw.columns and "Published Time" in raw.columns:
+        published_date_text = _non_blank_text(raw["Published Date"])
+        published_time_text = _non_blank_text(raw["Published Time"])
+        date_source_mask = (published_date_text != "") | (published_time_text != "")
+        date_source_description = "Published Date / Published Time"
+        date_example_df = pd.DataFrame(
+            {
+                "Published Date": published_date_text,
+                "Published Time": published_time_text,
+            },
+            index=raw.index,
+        )
+    elif "Published Date" in raw.columns:
+        published_date_text = _non_blank_text(raw["Published Date"])
+        date_source_mask = published_date_text != ""
+        date_source_description = "Published Date"
+        date_example_df = pd.DataFrame({"Published Date": published_date_text}, index=raw.index)
+    elif "Date" in raw.columns:
+        raw_date_text = _non_blank_text(raw["Date"])
+        date_source_mask = raw_date_text != ""
+        date_source_description = "Date"
+        date_example_df = pd.DataFrame({"Date": raw_date_text}, index=raw.index)
+    else:
+        date_example_df = pd.DataFrame(index=raw.index)
+
+    if "Date" in normalized.columns and bool(date_source_mask.any()):
+        normalized_dates = pd.to_datetime(normalized["Date"], errors="coerce")
+        invalid_mask = date_source_mask & normalized_dates.isna()
+        invalid_row_numbers = (raw.index[invalid_mask] + 2).tolist()
+
+        if invalid_row_numbers:
+            example_numbers = invalid_row_numbers[:5]
+            example_text = ", ".join(str(num) for num in example_numbers)
+            if len(invalid_row_numbers) > 5:
+                example_text += ", ..."
+
+            report["warnings"].append(
+                {
+                    "title": "Some date values could not be parsed",
+                    "message": (
+                        f"{len(invalid_row_numbers)} uploaded row(s) had values in {date_source_description} "
+                        f"that could not be converted into `Date`. Example row numbers: {example_text}."
+                    ),
+                }
+            )
+
+            examples = date_example_df.loc[invalid_mask].copy().head(5)
+            examples.insert(0, "Source Row", (examples.index + 2).astype(int))
+            report["date_issue_examples"] = examples.reset_index(drop=True)
+
+    return report
+
+
 def read_uploaded_file(uploaded_file) -> pd.DataFrame:
     """
     Read uploaded CSV or XLSX into a dataframe.
