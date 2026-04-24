@@ -241,7 +241,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
             tolerant_pat_str,
             keywords,
         )
-        st.markdown(f"### {highlighted_head}", unsafe_allow_html=True)
+        st.markdown(f"#### {highlighted_head}", unsafe_allow_html=True)
         if snippet:
             st.markdown(highlighted_body, unsafe_allow_html=True)
         st.divider()

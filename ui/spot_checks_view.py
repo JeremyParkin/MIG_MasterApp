@@ -594,7 +594,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
     left, right = st.columns([3.8, 1.4], gap="large")
     
     with left:
-        st.markdown(f"### {highlighted_head}", unsafe_allow_html=True)
+        st.markdown(f"#### {highlighted_head}", unsafe_allow_html=True)
         st.markdown(highlighted_body, unsafe_allow_html=True)
         st.divider()
         if url:
