@@ -142,6 +142,8 @@ def build_upload_quality_report(df_raw: pd.DataFrame, df_normalized: pd.DataFram
     report = {
         "warnings": [],
         "date_issue_examples": pd.DataFrame(),
+        "date_issue_indices": [],
+        "date_issue_row_numbers": [],
     }
 
     if df_raw is None or df_raw.empty:
@@ -185,8 +187,11 @@ def build_upload_quality_report(df_raw: pd.DataFrame, df_normalized: pd.DataFram
         normalized_dates = pd.to_datetime(normalized["Date"], errors="coerce")
         invalid_mask = date_source_mask & normalized_dates.isna()
         invalid_row_numbers = (raw.index[invalid_mask] + 2).tolist()
+        invalid_indices = raw.index[invalid_mask].tolist()
 
         if invalid_row_numbers:
+            report["date_issue_indices"] = invalid_indices
+            report["date_issue_row_numbers"] = invalid_row_numbers
             example_numbers = invalid_row_numbers[:5]
             example_text = ", ".join(str(num) for num in example_numbers)
             if len(invalid_row_numbers) > 5:
