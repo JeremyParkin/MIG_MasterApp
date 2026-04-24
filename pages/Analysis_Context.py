@@ -372,7 +372,7 @@ with st.container(border=True):
 
     with scope_col2:
         dataset_media_types = st.multiselect(
-            "Media types",
+            "Traditional media types",
             options=payload["available_media_types"],
             default=st.session_state.analysis_context_draft_dataset_media_types,
             key="analysis_context_draft_dataset_media_types_widget",
