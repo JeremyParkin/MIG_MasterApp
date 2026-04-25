@@ -57,7 +57,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "heading": "What this page does",
                     "bullets": [
                         "Sets shared entity context such as primary topic, aliases, spokespeople, products, and extra analytical guidance.",
-                        "Controls what will be excluded by qualitative insight workflows like Top Stories, Authors, Outlets, Regions, Tagging, and Sentiment.",
+                        "Controls what will be excluded by qualitative insight workflows like Top Stories, Authors, Outlets, Regions, Sentiment, and Tagging.",
                         "Defines Data Scope rules such as date range, media types, and dataset-level pruning with row-level keep overrides.",
                     ],
                 },

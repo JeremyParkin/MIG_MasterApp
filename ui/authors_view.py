@@ -799,7 +799,7 @@ def render_authors_page() -> None:
             info_block = st.container()
 
             with info_block:
-                col1, col2, col3 = st.columns([8, 1, 16])
+                col1, col3 = st.columns([1, 2], gap="medium")
 
                 with col1:
                     st.subheader("Outlets in CSV")
@@ -819,8 +819,6 @@ def render_authors_page() -> None:
                         hide_index=True,
                     )
 
-                with col2:
-                    st.write(" ")
 
                 with col3:
                     st.subheader("Media Database Results")
@@ -933,12 +931,12 @@ def render_authors_page() -> None:
 
         st.divider()
 
-        bottom_col1, bottom_col2, bottom_col3 = st.columns([8, 1, 4])
+        bottom_col1, bottom_col3 = st.columns([2, 1], gap="large")
 
         with bottom_col1:
-            st.subheader("Top Authors")
-            table_df = st.session_state.auth_outlet_table[["Author", "Outlet", "Mentions", "Impressions", "Effective Reach"]].copy().fillna("")
             rank_metric = get_author_rank_metric()
+            st.subheader(f"Top Authors by {rank_metric}")
+            table_df = st.session_state.auth_outlet_table[["Author", "Outlet", "Mentions", "Impressions", "Effective Reach"]].copy().fillna("")
             if rank_metric == "Mentions":
                 table_df = table_df.sort_values(["Mentions", "Impressions", "Effective Reach"], ascending=False).head(15)
             elif rank_metric == "Impressions":
@@ -947,8 +945,6 @@ def render_authors_page() -> None:
                 table_df = table_df.sort_values(["Effective Reach", "Impressions", "Mentions"], ascending=False).head(15)
             st.dataframe(table_df.style.format(FORMAT_DICT, na_rep=" "), use_container_width=True, hide_index=True)
 
-        with bottom_col2:
-            st.write(" ")
 
         with bottom_col3:
             st.subheader("Outlets assigned")

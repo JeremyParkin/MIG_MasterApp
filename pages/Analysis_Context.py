@@ -120,9 +120,9 @@ st.session_state.setdefault(
 )
 
 if _has_meaningful_downstream_work():
-    st.warning(
-        "You have already done work in downstream workflows. Changes saved here may affect ranked outputs and generated insights in Authors, Outlets, Top Stories, Regions, Tagging, and Sentiment. Revisit and regenerate affected outputs if needed."
-    )
+        st.warning(
+        "You have already done work in downstream workflows. Changes saved here may affect ranked outputs and generated insights in Authors, Outlets, Top Stories, Regions, Sentiment, and Tagging. Revisit and regenerate affected outputs if needed."
+        )
 
 pending_suggestions = st.session_state.pop("analysis_context_pending_suggestions", None)
 if pending_suggestions:
@@ -305,7 +305,7 @@ with st.container(border=True):
 
 with st.container(border=True):
     st.subheader("Analysis Focus")
-    st.caption("Set shared rules for what should be excluded from qualitative workflows like Top Stories, Tagging, Sentiment, Authors, Outlets, and Regions.")
+    st.caption("Set shared rules for what should be excluded from qualitative workflows like Top Stories, Sentiment, Tagging, Authors, Outlets, and Regions.")
 
     focus_col1, focus_col2 = st.columns(2, gap="medium")
     with focus_col1:

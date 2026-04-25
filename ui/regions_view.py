@@ -438,7 +438,7 @@ def render_regions_page() -> None:
             st.info(f"No {label.lower()} data is available for the current filters.")
             continue
 
-        chart_tab, table_tab, copy_tab = st.tabs(["Chart", "Table", "Report Copy"])
+        chart_tab, table_tab = st.tabs(["Chart", "Table"])
 
         with chart_tab:
             _render_region_chart(level_df, metric_label, f"Top {label} by {metric_label.lower()}", region_label)
@@ -459,51 +459,52 @@ def render_regions_page() -> None:
                 },
             )
 
-        with copy_tab:
-            level_entry = generated_store.get(label, {})
-            level_is_current = False
-            level_copy: dict[str, object] = {}
-            if isinstance(level_entry, dict) and "content" in level_entry:
-                level_is_current = level_entry.get("signature") == current_signature
-                level_copy = level_entry.get("content", {}) or {}
-            elif isinstance(level_entry, dict):
-                level_copy = level_entry
-            if level_copy and not level_is_current:
-                st.info("Setup has changed since these observations were generated. Regenerate this section to refresh the copy.")
-            if not level_copy:
-                st.info("Generate this section to create report-copy observations for this geography level.")
-            else:
-                overall_observation = str(level_copy.get("overall_observation", "") or "").strip()
-                if overall_observation:
-                    st.write("**Overall observation**")
-                    st.markdown(f'<div class="regions-copy-blurb">{overall_observation}</div>', unsafe_allow_html=True)
+        level_entry = generated_store.get(label, {})
+        level_is_current = False
+        level_copy: dict[str, object] = {}
+        if isinstance(level_entry, dict) and "content" in level_entry:
+            level_is_current = level_entry.get("signature") == current_signature
+            level_copy = level_entry.get("content", {}) or {}
+        elif isinstance(level_entry, dict):
+            level_copy = level_entry
 
-                top_profiles = [item for item in level_copy.get("top_region_profiles", []) if str(item.get("blurb", "")).strip()]
-                if top_profiles:
-                    st.write("**Top region profiles**")
-                    for item in top_profiles:
-                        region_name = str(item.get("region", "") or "").strip()
-                        blurb = str(item.get("blurb", "") or "").strip()
-                        if not region_name or not blurb:
-                            continue
-                        st.markdown(f"**{region_name}**")
-                        st.markdown(f'<div class="regions-copy-blurb">{blurb}</div>', unsafe_allow_html=True)
-                        with st.expander(f"Supporting grouped stories for {region_name}", expanded=False):
-                            st.dataframe(
-                                _format_region_table_display(
-                                    build_region_story_group_examples(
-                                        filtered_df,
-                                        level_key,
-                                        region_name,
-                                        metric_label=metric_label,
-                                        limit=10,
-                                    )
-                                ),
-                                use_container_width=True,
-                                hide_index=True,
-                            )
+        st.markdown("<div style='margin-top:0.85rem;'></div>", unsafe_allow_html=True)
+        if level_copy and not level_is_current:
+            st.info("Setup has changed since these observations were generated. Regenerate this section to refresh the copy.")
+        if not level_copy:
+            st.info("Generate this section to create report-copy observations for this geography level.")
+        else:
+            overall_observation = str(level_copy.get("overall_observation", "") or "").strip()
+            if overall_observation:
+                st.write("**Overall observation**")
+                st.markdown(f'<div class="regions-copy-blurb">{overall_observation}</div>', unsafe_allow_html=True)
 
-                tail_observation = str(level_copy.get("tail_observation", "") or "").strip()
-                if tail_observation:
-                    st.write(f"**{_tail_heading_for_level(label)}**")
-                    st.markdown(f'<div class="regions-copy-blurb">{tail_observation}</div>', unsafe_allow_html=True)
+            top_profiles = [item for item in level_copy.get("top_region_profiles", []) if str(item.get("blurb", "")).strip()]
+            if top_profiles:
+                st.write("**Top region profiles**")
+                for item in top_profiles:
+                    region_name = str(item.get("region", "") or "").strip()
+                    blurb = str(item.get("blurb", "") or "").strip()
+                    if not region_name or not blurb:
+                        continue
+                    st.markdown(f"**{region_name}**")
+                    st.markdown(f'<div class="regions-copy-blurb">{blurb}</div>', unsafe_allow_html=True)
+                    with st.expander(f"Supporting grouped stories for {region_name}", expanded=False):
+                        st.dataframe(
+                            _format_region_table_display(
+                                build_region_story_group_examples(
+                                    filtered_df,
+                                    level_key,
+                                    region_name,
+                                    metric_label=metric_label,
+                                    limit=10,
+                                )
+                            ),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+            tail_observation = str(level_copy.get("tail_observation", "") or "").strip()
+            if tail_observation:
+                st.write(f"**{_tail_heading_for_level(label)}**")
+                st.markdown(f'<div class="regions-copy-blurb">{tail_observation}</div>', unsafe_allow_html=True)
