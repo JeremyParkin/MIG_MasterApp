@@ -126,41 +126,51 @@ def remove_inactive_workflow_columns(df: pd.DataFrame, session_state) -> pd.Data
     if not outlet_mapping_active:
         out = out.drop(columns=["Mapped Outlet"], errors="ignore")
 
-    sentiment_active = should_merge_sentiment_into_clean_trad(session_state) or sentiment_exists(session_state)
-    if not sentiment_active:
-        sentiment_cols = [
-            "Assigned Sentiment",
-            "AI Sentiment",
-            "AI Sentiment Confidence",
-            "AI Sentiment Rationale",
-            "Review AI Sentiment",
-            "Review AI Confidence",
-            "Review AI Rationale",
-            "AI Agreement",
-            "Needs Human Review",
-            "Hybrid Sentiment",
-            "Hybrid Sentiment Confidence",
-            "Final Sentiment",
-            "Final Sentiment Confidence",
-        ]
-        out = out.drop(columns=sentiment_cols, errors="ignore")
+    sentiment_keep_cols = [
+        "Final Sentiment",
+        "AI Sentiment",
+        "AI Sentiment Confidence",
+        "AI Sentiment Rationale",
+    ]
+    sentiment_detail_cols = [
+        "Assigned Sentiment",
+        "Review AI Sentiment",
+        "Review AI Confidence",
+        "Review AI Rationale",
+        "AI Agreement",
+        "Needs Human Review",
+        "Hybrid Sentiment",
+        "Hybrid Sentiment Confidence",
+        "Final Sentiment Confidence",
+    ]
+    sentiment_active = should_merge_sentiment_into_clean_trad(session_state) or sentiment_processed_complete_enough(session_state)
+    if sentiment_active:
+        out = out.drop(columns=sentiment_detail_cols, errors="ignore")
+    else:
+        out = out.drop(columns=sentiment_keep_cols + sentiment_detail_cols, errors="ignore")
 
-    tagging_active = should_merge_tagging_into_clean_trad(session_state) or tagging_exists(session_state)
-    if not tagging_active:
-        tagging_cols = [
-            "Assigned Tag",
-            "AI Tag",
-            "AI Tag Confidence",
-            "AI Tag Rationale",
-            "Review AI Tag",
-            "Review AI Confidence",
-            "Review AI Rationale",
-            "AI Tag Agreement",
-            "AI Tags",
-            "Tag_Processed",
-        ]
-        binary_tag_cols = [c for c in out.columns if str(c).startswith("AI Tag: ")]
-        out = out.drop(columns=tagging_cols + binary_tag_cols, errors="ignore")
+    binary_tag_cols = [c for c in out.columns if str(c).startswith("AI Tag: ")]
+    tagging_keep_cols = [
+        "Final Tag",
+        "AI Tag",
+        "AI Tag Confidence",
+        "AI Tag Rationale",
+    ]
+    tagging_detail_cols = [
+        "Assigned Tag",
+        "Review AI Tag",
+        "Review AI Confidence",
+        "Review AI Rationale",
+        "AI Tag Agreement",
+        "AI Tags",
+        "Needs Human Review",
+        "Tag_Processed",
+    ]
+    tagging_active = should_merge_tagging_into_clean_trad(session_state) or tagging_processed_complete_enough(session_state)
+    if tagging_active:
+        out = out.drop(columns=tagging_detail_cols + binary_tag_cols, errors="ignore")
+    else:
+        out = out.drop(columns=tagging_keep_cols + tagging_detail_cols + binary_tag_cols, errors="ignore")
 
     return out
 
@@ -471,10 +481,14 @@ def apply_sheet_column_formats(
         "Prov/State": {"width": 14},
         "Language": {"width": 12},
         "Sentiment": {"width": 12},
+        "Final Sentiment": {"width": 16},
         "Assigned Sentiment": {"width": 16},
         "AI Sentiment": {"width": 16},
         "AI Sentiment Confidence": {"width": 12, "format": number_format},
         "AI Sentiment Rationale": {"width": 45},
+        "Final Tag": {"width": 24},
+        "AI Tag": {"width": 24},
+        "AI Tag Confidence": {"width": 12, "format": number_format},
         "Hybrid Sentiment": {"width": 16},
         "Hybrid Sentiment Confidence": {"width": 12, "format": number_format},
         "AI Tags": {"width": 30},
@@ -570,10 +584,14 @@ def should_merge_sentiment_into_clean_trad(session_state) -> bool:
 
 def build_tagging_sample_export(session_state) -> pd.DataFrame:
     df = session_state.get("df_tagging_rows", pd.DataFrame())
-    if not isinstance(df, pd.DataFrame) or df.empty:
+    if (
+        not isinstance(df, pd.DataFrame)
+        or df.empty
+        or not tagging_processed_complete_enough(session_state)
+    ):
         return pd.DataFrame()
 
-    out = df.copy()
+    out = add_final_tag_columns(df.copy())
 
     priority_cols = [
         "Group ID",
@@ -585,31 +603,39 @@ def build_tagging_sample_export(session_state) -> pd.DataFrame:
         "Mentions",
         "Impressions",
         "Effective Reach",
-        "Assigned Tag",
+        "Final Tag",
         "AI Tag",
         "AI Tag Confidence",
-        "AI Tag Agreement",
-        "Needs Human Review",
-        "Review AI Tag",
-        "Review AI Confidence",
-        "AI Tags",
         "AI Tag Rationale",
-        "Review AI Rationale",
-        "Tag_Processed",
     ]
 
     existing_priority = [c for c in priority_cols if c in out.columns]
-    remaining_cols = [c for c in out.columns if c not in existing_priority]
+    excluded_cols = {
+        "Assigned Tag",
+        "Review AI Tag",
+        "Review AI Confidence",
+        "Review AI Rationale",
+        "AI Tag Agreement",
+        "AI Tags",
+        "Needs Human Review",
+        "Tag_Processed",
+    }
+    excluded_cols.update({c for c in out.columns if str(c).startswith("AI Tag: ")})
+    remaining_cols = [c for c in out.columns if c not in existing_priority and c not in excluded_cols]
 
     return out[existing_priority + remaining_cols].copy()
 
 
 def build_sentiment_sample_export(session_state) -> pd.DataFrame:
     df = session_state.get("df_sentiment_rows", pd.DataFrame())
-    if not isinstance(df, pd.DataFrame) or df.empty:
+    if (
+        not isinstance(df, pd.DataFrame)
+        or df.empty
+        or not sentiment_processed_complete_enough(session_state)
+    ):
         return pd.DataFrame()
 
-    out = df.copy()
+    out = add_final_sentiment_columns(df.copy())
 
     priority_cols = [
         "Group ID",
@@ -621,16 +647,25 @@ def build_sentiment_sample_export(session_state) -> pd.DataFrame:
         "Mentions",
         "Impressions",
         "Effective Reach",
-        "Assigned Sentiment",
+        "Final Sentiment",
         "AI Sentiment",
         "AI Sentiment Confidence",
         "AI Sentiment Rationale",
-        "Hybrid Sentiment",
-        "Hybrid Sentiment Confidence",
     ]
 
     existing_priority = [c for c in priority_cols if c in out.columns]
-    remaining_cols = [c for c in out.columns if c not in existing_priority]
+    excluded_cols = {
+        "Assigned Sentiment",
+        "Review AI Sentiment",
+        "Review AI Confidence",
+        "Review AI Rationale",
+        "AI Agreement",
+        "Needs Human Review",
+        "Hybrid Sentiment",
+        "Hybrid Sentiment Confidence",
+        "Final Sentiment Confidence",
+    }
+    remaining_cols = [c for c in out.columns if c not in existing_priority and c not in excluded_cols]
 
     return out[existing_priority + remaining_cols].copy()
 
@@ -639,25 +674,16 @@ def merge_full_scope_ai_columns_into_clean_trad(session_state, traditional: pd.D
     out = traditional.copy()
 
     if should_merge_tagging_into_clean_trad(session_state):
-        tag_rows = session_state.get("df_tagging_rows", pd.DataFrame()).copy()
+        tag_rows = add_final_tag_columns(session_state.get("df_tagging_rows", pd.DataFrame()).copy())
         tag_cols = [
             c for c in [
                 "Group ID",
-                "Assigned Tag",
+                "Final Tag",
                 "AI Tag",
                 "AI Tag Confidence",
                 "AI Tag Rationale",
-                "Review AI Tag",
-                "Review AI Confidence",
-                "Review AI Rationale",
-                "AI Tag Agreement",
-                "Needs Human Review",
-                "AI Tags",
-                "Tag_Processed",
             ] if c in tag_rows.columns
         ]
-        binary_tag_cols = [c for c in tag_rows.columns if str(c).startswith("AI Tag: ")]
-        tag_cols = tag_cols + binary_tag_cols
 
         if "Group ID" in tag_cols:
             tag_map = tag_rows[tag_cols].drop_duplicates(subset=["Group ID"], keep="last")
@@ -666,17 +692,14 @@ def merge_full_scope_ai_columns_into_clean_trad(session_state, traditional: pd.D
             out = out.merge(tag_map, on="Group ID", how="left")
 
     if should_merge_sentiment_into_clean_trad(session_state):
-        sent_rows = session_state.get("df_sentiment_rows", pd.DataFrame()).copy()
+        sent_rows = add_final_sentiment_columns(session_state.get("df_sentiment_rows", pd.DataFrame()).copy())
         sent_cols = [
             c for c in [
                 "Group ID",
-                "Assigned Sentiment",
+                "Final Sentiment",
                 "AI Sentiment",
                 "AI Sentiment Confidence",
                 "AI Sentiment Rationale",
-                "Review AI Sentiment",
-                "Review AI Confidence",
-                "Review AI Rationale",
             ] if c in sent_rows.columns
         ]
         if "Group ID" in sent_cols:
@@ -772,7 +795,39 @@ def build_export_metadata_sheet(
     return pd.DataFrame(rows, columns=["Field", "Value"])
 
 
-# ---------- Sentiment helpers ----------
+# ---------- AI export helpers ----------
+
+def add_final_tag_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
+
+    out = df.copy()
+
+    base_ai_tag = out.get("AI Tag", pd.Series(index=out.index, dtype="object"))
+    base_ai_conf = out.get("AI Tag Confidence", pd.Series(index=out.index, dtype="object"))
+    base_ai_rat = out.get("AI Tag Rationale", pd.Series(index=out.index, dtype="object"))
+
+    review_ai_tag = out.get("Review AI Tag", pd.Series(index=out.index, dtype="object"))
+    review_ai_conf = out.get("Review AI Confidence", pd.Series(index=out.index, dtype="object"))
+    review_ai_rat = out.get("Review AI Rationale", pd.Series(index=out.index, dtype="object"))
+
+    review_tag_clean = review_ai_tag.fillna("").astype(str).str.strip()
+
+    out["AI Tag"] = review_ai_tag.where(review_tag_clean != "", base_ai_tag)
+    out["AI Tag Confidence"] = review_ai_conf.where(review_tag_clean != "", base_ai_conf)
+    out["AI Tag Rationale"] = review_ai_rat.where(review_tag_clean != "", base_ai_rat)
+
+    assigned = out.get("Assigned Tag", pd.Series(index=out.index, dtype="object"))
+    ai = out.get("AI Tag", pd.Series(index=out.index, dtype="object"))
+
+    assigned_clean = assigned.fillna("").astype(str).str.strip()
+    ai_clean = ai.fillna("").astype(str).str.strip()
+
+    out["Final Tag"] = assigned_clean.where(assigned_clean != "", ai_clean)
+    out["Final Tag"] = out["Final Tag"].replace("", pd.NA)
+
+    return out
+
 
 def add_final_sentiment_columns(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
@@ -800,12 +855,8 @@ def add_final_sentiment_columns(df: pd.DataFrame) -> pd.DataFrame:
     assigned_clean = assigned.fillna("").astype(str).str.strip()
     ai_clean = ai.fillna("").astype(str).str.strip()
 
-    out["Hybrid Sentiment"] = assigned_clean.where(assigned_clean != "", ai_clean)
-    out["Hybrid Sentiment"] = out["Hybrid Sentiment"].replace("", pd.NA)
-
-    if "AI Sentiment Confidence" in out.columns:
-        out["Hybrid Sentiment Confidence"] = out["AI Sentiment Confidence"]
-        out.loc[assigned_clean != "", "Hybrid Sentiment Confidence"] = pd.NA
+    out["Final Sentiment"] = assigned_clean.where(assigned_clean != "", ai_clean)
+    out["Final Sentiment"] = out["Final Sentiment"].replace("", pd.NA)
 
     return out
 
