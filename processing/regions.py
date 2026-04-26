@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 from openai import OpenAI
 
+from processing.prominence import get_prominence_weight_series
 from processing.top_stories import consolidate_top_story_candidates, parse_source_group_ids
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
@@ -18,6 +19,8 @@ METRIC_FIELD_MAP = {
 }
 
 DEFAULT_REGIONS_OBSERVATION_MODEL = "gpt-5.4-mini"
+DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT = 10
+DEFAULT_REGIONS_SUPPORTING_EVIDENCE_LIMIT = 40
 REGIONS_DEFAULT_EXCLUDED_FLAGS = [
     "Press Release",
     "Financial Outlet",
@@ -68,6 +71,18 @@ def init_regions_state(session_state) -> None:
 def _normalize_text_column(series: pd.Series) -> pd.Series:
     s = pd.Series(series)
     return s.astype("string").fillna("").str.strip()
+
+
+def _normalized_rank_score(series: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(series, errors="coerce").fillna(0)
+    if numeric.empty:
+        return pd.Series(dtype="float64")
+
+    rank_series = numeric.rank(method="dense", ascending=False).astype(float)
+    max_rank = float(rank_series.max()) if not rank_series.empty else 1.0
+    if max_rank <= 1:
+        return pd.Series(1.0, index=numeric.index, dtype="float64")
+    return 1.0 - ((rank_series - 1.0) / (max_rank - 1.0))
 
 
 def build_regions_source_df(
@@ -401,6 +416,7 @@ def _build_region_story_candidates(working: pd.DataFrame) -> pd.DataFrame:
         )
 
     rows: list[dict[str, Any]] = []
+    prominence_cols = [c for c in working.columns if isinstance(c, str) and c.startswith("Prominence")]
     for group_id, group in working.groupby("Group ID", dropna=False):
         if group.empty:
             continue
@@ -416,21 +432,22 @@ def _build_region_story_candidates(working: pd.DataFrame) -> pd.DataFrame:
         ).iloc[0]
 
         group_id_str = "" if pd.isna(group_id) else str(group_id).strip()
-        rows.append(
-            {
-                "Group ID": group_id,
-                "Headline": best_row.get("Headline", ""),
-                "Date": best_row.get("Date", pd.NaT),
-                "Mentions": int(pd.to_numeric(group["Mentions"], errors="coerce").fillna(0).sum()),
-                "Impressions": int(pd.to_numeric(group["Impressions"], errors="coerce").fillna(0).sum()),
-                "Effective Reach": int(pd.to_numeric(group["Effective Reach"], errors="coerce").fillna(0).sum()),
-                "Example Outlet": best_row.get("Outlet", ""),
-                "Example URL": best_row.get("URL", ""),
-                "Example Type": best_row.get("Media Type", ""),
-                "Example Snippet": best_row.get("Snippet", ""),
-                "Source Group IDs": group_id_str,
-            }
-        )
+        record = {
+            "Group ID": group_id,
+            "Headline": best_row.get("Headline", ""),
+            "Date": best_row.get("Date", pd.NaT),
+            "Mentions": int(pd.to_numeric(group["Mentions"], errors="coerce").fillna(0).sum()),
+            "Impressions": int(pd.to_numeric(group["Impressions"], errors="coerce").fillna(0).sum()),
+            "Effective Reach": int(pd.to_numeric(group["Effective Reach"], errors="coerce").fillna(0).sum()),
+            "Example Outlet": best_row.get("Outlet", ""),
+            "Example URL": best_row.get("URL", ""),
+            "Example Type": best_row.get("Media Type", ""),
+            "Example Snippet": best_row.get("Snippet", ""),
+            "Source Group IDs": group_id_str,
+        }
+        for col in prominence_cols:
+            record[col] = pd.to_numeric(group[col], errors="coerce").fillna(0).max()
+        rows.append(record)
 
     if not rows:
         return pd.DataFrame()
@@ -477,7 +494,12 @@ def _build_story_outlet_context_map(working: pd.DataFrame, story_candidates: pd.
     return outlet_map
 
 
-def _build_top_story_context(working: pd.DataFrame, metric_label: str, limit: int = 10) -> list[dict[str, Any]]:
+def _build_top_story_context(
+    working: pd.DataFrame,
+    metric_label: str,
+    limit: int = 10,
+    selected_prominence_column: str = "",
+) -> list[dict[str, Any]]:
     story_candidates = _build_region_story_candidates(working)
     if story_candidates.empty:
         return []
@@ -500,9 +522,27 @@ def _build_top_story_context(working: pd.DataFrame, metric_label: str, limit: in
         lambda value: str((outlet_context_map.get(str(value), {}) or {}).get("example_outlets", ""))
     )
     grouped["Metric Share Pct"] = grouped[metric_col].apply(lambda value: _share_pct(value, total_metric))
+    grouped["_has_url"] = grouped["Example URL"].fillna("").astype(str).str.strip().ne("")
+    grouped["_is_online"] = grouped["Example Type"].fillna("").astype(str).str.upper().eq("ONLINE")
+    grouped[f"_{metric_col}_rank_score"] = _normalized_rank_score(grouped[metric_col])
+    grouped["_Mentions_rank_score"] = _normalized_rank_score(grouped["Mentions"])
+    grouped["_Impressions_rank_score"] = _normalized_rank_score(grouped["Impressions"])
+    grouped["_Effective_Reach_rank_score"] = _normalized_rank_score(grouped["Effective Reach"])
+    grouped["_Outlet_Count_rank_score"] = _normalized_rank_score(grouped["Outlet Count"])
+    grouped["_prominence_bonus"] = get_prominence_weight_series(grouped, selected_prominence_column)
+    grouped["_story_context_score"] = (
+        grouped[f"_{metric_col}_rank_score"] * 3.0
+        + grouped["_Mentions_rank_score"] * 2.0
+        + grouped["_Impressions_rank_score"] * 1.8
+        + grouped["_Effective_Reach_rank_score"] * 1.8
+        + grouped["_Outlet_Count_rank_score"] * 1.0
+        + grouped["_prominence_bonus"]
+        + grouped["_has_url"].astype(float) * 0.2
+        + grouped["_is_online"].astype(float) * 0.35
+    )
     grouped = grouped.sort_values(
-        [metric_col, "Mentions", "Impressions", "Effective Reach", "Headline"],
-        ascending=[False, False, False, False, True],
+        ["_story_context_score", metric_col, "Mentions", "Impressions", "Effective Reach", "Headline"],
+        ascending=[False, False, False, False, False, True],
     ).head(limit).reset_index(drop=True)
     return grouped.to_dict(orient="records")
 
@@ -512,6 +552,7 @@ def build_region_profile_context(
     level: str,
     region_name: str,
     metric_label: str,
+    selected_prominence_column: str = "",
 ) -> dict[str, Any]:
     if df is None or df.empty:
         return {}
@@ -537,7 +578,27 @@ def build_region_profile_context(
     if not outlet_rank.empty:
         outlet_rank["Metric Share Pct"] = outlet_rank[metric_col].apply(lambda value: _share_pct(value, total_metric))
 
-    top_stories = _build_top_story_context(working, metric_label=metric_label, limit=10)
+    top_story_context = _build_top_story_context(
+        working,
+        metric_label=metric_label,
+        limit=DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT + DEFAULT_REGIONS_SUPPORTING_EVIDENCE_LIMIT,
+        selected_prominence_column=selected_prominence_column,
+    )
+    top_stories = top_story_context[:DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT]
+    supporting_story_evidence = [
+        {
+            "Headline": item.get("Headline", ""),
+            "Date": item.get("Date", ""),
+            "Mentions": int(item.get("Mentions", 0) or 0),
+            "Impressions": int(item.get("Impressions", 0) or 0),
+            "Effective Reach": int(item.get("Effective Reach", 0) or 0),
+            "Example Outlets": item.get("Example Outlets", ""),
+            "Snippet": item.get("Snippet", ""),
+        }
+        for item in top_story_context[
+            DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT : DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT + DEFAULT_REGIONS_SUPPORTING_EVIDENCE_LIMIT
+        ]
+    ]
     top_media_types = _build_top_media_type_context(working, metric_label=metric_label, limit=5)
     story_count = len(_build_region_story_candidates(working))
     unique_outlet_count = int(working["Outlet"].replace("", pd.NA).dropna().nunique())
@@ -556,6 +617,7 @@ def build_region_profile_context(
         "top_media_types": top_media_types,
         "top_outlets": outlet_rank.to_dict(orient="records"),
         "top_stories": top_stories,
+        "supporting_story_evidence": supporting_story_evidence,
         "concentration_summary": {
             "top_outlet_share_pct": top_outlet_share_pct,
             "top_3_outlet_share_pct": top_three_outlet_share_pct,
@@ -609,16 +671,28 @@ def _build_representative_rows_context(
     filtered_df: pd.DataFrame,
     level: str,
     region_name: str,
-    limit: int = 10,
-) -> list[dict[str, Any]]:
-    rows_df = build_region_example_rows(filtered_df, level, region_name, limit=limit)
+    limit: int = DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT + DEFAULT_REGIONS_SUPPORTING_EVIDENCE_LIMIT,
+    selected_prominence_column: str = "",
+) -> dict[str, list[dict[str, Any]]]:
+    rows_df = build_region_example_rows(
+        filtered_df,
+        level,
+        region_name,
+        limit=limit,
+        selected_prominence_column=selected_prominence_column,
+    )
     if rows_df.empty:
-        return []
+        return {"primary_examples": [], "supporting_evidence": []}
     working = rows_df.copy()
     for col in ["Mentions", "Impressions", "Effective Reach"]:
         if col in working.columns:
             working[col] = working[col].fillna(0).astype(int)
-    return working.to_dict(orient="records")
+    return {
+        "primary_examples": working.head(DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT).to_dict(orient="records"),
+        "supporting_evidence": working.iloc[
+            DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT : DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT + DEFAULT_REGIONS_SUPPORTING_EVIDENCE_LIMIT
+        ].to_dict(orient="records"),
+    }
 
 
 def generate_region_level_overview(
@@ -740,7 +814,7 @@ def generate_region_profile_observation(
     metric_label: str,
     region_profile: dict[str, Any],
     level_payload: dict[str, Any],
-    representative_rows: list[dict[str, Any]],
+    representative_rows: dict[str, list[dict[str, Any]]],
     api_key: str,
     model: str = DEFAULT_REGIONS_OBSERVATION_MODEL,
 ) -> tuple[str, int, int]:
@@ -775,7 +849,9 @@ def generate_region_profile_observation(
         "- Do not say a story dominates unless the shares are clearly high and the story appears across multiple rows and multiple outlets.\n"
         "- If the top story appears only once, treat it as one example rather than a dominant driver.\n"
         "- Do not overstate trend, momentum, or audience intent.\n"
-        "- If the evidence is mixed, say the coverage is mixed, varied, or distributed.\n\n"
+        "- If the evidence is mixed, say the coverage is mixed, varied, or distributed.\n"
+        "- Use top_stories and representative_rows.primary_examples to anchor the clearest themes.\n"
+        "- Use supporting_story_evidence and representative_rows.supporting_evidence to judge whether those themes recur more broadly.\n\n"
         "Style:\n"
         "- One compact paragraph.\n"
         "- Specific, analyst-facing, and report-ready.\n"
@@ -830,6 +906,7 @@ def generate_regions_level_output(
     ranking_df: pd.DataFrame,
     api_key: str,
     model: str = DEFAULT_REGIONS_OBSERVATION_MODEL,
+    selected_prominence_column: str = "",
 ) -> tuple[dict[str, Any], int, int]:
     if ranking_df is None or ranking_df.empty:
         return {
@@ -858,8 +935,19 @@ def generate_regions_level_output(
 
     top_region_profiles: list[dict[str, str]] = []
     for region_name in ranking_df.head(3)["Region"].tolist():
-        region_profile = build_region_profile_context(filtered_df, level_key, str(region_name), metric_label)
-        representative_rows = _build_representative_rows_context(filtered_df, level_key, str(region_name), limit=10)
+        region_profile = build_region_profile_context(
+            filtered_df,
+            level_key,
+            str(region_name),
+            metric_label,
+            selected_prominence_column=selected_prominence_column,
+        )
+        representative_rows = _build_representative_rows_context(
+            filtered_df,
+            level_key,
+            str(region_name),
+            selected_prominence_column=selected_prominence_column,
+        )
         blurb, in_tok, out_tok = generate_region_profile_observation(
             client_name=client_name,
             analysis_context=analysis_context,
@@ -895,6 +983,7 @@ def generate_regions_insight_output(
     ranking_df: pd.DataFrame,
     api_key: str,
     model: str = DEFAULT_REGIONS_OBSERVATION_MODEL,
+    selected_prominence_column: str = "",
 ) -> tuple[dict[str, Any], int, int]:
     output, total_in_tokens, total_out_tokens = generate_regions_level_output(
         client_name=client_name,
@@ -906,11 +995,18 @@ def generate_regions_insight_output(
         ranking_df=ranking_df,
         api_key=api_key,
         model=model,
+        selected_prominence_column=selected_prominence_column,
     )
     return {level_label: output}, total_in_tokens, total_out_tokens
 
 
-def build_region_example_rows(df: pd.DataFrame, level: str, region_name: str, limit: int = 5) -> pd.DataFrame:
+def build_region_example_rows(
+    df: pd.DataFrame,
+    level: str,
+    region_name: str,
+    limit: int = 5,
+    selected_prominence_column: str = "",
+) -> pd.DataFrame:
     if df is None or df.empty or not str(region_name or "").strip():
         return pd.DataFrame(columns=["Outlet", "Headline", "Country", "Prov/State", "City", "Mentions", "Impressions", "Effective Reach"])
 
@@ -919,8 +1015,36 @@ def build_region_example_rows(df: pd.DataFrame, level: str, region_name: str, li
     if working.empty:
         return pd.DataFrame(columns=["Outlet", "Headline", "Country", "Prov/State", "City", "Mentions", "Impressions", "Effective Reach"])
 
+    if "Media Type" not in working.columns:
+        working["Media Type"] = ""
+    if "URL" not in working.columns:
+        working["URL"] = ""
+    for col in ["Mentions", "Impressions", "Effective Reach"]:
+        if col not in working.columns:
+            working[col] = 0
+        working[col] = pd.to_numeric(working[col], errors="coerce").fillna(0)
+
+    working["_has_url"] = working["URL"].fillna("").astype(str).str.strip().ne("")
+    working["_is_online"] = working["Media Type"].fillna("").astype(str).str.upper().eq("ONLINE")
+    working["_Mentions_rank_score"] = _normalized_rank_score(working["Mentions"])
+    working["_Impressions_rank_score"] = _normalized_rank_score(working["Impressions"])
+    working["_Effective_Reach_rank_score"] = _normalized_rank_score(working["Effective Reach"])
+    working["_prominence_bonus"] = get_prominence_weight_series(working, selected_prominence_column)
+    working["_row_context_score"] = (
+        working["_Mentions_rank_score"] * 3.0
+        + working["_Impressions_rank_score"] * 2.0
+        + working["_Effective_Reach_rank_score"] * 2.0
+        + working["_prominence_bonus"]
+        + working["_has_url"].astype(float) * 0.2
+        + working["_is_online"].astype(float) * 0.35
+    )
+
     ranked = (
-        working.sort_values(["Mentions", "Impressions", "Effective Reach", "Date"], ascending=[False, False, False, False], na_position="last")
+        working.sort_values(
+            ["_row_context_score", "Mentions", "Impressions", "Effective Reach", "Date"],
+            ascending=[False, False, False, False, False],
+            na_position="last",
+        )
         .loc[:, ["Outlet", "Headline", "Country", "Prov/State", "City", "Mentions", "Impressions", "Effective Reach"]]
         .head(limit)
         .reset_index(drop=True)
@@ -934,6 +1058,7 @@ def build_region_story_group_examples(
     region_name: str,
     metric_label: str = "Mentions",
     limit: int = 10,
+    selected_prominence_column: str = "",
 ) -> pd.DataFrame:
     if df is None or df.empty or not str(region_name or "").strip():
         return pd.DataFrame(
@@ -961,7 +1086,12 @@ def build_region_story_group_examples(
             ]
         )
 
-    grouped_story_dicts = _build_top_story_context(working, metric_label=metric_label, limit=limit)
+    grouped_story_dicts = _build_top_story_context(
+        working,
+        metric_label=metric_label,
+        limit=limit,
+        selected_prominence_column=selected_prominence_column,
+    )
     if not grouped_story_dicts:
         return pd.DataFrame(
             columns=[

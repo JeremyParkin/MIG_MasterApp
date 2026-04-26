@@ -11,6 +11,7 @@ from processing.analysis_context import (
     build_analysis_context_text,
     build_dataset_scope_cache_key,
     format_qualitative_exclusion_caption,
+    get_analysis_context_payload,
     get_qualitative_coverage_flag_exclusions,
 )
 from processing.regions import (
@@ -425,6 +426,7 @@ def render_regions_page() -> None:
                             level_key=level_key,
                             ranking_df=level_df,
                             api_key=st.secrets["key"],
+                            selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
                         )
                     except Exception as exc:
                         st.error(f"Could not generate {label.lower()} observations: {exc}")
@@ -498,6 +500,7 @@ def render_regions_page() -> None:
                                     region_name,
                                     metric_label=metric_label,
                                     limit=10,
+                                    selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
                                 )
                             ),
                             use_container_width=True,

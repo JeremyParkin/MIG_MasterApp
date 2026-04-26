@@ -382,6 +382,7 @@ def render_top_stories_selection() -> None:
                     recommended_ids = recommend_top_story_group_ids(
                         df_to_display,
                         entity_terms=entity_terms,
+                        selected_prominence_column=analysis_context_payload.get("selected_prominence_column", ""),
                         count=10,
                     )
                     merged_ids = list(dict.fromkeys(existing_checked_ids + recommended_ids))

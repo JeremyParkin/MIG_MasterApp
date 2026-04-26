@@ -67,12 +67,14 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                         "Carries the saved context into downstream AI prompts and report-copy generators.",
                         "Builds removal previews for both qualitative exclusions and dataset-wide scope changes before you save.",
                         "Keeps highlight-only keywords separate so they help Spot Checks without changing AI prompt context.",
+                        "If you choose a Prominence column here, downstream recommendation and representative-story logic will weight that selected relevance signal instead of treating all Prominence fields generically.",
                     ],
                 },
                 {
                     "heading": "What to review manually",
                     "bullets": [
                         "Make sure aliases, spokespeople, and product names are actually useful for downstream interpretation.",
+                        "If the dataset includes multiple Prominence columns, choose the one that best reflects the relevance lens you want downstream AI workflows to respect.",
                         "Double-check that junky-coverage exclusions are aligned with account priorities, especially if you want to keep some flagged rows.",
                         "Review the removed-row preview when using Data Scope so you do not accidentally cut meaningful coverage.",
                     ],
@@ -252,6 +254,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "bullets": [
                         "Keeps chart, table, and report-copy order aligned with the selected ranking metric.",
                         "Uses Analysis Context guidance and qualitative exclusions when generating author narrative outputs.",
+                        "Author AI themes are grounded in a ranked set of higher-prominence grouped stories, using primary examples plus broader supporting evidence rather than just a few top headlines.",
                     ],
                 },
                 {
@@ -360,6 +363,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "bullets": [
                         "Keeps chart, table, and insight order aligned with the selected ranking metric.",
                         "Uses cleanup rollups, aggregator exclusions, and qualitative exclusions when building outlet outputs.",
+                        "Outlet AI themes are grounded in a ranked set of higher-prominence grouped stories, using primary examples plus broader supporting evidence rather than just a few top headlines.",
                     ],
                 },
                 {
@@ -626,6 +630,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "heading": "What the app does automatically",
                     "bullets": [
                         "Uses final human-reviewed tags where present and falls back to effective AI tags elsewhere.",
+                        "Tag observations are grounded in higher-prominence grouped stories inside each tag bucket, with primary examples plus additional aligned supporting evidence behind them.",
                     ],
                 },
                 {
@@ -768,6 +773,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "bullets": [
                         "Uses final human-reviewed sentiment where present and falls back to effective AI sentiment elsewhere.",
                         "Carries Analysis Context guidance and exclusions into the narrative generation step.",
+                        "Sentiment observations are grounded in higher-prominence grouped stories inside each sentiment bucket, with primary examples plus additional aligned supporting evidence behind them.",
                     ],
                 },
                 {
@@ -829,6 +835,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "bullets": [
                         "Analysis Context guidance and media-type commentary settings shape how the narrative is written.",
                         "Uses the selected ranking metric to determine which places lead and what examples are surfaced underneath.",
+                        "Regional AI insights are grounded in higher-prominence grouped stories and representative rows for each place, using primary examples plus broader supporting evidence rather than only a few top items.",
                     ],
                 },
                 {

@@ -97,6 +97,93 @@ This file is a lightweight parking lot for product and workflow ideas that are w
   - respect `Analysis Context > Analysis Focus` guidance about whether media-type commentary should be emphasized or de-emphasized
   - keep the module useful both for mixed-media accounts and simpler online-only accounts
 
+### Social Analysis App
+- Build a separate `Social Analysis` app in the same repo rather than stretching the current app further.
+- Keep the current app focused on traditional/media-intelligence workflows, terminology, and navigation.
+- Give the social app its own workflow pages, likely including:
+  - `Getting Started`
+  - `Basic Cleaning`
+  - `Analysis Context`
+  - `Influencers`
+  - `Channels`
+  - `Translation`
+  - `Top Posts`
+  - `Sentiment`
+  - `Tagging`
+  - `Download`
+  - `Save & Load`
+
+#### Why a parallel app
+- The repo already has meaningful shared social plumbing:
+  - social split in cleaning
+  - social effective-reach logic
+  - social translation support
+  - social export support
+- But the current analysis workflows are still heavily traditional in both assumptions and UX:
+  - `Authors`, not influencers
+  - `Outlets`, not channels
+  - `Top Stories`, not top posts
+  - `Regions` is much less relevant for most social analysis
+- A parallel app avoids making the current sidebar and workflow logic significantly more complex.
+
+#### Shared-state approach
+- Keep traditional and social in the same repo and the same broad session universe.
+- Users should be able to move between traditional and social analysis without losing progress on either side.
+- Save / Load should preserve both traditional and social workflow state in the same session snapshot.
+- Use separate workflow-specific session keys for social artifacts so they do not collide with traditional ones.
+
+#### Social data model
+- Keep `df_traditional` and `df_social` as the cleaned base datasets.
+- Add social working tables parallel to the traditional grouped-story outputs:
+  - `df_social_grouped`
+  - `df_social_unique`
+- Build social grouping with social-native logic:
+  - prefer post/account/platform identifiers
+  - use normalized URLs and exact platform-level signals where available
+  - avoid relying primarily on the traditional fuzzy story-grouping model
+
+#### Social prime example logic
+- Keep the `Prime Example` concept for social, but redefine it with social-native logic.
+- The canonical representative row for a grouped social post family should strongly prefer the original post over reshares / reposts.
+- Likely role preference:
+  - original post
+  - quote post or reply if no original is present
+  - reshare / repost last
+- Within the same role tier, rank likely prime candidates using:
+  - engagements
+  - impressions
+  - effective reach
+  - selected prominence weighting, when available
+  - metadata completeness / linkability
+- Quote posts with substantial added commentary may need to remain distinct post units rather than always collapsing under the original post.
+- The exact platform labels for `post`, `reshare`, `quote post`, and similar social actions should be confirmed against real exported data before implementation.
+
+#### Engagement as a first-class signal
+- Treat `Engagements` as one of the most important social relevance signals.
+- Support both likely Agility social export shapes:
+  - social listening exports with detailed reaction fields such as shares, likes, and comments
+  - media monitoring exports with only total engagements
+- Normalize these into a shared engagement model for downstream social workflows.
+- Use engagement directly in:
+  - `Top Posts` recommendation
+  - social `Prime Example` selection
+  - representative post selection for `Influencers`, `Channels`, `Sentiment`, and `Tagging`
+  - AI prompt payload construction for social insights
+  - any social spot-check or prioritization flows
+- Social ranking should likely blend:
+  - engagements
+  - impressions
+  - effective reach
+  - selected prominence weighting, when available
+  - light completeness / linkability bonuses where useful
+- This should help prevent socially important posts from being buried just because they are not the largest by syndicated-style reach.
+
+#### Shared vs distinct workflows
+- `Sentiment` and `Tagging` should probably reuse most of the existing workflow scaffolding.
+- Prompts, example selection, and source-row builders should become social-aware when running on social datasets.
+- Assume the label systems can stay mostly shared unless a project-specific use case requires different taxonomies.
+- `Regions` should stay out of scope for social v1.
+
 ### Prominence Normalization
 - Consider an early workflow step that normalizes `Prominence...` columns across grouped or syndicated copies of the same story.
 - Problem:

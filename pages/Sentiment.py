@@ -57,7 +57,6 @@ warnings.filterwarnings("ignore")
 
 st.markdown('<div id="sentiment-top-anchor"></div>', unsafe_allow_html=True)
 st.title("Sentiment")
-st.caption("Prepare the sentiment dataset, run AI sentiment analysis in batches, and complete human review in one workflow.")
 st.session_state.setdefault("sentiment_section", "Setup")
 
 if st.session_state.pop("sentiment_scroll_to_top", False):
@@ -272,10 +271,6 @@ with step5:
         st.session_state.sentiment_scroll_to_top = True
         st.rerun()
 
-st.markdown(
-    '<div class="sentiment-step-note">Work left to right: prepare the sentiment dataset, run AI sentiment in batches, run AI pre-review, complete spot checks, then review the final insights.</div>',
-    unsafe_allow_html=True,
-)
 
 help_step = st.session_state.get("sentiment_section", "Setup")
 if help_step == "Distribution":
@@ -720,13 +715,14 @@ with generate_obs_col1:
                     api_key=st.secrets["key"],
                     model=DEFAULT_SENTIMENT_OBSERVATION_MODEL,
                     analysis_context=build_analysis_context_text(st.session_state),
+                    selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
                 )
                 st.session_state.sentiment_observation_output = obs_output
                 st.session_state.sentiment_observation_include_nr = include_not_relevant_final
             except Exception as e:
                 st.error(f"Could not generate sentiment observations: {e}")
 with generate_obs_col2:
-    st.caption("Uses finalized sentiment labels plus representative grouped stories from each sentiment bucket. The examples are weighted toward the most syndicated and highest-volume coverage.")
+    st.caption("Uses finalized sentiment labels plus higher-prominence grouped stories from each sentiment bucket, with only a slight preference for linkable online examples.")
 
 observation_output = st.session_state.get("sentiment_observation_output", {})
 if observation_output:

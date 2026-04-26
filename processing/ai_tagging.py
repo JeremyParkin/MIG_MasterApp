@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 from openai import OpenAI
 
+from processing.prominence import get_prominence_weight_series
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
@@ -19,6 +20,8 @@ DEFAULT_TAGGING_MAX_WORKERS = 8
 DEFAULT_TAGGING_BATCH_SIZE = 50
 DEFAULT_TAGGING_REVIEW_BATCH_SIZE = 50
 DEFAULT_TAGGING_REVIEW_CONFIDENCE_THRESHOLD = 90
+DEFAULT_TAGGING_PRIMARY_EXAMPLE_LIMIT = 10
+DEFAULT_TAGGING_ALIGNED_EVIDENCE_LIMIT = 40
 MAX_RETRIES = 2
 
 
@@ -63,6 +66,40 @@ def _truncate_text(text: str, limit: int = 420) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 3].rstrip() + "..."
+
+
+def _normalized_rank_score(series: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(series, errors="coerce").fillna(0)
+    if numeric.empty:
+        return pd.Series(dtype="float64")
+
+    rank_series = numeric.rank(method="dense", ascending=False).astype(float)
+    max_rank = float(rank_series.max()) if not rank_series.empty else 1.0
+    if max_rank <= 1:
+        return pd.Series(1.0, index=numeric.index, dtype="float64")
+    return 1.0 - ((rank_series - 1.0) / (max_rank - 1.0))
+
+
+def _build_tag_observation_scores(
+    working: pd.DataFrame,
+    selected_prominence_column: str = "",
+) -> pd.DataFrame:
+    out = working.copy()
+    out["_Group_Count_rank_score"] = _normalized_rank_score(out.get("Group Count", pd.Series(index=out.index, dtype="float64")))
+    out["_Mentions_rank_score"] = _normalized_rank_score(out.get("Mentions", pd.Series(index=out.index, dtype="float64")))
+    out["_Impressions_rank_score"] = _normalized_rank_score(out.get("Impressions", pd.Series(index=out.index, dtype="float64")))
+    out["_Effective_Reach_rank_score"] = _normalized_rank_score(out.get("Effective Reach", pd.Series(index=out.index, dtype="float64")))
+    out["_prominence_bonus"] = get_prominence_weight_series(out, selected_prominence_column)
+    out["_obs_story_score"] = (
+        out["_Group_Count_rank_score"] * 3.0
+        + out["_Mentions_rank_score"] * 2.75
+        + out["_Impressions_rank_score"] * 1.9
+        + out["_Effective_Reach_rank_score"] * 1.9
+        + out["_prominence_bonus"]
+        + out["_has_url"].astype(float) * 0.2
+        + out["_is_online"].astype(float) * 0.35
+    )
+    return out
 
 
 def build_default_tags_text(client_name: str) -> str:
@@ -350,7 +387,9 @@ def cascade_tags_to_rows(
 def build_tag_observation_payload(
     df_tagging_unique: pd.DataFrame,
     include_other: bool,
-    per_tag_limit: int = 6,
+    per_tag_limit: int = DEFAULT_TAGGING_PRIMARY_EXAMPLE_LIMIT,
+    aligned_evidence_limit: int = DEFAULT_TAGGING_ALIGNED_EVIDENCE_LIMIT,
+    selected_prominence_column: str = "",
 ) -> dict[str, Any]:
     if df_tagging_unique is None or df_tagging_unique.empty:
         return {"distribution": [], "examples_by_tag": {}}
@@ -391,18 +430,27 @@ def build_tag_observation_payload(
 
     working["_has_url"] = working["URL"].ne("")
     working["_is_online"] = working["Type"].str.upper().eq("ONLINE")
+    working = _build_tag_observation_scores(
+        working,
+        selected_prominence_column=selected_prominence_column,
+    )
     if "Date" not in working.columns:
         working["Date"] = ""
     tagged_rows = tags_expanded.merge(working, on="Group ID", how="left")
 
     examples_by_tag: dict[str, list[dict[str, Any]]] = {}
+    aligned_evidence_by_tag: dict[str, list[dict[str, Any]]] = {}
     for tag_name, tag_group in tagged_rows.groupby("Tag", dropna=False):
         ranked = tag_group.sort_values(
-            ["_is_online", "_has_url", "Group Count", "Mentions", "Impressions", "Effective Reach"],
-            ascending=[False, False, False, False, False, False],
+            ["_obs_story_score", "Group Count", "Mentions", "Impressions", "Effective Reach"],
+            ascending=[False, False, False, False, False],
         )
         examples = []
-        for _, row in ranked.drop_duplicates(subset=["Headline"], keep="first").head(per_tag_limit).iterrows():
+        primary_ranked = ranked.drop_duplicates(subset=["Headline"], keep="first").head(per_tag_limit)
+        primary_group_ids = {str(row.get("Group ID", "") or "").strip() for _, row in primary_ranked.iterrows()}
+        primary_headlines = {str(row.get("Headline", "") or "").strip() for _, row in primary_ranked.iterrows()}
+
+        for _, row in primary_ranked.iterrows():
             headline = str(row.get("Headline", "") or "").strip()
             if not headline:
                 continue
@@ -424,9 +472,42 @@ def build_tag_observation_payload(
             )
         examples_by_tag[str(tag_name)] = examples
 
+        ai_tag_matches = ranked["AI Tag"].fillna("").astype(str).apply(
+            lambda value: str(tag_name).casefold() in {tag.casefold() for tag in normalize_tag_list(value)}
+        )
+        aligned_group = ranked[ai_tag_matches].copy()
+        if primary_group_ids:
+            aligned_group = aligned_group[
+                ~aligned_group["Group ID"].astype(str).str.strip().isin(primary_group_ids)
+            ].copy()
+        if primary_headlines:
+            aligned_group = aligned_group[
+                ~aligned_group["Headline"].fillna("").astype(str).str.strip().isin(primary_headlines)
+            ].copy()
+
+        aligned_evidence = []
+        for _, row in aligned_group.drop_duplicates(subset=["Headline"], keep="first").head(aligned_evidence_limit).iterrows():
+            headline = str(row.get("Headline", "") or "").strip()
+            if not headline:
+                continue
+            aligned_evidence.append(
+                {
+                    "group_id": row.get("Group ID", ""),
+                    "headline": headline,
+                    "outlet": str(row.get("Outlet", "") or "").strip(),
+                    "date": str(row.get("Date", "") or "").strip(),
+                    "url": str(row.get("URL", "") or "").strip(),
+                    "mentions": int(row.get("Mentions", 0) or 0),
+                    "group_count": int(row.get("Group Count", 0) or 0),
+                    "tag_rationale": _truncate_text(row.get("AI Tag Rationale", ""), 220),
+                }
+            )
+        aligned_evidence_by_tag[str(tag_name)] = aligned_evidence
+
     return {
         "distribution": distribution.to_dict(orient="records"),
         "examples_by_tag": examples_by_tag,
+        "aligned_evidence_by_tag": aligned_evidence_by_tag,
     }
 
 
@@ -439,7 +520,8 @@ def build_tag_observation_prompt(
 You are helping a media intelligence analyst write concise, report-ready tagging observations for {client_name or 'the client'}.
 
 Use the finalized tag distribution and representative grouped stories below.
-The examples are intentionally selected from the highest-volume and most syndicated coverage in each tag bucket.
+The primary examples are selected from the most prominent grouped coverage in each tag bucket, with only a slight preference for linkable online stories.
+Each tag bucket may also include additional aligned evidence: lighter-weight stories where the final tag still matches the AI tag, excluding the primary examples.
 Each example may also include an existing AI tag rationale; use it as supporting context, but ground your summary in the coverage details themselves.
 
 Return strict JSON with this shape:
@@ -457,6 +539,7 @@ Requirements:
 - Keep it factual, neutral, and report-ready.
 - Explain what kinds of coverage are driving each tag category.
 - Do not overstate tiny buckets.
+- Use the primary examples to anchor the clearest patterns, and use the aligned evidence to judge whether those patterns recur more broadly across the bucket.
 - {"Exclude Other from the narrative unless it appears in the provided data." if not include_other else "Include Other only if it appears meaningfully in the provided examples."}
 - Use only tag labels present in the provided data.
 
@@ -471,10 +554,12 @@ def generate_tag_observations(
     include_other: bool,
     api_key: str,
     model: str = DEFAULT_TAGGING_OBSERVATION_MODEL,
+    selected_prominence_column: str = "",
 ) -> tuple[dict[str, Any], int, int]:
     payload = build_tag_observation_payload(
         df_tagging_unique=df_tagging_unique,
         include_other=include_other,
+        selected_prominence_column=selected_prominence_column,
     )
     prompt = build_tag_observation_prompt(
         client_name=client_name,

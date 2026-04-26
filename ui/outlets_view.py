@@ -14,6 +14,7 @@ from processing.analysis_context import (
     apply_session_coverage_flag_policy,
     build_analysis_context_text,
     build_dataset_scope_cache_key,
+    get_analysis_context_payload,
     get_outlet_insight_coverage_flag_exclusions,
     init_analysis_context_state,
 )
@@ -312,7 +313,12 @@ def render_outlets_page() -> None:
 
             examples_html = ""
             if show_headline_examples and outlet:
-                story_df = build_outlet_headline_table(get_story_rows(), outlet, limit=5)
+                story_df = build_outlet_headline_table(
+                    get_story_rows(),
+                    outlet,
+                    limit=5,
+                    selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
+                )
                 example_items = build_story_examples_html(
                     story_df,
                     show_author=show_author,
@@ -1028,7 +1034,12 @@ def render_outlets_page() -> None:
                     st.rerun()
             st.caption(f"{inspect_index + 1} of {len(valid_outlets)} by {st.session_state.outlets_rank_by}")
             inspect_row = ranked.loc[ranked["Outlet"] == inspect_outlet].iloc[0]
-            story_df = build_outlet_headline_table(get_story_rows(), inspect_outlet, limit=5)
+            story_df = build_outlet_headline_table(
+                get_story_rows(),
+                inspect_outlet,
+                limit=5,
+                selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
+            )
             top_authors_df = build_outlet_top_authors(
                 st.session_state.df_traditional,
                 inspect_outlet,
@@ -1272,7 +1283,12 @@ def render_outlets_page() -> None:
                 with st.spinner("Generating outlet theme summaries..."):
                     for outlet_name in selected_outlets:
                         outlet_row = shortlist_df.loc[shortlist_df["Outlet"] == outlet_name].iloc[0]
-                        headline_df = build_outlet_headline_table(get_story_rows(), outlet_name, limit=6)
+                        headline_df = build_outlet_headline_table(
+                            get_story_rows(),
+                            outlet_name,
+                            limit=60,
+                            selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
+                        )
                         author_df = build_outlet_top_authors(
                             st.session_state.df_traditional,
                             outlet_name,
@@ -1289,6 +1305,7 @@ def render_outlets_page() -> None:
                                 api_key=st.secrets["key"],
                                 model=DEFAULT_OUTLET_SUMMARY_MODEL,
                                 analysis_context=analysis_context,
+                                selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
                             )
                             summaries[outlet_name] = summary_text
                         except Exception as e:

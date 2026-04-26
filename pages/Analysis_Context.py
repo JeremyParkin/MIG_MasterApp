@@ -52,6 +52,8 @@ if "analysis_context_suggestion_success" not in st.session_state:
     st.session_state.analysis_context_suggestion_success = False
 if "analysis_context_tag_widget_version" not in st.session_state:
     st.session_state.analysis_context_tag_widget_version = 0
+if "analysis_context_suggestion_payload" not in st.session_state:
+    st.session_state.analysis_context_suggestion_payload = None
 
 
 def _has_meaningful_downstream_work() -> bool:
@@ -100,6 +102,7 @@ if "analysis_context_draft_initialized" not in st.session_state:
     st.session_state.analysis_context_draft_guidance = payload["guidance"]
     st.session_state.analysis_context_draft_exclude_aggregators = payload["exclude_aggregators_from_outlet_insights"]
     st.session_state.analysis_context_draft_media_type_commentary_mode = payload.get("media_type_commentary_mode", "Auto")
+    st.session_state.analysis_context_draft_selected_prominence_column = payload.get("selected_prominence_column", "")
     st.session_state.analysis_context_draft_qualitative_flags = list(payload["qualitative_excluded_flags"])
     st.session_state.analysis_context_draft_dataset_flags = list(payload["dataset_excluded_flags"])
     st.session_state.analysis_context_draft_dataset_date_range = (
@@ -118,31 +121,36 @@ st.session_state.setdefault(
     "analysis_context_draft_media_type_commentary_mode",
     payload.get("media_type_commentary_mode", "Auto"),
 )
+st.session_state.setdefault(
+    "analysis_context_draft_selected_prominence_column",
+    payload.get("selected_prominence_column", ""),
+)
 
 if _has_meaningful_downstream_work():
         st.warning(
         "You have already done work in downstream workflows. Changes saved here may affect ranked outputs and generated insights in Authors, Outlets, Top Stories, Regions, Sentiment, and Tagging. Revisit and regenerate affected outputs if needed."
         )
 
-pending_suggestions = st.session_state.pop("analysis_context_pending_suggestions", None)
-if pending_suggestions:
+
+def _apply_suggestions_to_draft(suggestions: dict) -> None:
     client_key = analysis_context._match_key(st.session_state.analysis_context_draft_client_name)
     primary_key = analysis_context._match_key(st.session_state.analysis_context_draft_primary_name)
+
     alias_names = [
         item["name"]
-        for item in analysis_context._clean_suggestion_items(pending_suggestions.get("aliases", []))
+        for item in analysis_context._clean_suggestion_items(suggestions.get("aliases", []))
         if analysis_context._match_key(item["name"]) not in {client_key, primary_key}
     ]
     spokesperson_names = [
         item["name"]
-        for item in analysis_context._clean_suggestion_items(pending_suggestions.get("spokespeople", []))
-        if " " in item["name"].strip()
+        for item in analysis_context._prioritize_spokespeople(suggestions.get("spokespeople", []))
     ]
     product_names = [
         item["name"]
-        for item in analysis_context._clean_suggestion_items(pending_suggestions.get("products", []))
+        for item in analysis_context._clean_suggestion_items(suggestions.get("products", []))
         if analysis_context._match_key(item["name"]) not in {client_key, primary_key}
     ]
+
     st.session_state.analysis_context_draft_alternate_names = analysis_context._clean_list(
         st.session_state.analysis_context_draft_alternate_names + alias_names
     )
@@ -152,9 +160,35 @@ if pending_suggestions:
     st.session_state.analysis_context_draft_products = analysis_context._clean_list(
         st.session_state.analysis_context_draft_products + product_names
     )
-    st.session_state.analysis_context_suggestion_payload = pending_suggestions
     st.session_state.analysis_context_tag_widget_version += 1
-    st.session_state.analysis_context_suggestion_success = True
+
+
+def _render_suggestion_item(item: dict, *, is_spokesperson: bool = False) -> None:
+    name = str(item.get("name", "") or "").strip()
+    if not name:
+        return
+
+    detail = str(item.get("detail", "") or "").strip()
+    role = str(item.get("role", "") or "").strip()
+    why_current = str(item.get("why_current", "") or "").strip()
+    source_title = str(item.get("source_title", "") or "").strip()
+    source_url = str(item.get("source_url", "") or "").strip()
+
+    descriptor_parts: list[str] = []
+    if is_spokesperson and role:
+        descriptor_parts.append(role)
+    if detail:
+        descriptor_parts.append(detail)
+    if is_spokesperson and why_current:
+        descriptor_parts.append(f"Why current: {why_current}")
+
+    line = f"- `{name}`"
+    if descriptor_parts:
+        line += f": {' | '.join(descriptor_parts)}"
+    if source_url:
+        source_label = source_title or "Source"
+        line += f" ([{source_label}]({source_url}))"
+    st.markdown(line)
 
 with st.container(border=True):
     st.subheader("Entity Context")
@@ -192,7 +226,9 @@ with st.container(border=True):
                             api_key=st.secrets["key"],
                             model=analysis_context.DEFAULT_ANALYSIS_CONTEXT_MODEL,
                         )
-                    st.session_state.analysis_context_pending_suggestions = suggestions
+                    st.session_state.analysis_context_suggestion_payload = suggestions
+                    _apply_suggestions_to_draft(suggestions)
+                    st.session_state.analysis_context_suggestion_success = True
                     st.rerun()
                 except Exception as e:
                     st.error(f"Could not generate context suggestions: {e}")
@@ -208,7 +244,7 @@ with st.container(border=True):
                 st.rerun()
 
         if st.session_state.get("analysis_context_suggestion_success"):
-            st.success("AI context suggestions added to the fields below.")
+            st.success("AI context suggestions were added to the fields below. You can edit them directly or expand the rationale if needed.")
             st.session_state.analysis_context_suggestion_success = False
 
     st.markdown('<div class="entity-card-gap"></div>', unsafe_allow_html=True)
@@ -217,8 +253,8 @@ with st.container(border=True):
     with st.container(border=True):
         st.markdown("**Reference names**")
         st.caption("Add the names and related entities that should help the app recognize relevant coverage.")
-        ref_col1, ref_col2 = st.columns(2, gap="medium")
-        with ref_col1:
+        ref_row1_col1, ref_row1_col2 = st.columns(2, gap="medium")
+        with ref_row1_col1:
             alternate_names = st_tags(
                 label="Alternate names / aliases",
                 text="Press enter to add more",
@@ -227,22 +263,10 @@ with st.container(border=True):
                 key=f"analysis_context_aliases_tags_{tag_key_suffix}",
             )
             st.markdown(
-                '<div class="entity-field-note">Include alternate spellings, abbreviations, or commonly used shorthand.</div>',
+                '<div class="entity-field-note">Include alternate spellings, abbreviations, etc.</div>',
                 unsafe_allow_html=True,
             )
-            st.markdown('<div class="entity-subfield-gap"></div>', unsafe_allow_html=True)
-            products = st_tags(
-                label="Products / sub-brands / initiatives",
-                text="Press enter to add more",
-                maxtags=20,
-                value=st.session_state.analysis_context_draft_products,
-                key=f"analysis_context_products_tags_{tag_key_suffix}",
-            )
-            st.markdown(
-                '<div class="entity-field-note">Use this for product names, program names, campaigns, or sub-brands that meaningfully define the story.</div>',
-                unsafe_allow_html=True,
-            )
-        with ref_col2:
+        with ref_row1_col2:
             spokespeople = st_tags(
                 label="Key spokespeople",
                 text="Press enter to add more",
@@ -254,7 +278,23 @@ with st.container(border=True):
                 '<div class="entity-field-note">Add people central to the coverage.</div>',
                 unsafe_allow_html=True,
             )
-            st.markdown('<div class="entity-subfield-gap"></div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="entity-subfield-gap"></div>', unsafe_allow_html=True)
+
+        ref_row2_col1, ref_row2_col2 = st.columns(2, gap="medium")
+        with ref_row2_col1:
+            products = st_tags(
+                label="Products / sub-brands / initiatives",
+                text="Press enter to add more",
+                maxtags=20,
+                value=st.session_state.analysis_context_draft_products,
+                key=f"analysis_context_products_tags_{tag_key_suffix}",
+            )
+            st.markdown(
+                '<div class="entity-field-note">Include names of products, programs, campaigns, sub-brands, etc.</div>',
+                unsafe_allow_html=True,
+            )
+        with ref_row2_col2:
             highlight_keywords = st_tags(
                 label="Other keywords to highlight in Sentiment / Tagging",
                 text="Press enter to add more",
@@ -263,7 +303,7 @@ with st.container(border=True):
                 key=f"analysis_context_highlight_keywords_tags_{tag_key_suffix}",
             )
             st.markdown(
-                '<div class="entity-field-note">Highlight-only terms for spot checks. These are not added to AI prompt context.</div>',
+                '<div class="entity-field-note">Highlight-only terms for spot checks (not added to AI prompt context).</div>',
                 unsafe_allow_html=True,
             )
 
@@ -285,6 +325,9 @@ with st.container(border=True):
     with st.expander("AI suggestion rationale", expanded=False):
         suggestion_payload = st.session_state.get("analysis_context_suggestion_payload")
         if suggestion_payload:
+            assessment = str(suggestion_payload.get("assessment", "") or "").strip()
+            if assessment:
+                st.caption(assessment)
             section_map = [
                 ("Alternate names / aliases", suggestion_payload.get("aliases", [])),
                 ("Key spokespeople", suggestion_payload.get("spokespeople", [])),
@@ -295,17 +338,18 @@ with st.container(border=True):
                     continue
                 st.write(f"**{heading}**")
                 for item in items:
-                    name = str(item.get("name", "") or "").strip()
-                    detail = str(item.get("detail", "") or "").strip()
-                    if not name:
-                        continue
-                    st.markdown(f"- `{name}`" + (f": {detail}" if detail else ""))
+                    _render_suggestion_item(item, is_spokesperson=(heading == "Key spokespeople"))
         else:
             st.info("No AI suggestions have been generated yet.")
 
 with st.container(border=True):
     st.subheader("Analysis Focus")
     st.caption("Set shared rules for what should be excluded from qualitative workflows like Top Stories, Sentiment, Tagging, Authors, Outlets, and Regions.")
+    available_prominence_columns = list(payload.get("available_prominence_columns", []))
+    selected_prominence_column = st.session_state.get("analysis_context_draft_selected_prominence_column", "")
+    if selected_prominence_column not in available_prominence_columns:
+        selected_prominence_column = ""
+        st.session_state.analysis_context_draft_selected_prominence_column = ""
 
     focus_col1, focus_col2 = st.columns(2, gap="medium")
     with focus_col1:
@@ -330,6 +374,29 @@ with st.container(border=True):
                 label_visibility="collapsed",
                 help="Controls how much downstream qualitative outputs should talk about media-type mix when interpreting coverage patterns.",
             )
+
+    if available_prominence_columns:
+        with st.container(border=True):
+            st.markdown("**Prominence weighting**")
+            st.caption("Optionally use one Prominence column as a relevance signal when the app recommends or picks representative stories downstream.")
+            prominence_options = ["No prominence weighting"] + available_prominence_columns
+            selected_prominence_display = selected_prominence_column or "No prominence weighting"
+            selected_prominence_display = st.selectbox(
+                "Prominence / relevance focus",
+                options=prominence_options,
+                index=prominence_options.index(selected_prominence_display),
+                key="analysis_context_draft_selected_prominence_column_widget",
+                help="Stories marked Very Low or None in the selected column will be penalized in downstream recommendation and representative-story logic.",
+            )
+            selected_prominence_column = (
+                ""
+                if selected_prominence_display == "No prominence weighting"
+                else selected_prominence_display
+            )
+            st.session_state.analysis_context_draft_selected_prominence_column = selected_prominence_column
+            preview_values = (payload.get("prominence_column_preview", {}) or {}).get(selected_prominence_column, [])
+            if selected_prominence_column and preview_values:
+                st.caption("Detected labels: " + ", ".join(preview_values))
 
     with st.container(border=True):
         st.markdown("**Qualitative exclusions**")
@@ -514,6 +581,7 @@ with save_col:
             dataset_excluded_flags=dataset_excluded_flags,
             exclude_aggregators_from_outlet_insights=exclude_aggregators_from_outlet_insights,
             media_type_commentary_mode=media_type_commentary_mode,
+            selected_prominence_column=selected_prominence_column,
             dataset_start_date=dataset_start_date,
             dataset_end_date=dataset_end_date,
             dataset_media_types=dataset_media_types,

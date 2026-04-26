@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 from openai import OpenAI
 
+from processing.prominence import get_prominence_weight_series
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
@@ -15,6 +16,8 @@ DEFAULT_SENTIMENT_MODEL = "gpt-5.4-nano"
 DEFAULT_SENTIMENT_OBSERVATION_MODEL = "gpt-5.4-mini"
 DEFAULT_SENTIMENT_BATCH_SIZE = 50
 DEFAULT_SENTIMENT_MAX_WORKERS = 8
+DEFAULT_SENTIMENT_PRIMARY_EXAMPLE_LIMIT = 10
+DEFAULT_SENTIMENT_ALIGNED_EVIDENCE_LIMIT = 40
 MAX_RETRIES = 2
 
 
@@ -351,12 +354,48 @@ def _truncate_text(text: str, limit: int = 420) -> str:
     return text[: limit - 3].rstrip() + "..."
 
 
+def _normalized_rank_score(series: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(series, errors="coerce").fillna(0)
+    if numeric.empty:
+        return pd.Series(dtype="float64")
+
+    rank_series = numeric.rank(method="dense", ascending=False).astype(float)
+    max_rank = float(rank_series.max()) if not rank_series.empty else 1.0
+    if max_rank <= 1:
+        return pd.Series(1.0, index=numeric.index, dtype="float64")
+    return 1.0 - ((rank_series - 1.0) / (max_rank - 1.0))
+
+
+def _build_sentiment_observation_scores(
+    working: pd.DataFrame,
+    selected_prominence_column: str = "",
+) -> pd.DataFrame:
+    out = working.copy()
+    out["_Group_Count_rank_score"] = _normalized_rank_score(out.get("Group Count", pd.Series(index=out.index, dtype="float64")))
+    out["_Mentions_rank_score"] = _normalized_rank_score(out.get("Mentions", pd.Series(index=out.index, dtype="float64")))
+    out["_Impressions_rank_score"] = _normalized_rank_score(out.get("Impressions", pd.Series(index=out.index, dtype="float64")))
+    out["_Effective_Reach_rank_score"] = _normalized_rank_score(out.get("Effective Reach", pd.Series(index=out.index, dtype="float64")))
+    out["_prominence_bonus"] = get_prominence_weight_series(out, selected_prominence_column)
+    out["_obs_story_score"] = (
+        out["_Group_Count_rank_score"] * 3.0
+        + out["_Mentions_rank_score"] * 2.75
+        + out["_Impressions_rank_score"] * 1.9
+        + out["_Effective_Reach_rank_score"] * 1.9
+        + out["_prominence_bonus"]
+        + out["_has_url"].astype(float) * 0.2
+        + out["_is_online_example"].astype(float) * 0.35
+    )
+    return out
+
+
 def build_sentiment_observation_payload(
     df_unique: pd.DataFrame,
     df_grouped_rows: pd.DataFrame | None,
     sentiment_type: str,
     include_not_relevant: bool,
-    per_sentiment_limit: int = 6,
+    per_sentiment_limit: int = DEFAULT_SENTIMENT_PRIMARY_EXAMPLE_LIMIT,
+    aligned_evidence_limit: int = DEFAULT_SENTIMENT_ALIGNED_EVIDENCE_LIMIT,
+    selected_prominence_column: str = "",
 ) -> dict[str, Any]:
     working = df_unique.copy()
     working["Final Sentiment"] = build_final_sentiment_series(working)
@@ -426,18 +465,27 @@ def build_sentiment_observation_payload(
 
     working["_has_url"] = working["Display URL"].ne("")
     working["_is_online_example"] = working["Display Type"].str.upper().eq("ONLINE")
+    working = _build_sentiment_observation_scores(
+        working,
+        selected_prominence_column=selected_prominence_column,
+    )
 
     distribution_df = build_sentiment_distribution(working.rename(columns={"Final Sentiment": "Assigned Sentiment"}), sentiment_type)
     distribution_records = distribution_df.to_dict(orient="records")
 
     examples_by_sentiment: dict[str, list[dict[str, Any]]] = {}
+    aligned_evidence_by_sentiment: dict[str, list[dict[str, Any]]] = {}
     for sentiment, group in working.groupby("Final Sentiment", dropna=False):
         ranked = group.sort_values(
-            ["_is_online_example", "_has_url", "Group Count", "Mentions", "Impressions", "Effective Reach"],
-            ascending=[False, False, False, False, False, False],
+            ["_obs_story_score", "Group Count", "Mentions", "Impressions", "Effective Reach"],
+            ascending=[False, False, False, False, False],
         )
         examples = []
-        for _, row in ranked.drop_duplicates(subset=["Headline"], keep="first").head(per_sentiment_limit).iterrows():
+        primary_ranked = ranked.drop_duplicates(subset=["Headline"], keep="first").head(per_sentiment_limit)
+        primary_group_ids = {str(row.get("Group ID", "") or "").strip() for _, row in primary_ranked.iterrows()}
+        primary_headlines = {str(row.get("Headline", "") or "").strip() for _, row in primary_ranked.iterrows()}
+
+        for _, row in primary_ranked.iterrows():
             examples.append({
                 "group_id": row.get("Group ID", ""),
                 "headline": row.get("Headline", ""),
@@ -454,9 +502,39 @@ def build_sentiment_observation_payload(
             })
         examples_by_sentiment[str(sentiment)] = examples
 
+        aligned_group = ranked[
+            ranked["AI Sentiment"].fillna("").astype(str).str.strip().str.upper()
+            == ranked["Final Sentiment"].fillna("").astype(str).str.strip().str.upper()
+        ].copy()
+        if primary_group_ids:
+            aligned_group = aligned_group[
+                ~aligned_group["Group ID"].astype(str).str.strip().isin(primary_group_ids)
+            ].copy()
+        if primary_headlines:
+            aligned_group = aligned_group[
+                ~aligned_group["Headline"].fillna("").astype(str).str.strip().isin(primary_headlines)
+            ].copy()
+
+        aligned_evidence = []
+        for _, row in aligned_group.drop_duplicates(subset=["Headline"], keep="first").head(aligned_evidence_limit).iterrows():
+            aligned_evidence.append(
+                {
+                    "group_id": row.get("Group ID", ""),
+                    "headline": row.get("Headline", ""),
+                    "outlet": row.get("Display Outlet", ""),
+                    "date": row.get("Date", ""),
+                    "url": row.get("Display URL", ""),
+                    "mentions": int(row.get("Mentions", 0) or 0),
+                    "group_count": int(row.get("Group Count", 0) or 0),
+                    "sentiment_rationale": _truncate_text(row.get("AI Sentiment Rationale", ""), 220),
+                }
+            )
+        aligned_evidence_by_sentiment[str(sentiment)] = aligned_evidence
+
     return {
         "distribution": distribution_records,
         "examples_by_sentiment": examples_by_sentiment,
+        "aligned_evidence_by_sentiment": aligned_evidence_by_sentiment,
     }
 
 
@@ -472,7 +550,8 @@ You are helping a media intelligence analyst write concise, report-ready sentime
 {analysis_context or client_name or 'the client'}.
 
 Use the finalized sentiment distribution and representative grouped stories below.
-The examples are intentionally selected from the most syndicated and highest-volume coverage in each sentiment bucket.
+The primary examples are selected from the most prominent grouped coverage in each sentiment bucket, with only a slight preference for linkable online stories.
+Each sentiment bucket may also include additional aligned evidence: lighter-weight stories where the final sentiment still matches the AI sentiment, excluding the primary examples.
 Each example may also include an existing AI sentiment rationale; use it as supporting context, but ground your summary in the coverage details themselves.
 
 Return strict JSON with this shape:
@@ -493,6 +572,7 @@ Requirements:
 - If negative or unfavorable coverage is isolated, say so.
 - Use only sentiment labels present in the provided data.
 - Support both 3-way and 5-way sentiment.
+- Use the primary examples to anchor the clearest patterns, and use the aligned evidence to judge whether those patterns recur more broadly across the bucket.
 - {"Exclude NOT RELEVANT from the narrative unless it is present in the provided examples." if not include_not_relevant else "Include NOT RELEVANT only if it appears meaningfully in the provided examples."}
 
 Sentiment mode: {sentiment_type}
@@ -511,12 +591,14 @@ def generate_sentiment_observations(
     api_key: str,
     model: str = DEFAULT_SENTIMENT_OBSERVATION_MODEL,
     analysis_context: str = "",
+    selected_prominence_column: str = "",
 ) -> tuple[dict[str, Any], int, int]:
     payload = build_sentiment_observation_payload(
         df_unique=df_unique,
         df_grouped_rows=df_grouped_rows,
         sentiment_type=sentiment_type,
         include_not_relevant=include_not_relevant,
+        selected_prominence_column=selected_prominence_column,
     )
     prompt = build_sentiment_observation_prompt(
         client_name=client_name,

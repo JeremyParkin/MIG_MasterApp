@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from processing.prominence import get_prominence_weight_series
 
 TOP_STORY_DEFAULT_COLUMNS = {
     "Group ID": pd.NA,
@@ -204,6 +205,7 @@ def recommend_top_story_group_ids(
     candidate_df: pd.DataFrame,
     *,
     entity_terms: list[str] | None = None,
+    selected_prominence_column: str = "",
     count: int = 10,
 ) -> list[str]:
     working = normalize_top_stories_df(candidate_df.copy())
@@ -271,6 +273,7 @@ def recommend_top_story_group_ids(
     pool.loc[pool["_coverage_flag_text"].str.contains("advertorial", regex=False), "_flag_penalty"] += 3.0
     pool.loc[pool["_coverage_flag_text"].str.contains("financial outlet", regex=False), "_flag_penalty"] += 1.4
     pool["_tier_one_bonus"] = pool["Example Outlet"].apply(lambda value: 0.75 if _is_tier_one_outlet(value) else 0.0)
+    pool["_selected_prominence_weight"] = get_prominence_weight_series(pool, selected_prominence_column)
 
     pool["_recommendation_score"] = (
         pool["_headline_term_hits"] * 3.2
@@ -282,6 +285,7 @@ def recommend_top_story_group_ids(
         + pool["_Impressions_rank_score"] * 2.0
         + pool["_Effective Reach_rank_score"] * 2.0
         + pool["_tier_one_bonus"]
+        + pool["_selected_prominence_weight"] * 1.4
         - pool["_flag_penalty"]
         - pool["_passing_mention_penalty"]
     )

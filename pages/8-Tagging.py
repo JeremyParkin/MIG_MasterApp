@@ -14,6 +14,7 @@ from ui.insight_blocks import build_linked_example_blocks_html
 from processing.analysis_context import (
     apply_session_coverage_flag_policy,
     format_qualitative_exclusion_caption,
+    get_analysis_context_payload,
     get_qualitative_coverage_flag_exclusions,
 )
 from processing.tagging_config import (
@@ -54,7 +55,6 @@ warnings.filterwarnings("ignore")
 DEFAULT_TAGGING_MODEL = "gpt-5.4-nano"
 
 st.title("AI Tagging")
-st.caption("Prepare a grouped coverage sample, configure tag definitions, and apply AI tags back onto the dataset.")
 st.session_state.setdefault("tagging_section", "Setup")
 if st.session_state.get("tagging_section") == "Review":
     st.session_state.tagging_section = "Insights"
@@ -234,10 +234,6 @@ with step5:
         st.session_state.tagging_section = "Insights"
         st.rerun()
 
-st.markdown(
-    '<div class="tagging-step-note">Work left to right: prepare the tagging dataset, run AI tagging, run AI pre-review, complete human spot checks, then review output-ready insights.</div>',
-    unsafe_allow_html=True,
-)
 
 set_page_help_context(st.session_state, "Tagging", st.session_state.get("tagging_section", "Setup"))
 
@@ -627,6 +623,7 @@ with obs_button_col:
                 client_name=client_name,
                 include_other=include_other,
                 api_key=st.secrets["key"],
+                selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
             )
             st.session_state.tagging_observation_output = observation_output
         except Exception as e:
@@ -634,7 +631,7 @@ with obs_button_col:
         st.rerun()
 with obs_blurb_col:
     st.caption(
-        "Uses finalized AI tags plus representative grouped stories from each tag bucket. The examples are weighted toward the highest-volume and most syndicated coverage."
+        "Uses finalized AI tags plus higher-prominence grouped stories from each tag bucket, with only a slight preference for linkable online examples."
     )
 
 field_options = ["Outlet", "Date", "Media type", "Mentions", "Impressions", "Effective reach", "Examples"]

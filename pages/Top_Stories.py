@@ -6,7 +6,6 @@ import streamlit as st
 from ui.page_help import set_page_help_context
 
 st.title("Top Stories")
-st.caption("Build the saved top-stories list, then generate report-ready insights in one combined workflow.")
 
 if not st.session_state.get("standard_step", False):
     st.error("Please complete Basic Cleaning before trying this step.")
@@ -78,10 +77,6 @@ with step3:
         st.session_state.top_stories_section = "Insights"
         st.rerun()
 
-st.markdown(
-    '<div class="top-stories-step-note">Work left to right: save the final top stories, review or rotate source links, then generate report-ready insights.</div>',
-    unsafe_allow_html=True,
-)
 
 current_section = st.session_state.get("top_stories_section", "Selection")
 set_page_help_context(st.session_state, "Top Stories", current_section)

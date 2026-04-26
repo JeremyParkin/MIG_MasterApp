@@ -16,6 +16,7 @@ from processing.analysis_context import (
     apply_session_coverage_flag_policy,
     build_analysis_context_text,
     format_qualitative_exclusion_caption,
+    get_analysis_context_payload,
     get_qualitative_coverage_flag_exclusions,
     init_analysis_context_state,
 )
@@ -1045,7 +1046,12 @@ def render_authors_page() -> None:
 
         inspect_author = st.session_state["authors_insights_active_author"]
         inspect_row = ranked_df.loc[ranked_df["Author"] == inspect_author].iloc[0]
-        headline_table = build_author_headline_table(author_story_rows, inspect_author, limit=5)
+        headline_table = build_author_headline_table(
+            author_story_rows,
+            inspect_author,
+            limit=5,
+            selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
+        )
 
         valid_options = ranked_df["Author"].tolist()
         current_selected = [
@@ -1259,7 +1265,12 @@ def render_authors_page() -> None:
                 with st.spinner("Generating author theme summaries..."):
                     for author_name in selected_authors:
                         author_row = shortlist_df.loc[shortlist_df["Author"] == author_name].iloc[0]
-                        headline_df = build_author_headline_table(author_story_rows, author_name, limit=8)
+                        headline_df = build_author_headline_table(
+                            author_story_rows,
+                            author_name,
+                            limit=60,
+                            selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
+                        )
                         try:
                             summary_text, _, _ = generate_author_summary(
                                 author_name=author_name,
@@ -1269,6 +1280,7 @@ def render_authors_page() -> None:
                                 api_key=st.secrets["key"],
                                 model=DEFAULT_AUTHOR_SUMMARY_MODEL,
                                 analysis_context=analysis_context,
+                                selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
                             )
                             summaries[author_name] = summary_text
                         except Exception as e:
@@ -1298,7 +1310,12 @@ def render_authors_page() -> None:
                 body_html = html.escape(themes) if themes else ""
                 examples_html = ""
                 if show_headline_examples and author_name:
-                    headline_table = build_author_headline_table(author_story_rows, author_name, limit=5)
+                    headline_table = build_author_headline_table(
+                        author_story_rows,
+                        author_name,
+                        limit=5,
+                        selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
+                    )
                     example_items = build_story_examples_html(
                         headline_table,
                         show_outlet=show_outlet,
@@ -1376,7 +1393,12 @@ def render_authors_page() -> None:
                         st.rerun()
                 st.caption(f"{inspect_index + 1} of {len(valid_authors)} by {get_author_rank_metric()}")
                 inspect_row = selection_ranked_df.loc[selection_ranked_df["Author"] == inspect_author].iloc[0]
-                headline_table = build_author_headline_table(author_story_rows, inspect_author, limit=5)
+                headline_table = build_author_headline_table(
+                    author_story_rows,
+                    inspect_author,
+                    limit=5,
+                    selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
+                )
                 st.markdown(
                     (
                         '<div style="font-size:0.92rem; color:#9aa0aa; margin:0.15rem 0 0.65rem 0;">'

@@ -8,10 +8,13 @@ from typing import Any
 import pandas as pd
 from openai import OpenAI
 
+from processing.prominence import get_prominence_weight_series
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
 DEFAULT_OUTLET_SUMMARY_MODEL = "gpt-5.4-mini"
+DEFAULT_OUTLET_PRIMARY_EXAMPLE_LIMIT = 10
+DEFAULT_OUTLET_SUPPORTING_EVIDENCE_LIMIT = 40
 
 
 def init_outlet_workflow_state(session_state) -> None:
@@ -76,6 +79,54 @@ def _clean_outlet_df(df: pd.DataFrame) -> pd.DataFrame:
     working = working[working["Outlet"] != ""].copy()
     working["_is_good_outlet"] = working["Coverage Flags"].eq("Good Outlet")
     working["_normalized_key"] = working["Outlet"].apply(_normalize_outlet_key)
+    return working
+
+
+def _normalized_rank_score(series: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(series, errors="coerce").fillna(0)
+    if numeric.empty:
+        return pd.Series(dtype="float64")
+
+    rank_series = numeric.rank(method="dense", ascending=False).astype(float)
+    max_rank = float(rank_series.max()) if not rank_series.empty else 1.0
+    if max_rank <= 1:
+        return pd.Series(1.0, index=numeric.index, dtype="float64")
+    return 1.0 - ((rank_series - 1.0) / (max_rank - 1.0))
+
+
+def _truncate_text(text: str, limit: int = 320) -> str:
+    text = " ".join(str(text or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
+def _score_outlet_story_rows(
+    story_rows: pd.DataFrame,
+    selected_prominence_column: str = "",
+) -> pd.DataFrame:
+    working = story_rows.copy()
+    for col in ["Story Mentions", "Story Impressions", "Story Effective Reach", "Prime Example Story"]:
+        if col not in working.columns:
+            working[col] = 0
+        working[col] = pd.to_numeric(working[col], errors="coerce").fillna(0)
+
+    working["_has_url"] = working.get("Representative URL", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.strip().ne("")
+    working["_is_online"] = working.get("Type", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.upper().eq("ONLINE")
+    working["_Story_Mentions_rank_score"] = _normalized_rank_score(working["Story Mentions"])
+    working["_Story_Impressions_rank_score"] = _normalized_rank_score(working["Story Impressions"])
+    working["_Story_Effective_Reach_rank_score"] = _normalized_rank_score(working["Story Effective Reach"])
+    working["_Prime_Example_rank_score"] = _normalized_rank_score(working["Prime Example Story"])
+    working["_prominence_bonus"] = get_prominence_weight_series(working, selected_prominence_column)
+    working["_prompt_story_score"] = (
+        working["_Story_Mentions_rank_score"] * 3.0
+        + working["_Story_Impressions_rank_score"] * 2.0
+        + working["_Story_Effective_Reach_rank_score"] * 2.0
+        + working["_Prime_Example_rank_score"] * 0.8
+        + working["_prominence_bonus"]
+        + working["_has_url"].astype(float) * 0.2
+        + working["_is_online"].astype(float) * 0.35
+    )
     return working
 
 
@@ -166,10 +217,11 @@ def _pick_story_row(group: pd.DataFrame) -> pd.Series:
 
 def _build_outlet_story_rows(df: pd.DataFrame) -> pd.DataFrame:
     records: list[dict[str, Any]] = []
+    prominence_cols = [c for c in df.columns if isinstance(c, str) and c.startswith("Prominence")]
 
     for (outlet_name, group_id), group in df.groupby(["Outlet", "Group ID"], dropna=False):
         rep = _pick_story_row(group)
-        records.append({
+        record = {
             "Outlet": outlet_name,
             "Group ID": group_id,
             "Headline": rep.get("Headline", ""),
@@ -183,7 +235,10 @@ def _build_outlet_story_rows(df: pd.DataFrame) -> pd.DataFrame:
             "Story Mentions": int(pd.to_numeric(group["Mentions"], errors="coerce").fillna(0).sum()),
             "Story Impressions": int(pd.to_numeric(group["Impressions"], errors="coerce").fillna(0).sum()),
             "Story Effective Reach": int(pd.to_numeric(group["Effective Reach"], errors="coerce").fillna(0).sum()),
-        })
+        }
+        for col in prominence_cols:
+            record[col] = pd.to_numeric(group[col], errors="coerce").fillna(0).max()
+        records.append(record)
 
     out = pd.DataFrame(records)
     if not out.empty and "Date" in out.columns:
@@ -244,7 +299,12 @@ def build_outlet_metrics(df_traditional: pd.DataFrame, outlet_rollup_map: dict[s
     return summary, story_level
 
 
-def build_outlet_headline_table(story_level_df: pd.DataFrame, outlet_name: str, limit: int = 5) -> pd.DataFrame:
+def build_outlet_headline_table(
+    story_level_df: pd.DataFrame,
+    outlet_name: str,
+    limit: int = 5,
+    selected_prominence_column: str = "",
+) -> pd.DataFrame:
     if story_level_df.empty:
         return pd.DataFrame()
 
@@ -252,9 +312,12 @@ def build_outlet_headline_table(story_level_df: pd.DataFrame, outlet_name: str, 
     if outlet_rows.empty:
         return pd.DataFrame()
 
-    outlet_rows = outlet_rows.sort_values(
-        ["Prime Example Story", "Story Mentions", "Story Impressions"],
-        ascending=[False, False, False],
+    outlet_rows = _score_outlet_story_rows(
+        outlet_rows,
+        selected_prominence_column=selected_prominence_column,
+    ).sort_values(
+        ["_prompt_story_score", "Story Mentions", "Story Impressions", "Story Effective Reach"],
+        ascending=[False, False, False, False],
     ).head(limit)
 
     display_cols = [
@@ -269,6 +332,66 @@ def build_outlet_headline_table(story_level_df: pd.DataFrame, outlet_name: str, 
         "Representative Snippet",
     ]
     return outlet_rows[[c for c in display_cols if c in outlet_rows.columns]].copy()
+
+
+def build_outlet_prompt_payload(
+    headline_df: pd.DataFrame,
+    primary_limit: int = DEFAULT_OUTLET_PRIMARY_EXAMPLE_LIMIT,
+    supporting_limit: int = DEFAULT_OUTLET_SUPPORTING_EVIDENCE_LIMIT,
+    selected_prominence_column: str = "",
+) -> dict[str, Any]:
+    if headline_df is None or headline_df.empty:
+        return {"primary_examples": [], "supporting_evidence": []}
+
+    working = _score_outlet_story_rows(
+        headline_df,
+        selected_prominence_column=selected_prominence_column,
+    )
+    ranked = (
+        working.sort_values(
+            ["_prompt_story_score", "Story Mentions", "Story Impressions", "Story Effective Reach"],
+            ascending=[False, False, False, False],
+        )
+        .drop_duplicates(subset=["Headline"], keep="first")
+        .copy()
+    )
+
+    primary_df = ranked.head(primary_limit).copy()
+    supporting_df = ranked.iloc[primary_limit:].head(supporting_limit).copy()
+
+    primary_examples = []
+    for _, row in primary_df.iterrows():
+        primary_examples.append(
+            {
+                "headline": row.get("Headline", ""),
+                "date": str(row.get("Date", "") or ""),
+                "author": row.get("Author", ""),
+                "type": row.get("Type", ""),
+                "mentions": int(row.get("Story Mentions", 0) or 0),
+                "impressions": int(row.get("Story Impressions", 0) or 0),
+                "effective_reach": int(row.get("Story Effective Reach", 0) or 0),
+                "url": row.get("Representative URL", ""),
+                "snippet": _truncate_text(row.get("Representative Snippet", ""), 320),
+            }
+        )
+
+    supporting_evidence = []
+    for _, row in supporting_df.iterrows():
+        supporting_evidence.append(
+            {
+                "headline": row.get("Headline", ""),
+                "date": str(row.get("Date", "") or ""),
+                "author": row.get("Author", ""),
+                "mentions": int(row.get("Story Mentions", 0) or 0),
+                "impressions": int(row.get("Story Impressions", 0) or 0),
+                "snippet": _truncate_text(row.get("Representative Snippet", ""), 200),
+            }
+        )
+
+    return {
+        "primary_examples": primary_examples,
+        "supporting_evidence": supporting_evidence,
+    }
 
 
 def build_outlet_top_authors(
@@ -593,18 +716,12 @@ def build_outlet_prompt(
     headline_df: pd.DataFrame,
     top_authors_df: pd.DataFrame,
     analysis_context: str = "",
+    selected_prominence_column: str = "",
 ) -> str:
-    story_json = []
-    for _, row in headline_df.drop_duplicates(subset=["Headline"]).head(6).iterrows():
-        story_json.append({
-            "headline": row.get("Headline", ""),
-            "date": str(row.get("Date", "") or ""),
-            "author": row.get("Author", ""),
-            "type": row.get("Type", ""),
-            "mentions": int(row.get("Story Mentions", 0) or 0),
-            "impressions": int(row.get("Story Impressions", 0) or 0),
-            "snippet": row.get("Representative Snippet", ""),
-        })
+    prompt_payload = build_outlet_prompt_payload(
+        headline_df,
+        selected_prominence_column=selected_prominence_column,
+    )
 
     top_authors = top_authors_df["Author"].dropna().astype(str).head(5).tolist() if not top_authors_df.empty else []
 
@@ -618,6 +735,7 @@ Requirements:
 - Write in English only, even if the source stories, outlet names, or example authors are in another language.
 - Keep it factual and report-ready.
 - Base the summary on the actual substance visible in the representative stories, especially their headlines and snippets.
+- Use the primary examples to anchor the clearest patterns, and use the supporting evidence to judge whether those patterns recur more broadly.
 - Assume the shared analysis focus above is already understood.
 - Do not repeat the outlet name in the response; it is already shown in the UI.
 - Start directly with the outlet's actual coverage role, topics, or framing style.
@@ -657,7 +775,7 @@ Unique mentions: {int(outlet_row.get("Unique_Mentions", 0) or 0)}
 Impressions: {int(outlet_row.get("Impressions", 0) or 0)}
 
 Representative stories:
-{json.dumps(story_json, ensure_ascii=True)}
+{json.dumps(prompt_payload, ensure_ascii=True)}
 """.strip()
 
 
@@ -670,6 +788,7 @@ def generate_outlet_summary(
     api_key: str,
     model: str = DEFAULT_OUTLET_SUMMARY_MODEL,
     analysis_context: str = "",
+    selected_prominence_column: str = "",
 ) -> tuple[str, int, int]:
     prompt = build_outlet_prompt(
         outlet_name,
@@ -678,6 +797,7 @@ def generate_outlet_summary(
         headline_df,
         top_authors_df,
         analysis_context=analysis_context,
+        selected_prominence_column=selected_prominence_column,
     )
     client = OpenAI(api_key=api_key)
 

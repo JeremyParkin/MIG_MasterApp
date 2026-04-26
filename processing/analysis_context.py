@@ -10,6 +10,11 @@ from typing import Any
 from openai import OpenAI
 import pandas as pd
 
+from processing.prominence import (
+    get_prominence_column_preview,
+    get_prominence_columns,
+    normalize_selected_prominence_column,
+)
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
@@ -581,14 +586,16 @@ def _clean_suggestion_items(items: list[dict[str, Any]] | None) -> list[dict[str
         if not isinstance(item, dict):
             continue
         name = str(item.get("name", "") or "").strip()
-        detail = str(item.get("detail", "") or "").strip()
         if not name:
             continue
         key = _match_key(name)
         if key in seen:
             continue
         seen.add(key)
-        out.append({"name": name, "detail": detail})
+        cleaned_item = {"name": name}
+        for field in ["detail", "role", "why_current", "source_title", "source_url"]:
+            cleaned_item[field] = str(item.get(field, "") or "").strip()
+        out.append(cleaned_item)
     return out
 
 
@@ -604,6 +611,146 @@ def _looks_like_person_name(value: str) -> bool:
     if alpha_chars == 0 or non_space_chars == 0:
         return False
     return alpha_chars / non_space_chars >= 0.7
+
+
+def _looks_like_current_spokesperson_item(item: dict[str, str]) -> bool:
+    name = str(item.get("name", "") or "").strip()
+    if not _looks_like_person_name(name):
+        return False
+
+    source_url = str(item.get("source_url", "") or "").strip()
+    role = str(item.get("role", "") or "").strip()
+    why_current = str(item.get("why_current", "") or "").strip()
+    if not source_url or not role or not why_current:
+        return False
+
+    combined = _match_key(" ".join([role, why_current, str(item.get("detail", "") or "")]))
+    stale_markers = [
+        "former",
+        "previous",
+        "departed",
+        "dismissed",
+        "resigned",
+        "stepped down",
+        "left nestle",
+        "left the company",
+        "ousted",
+        "interim",
+    ]
+    if any(marker in combined for marker in stale_markers):
+        return False
+
+    return True
+
+
+def _spokesperson_text(item: dict[str, str]) -> str:
+    return _match_key(
+        " ".join(
+            [
+                str(item.get("name", "") or ""),
+                str(item.get("role", "") or ""),
+                str(item.get("detail", "") or ""),
+                str(item.get("why_current", "") or ""),
+                str(item.get("source_title", "") or ""),
+            ]
+        )
+    )
+
+
+def _is_ceo_like_spokesperson(item: dict[str, str]) -> bool:
+    text = _spokesperson_text(item)
+    return any(
+        marker in text
+        for marker in [
+            "chief executive officer",
+            " ceo",
+            "ceo ",
+            "group ceo",
+        ]
+    )
+
+
+def _is_media_spokesperson_like(item: dict[str, str]) -> bool:
+    text = _spokesperson_text(item)
+    return any(
+        marker in text
+        for marker in [
+            "spokesperson",
+            "media relations",
+            "media relation",
+            "media contact",
+            "media inquiries",
+            "press contact",
+            "press office",
+            "corporate communications",
+            "communications",
+            "public affairs",
+            "corporate affairs",
+        ]
+    )
+
+
+def _is_chair_like_spokesperson(item: dict[str, str]) -> bool:
+    text = _spokesperson_text(item)
+    return any(
+        marker in text
+        for marker in [
+            "chair of the board",
+            "chairman",
+            "chairwoman",
+            "board chair",
+            "chair ",
+        ]
+    )
+
+
+def _is_governance_or_legal_spokesperson(item: dict[str, str]) -> bool:
+    text = _spokesperson_text(item)
+    return any(
+        marker in text
+        for marker in [
+            "general counsel",
+            "legal",
+            "governance",
+            "board",
+        ]
+    )
+
+
+def _prioritize_spokespeople(items: list[dict[str, str]]) -> list[dict[str, str]]:
+    cleaned = [item for item in _clean_suggestion_items(items) if _looks_like_current_spokesperson_item(item)]
+    if not cleaned:
+        return []
+
+    def dedupe(sequence: list[dict[str, str]]) -> list[dict[str, str]]:
+        seen: set[str] = set()
+        out: list[dict[str, str]] = []
+        for item in sequence:
+            key = _match_key(item.get("name", ""))
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(item)
+        return out
+
+    media_people = [item for item in cleaned if _is_media_spokesperson_like(item)]
+    ceo_people = [item for item in cleaned if _is_ceo_like_spokesperson(item)]
+    chair_people = [item for item in cleaned if _is_chair_like_spokesperson(item)]
+    general_people = [
+        item
+        for item in cleaned
+        if item not in media_people and item not in ceo_people and item not in chair_people and not _is_governance_or_legal_spokesperson(item)
+    ]
+    governance_people = [
+        item for item in cleaned if item not in chair_people and _is_governance_or_legal_spokesperson(item)
+    ]
+
+    if media_people:
+        ordered = dedupe(media_people[:2] + ceo_people[:1] + chair_people[:1] + general_people + governance_people)
+    else:
+        ordered = dedupe(ceo_people[:1] + chair_people[:1] + general_people + governance_people)
+
+    return ordered[:5]
 
 
 def _filter_alias_items(
@@ -674,6 +821,13 @@ def build_analysis_context_discovery_prompt(
         "- Use web search when needed to verify current, time-sensitive facts such as officeholders, executives, team principals, current mayors, or other leadership/spokespeople.\n"
         "- Prefer current official sources for people and leadership facts, such as official government pages, company newsroom/about/investor pages, official team sites, or similarly authoritative first-party sources.\n"
         "- If a current spokesperson or officeholder cannot be verified confidently from current sources, omit them rather than guessing.\n"
+        "- For companies, explicitly check official newsroom, media-contact, press-contact, and leadership pages before concluding that no named spokesperson or chair should be included.\n"
+        "- For corporate entities, always prioritize named official media-relations, press, communications, public-affairs, or corporate-affairs spokespeople when official current sources identify them.\n"
+        "- When official named spokesperson or media-contact people are available, include them first.\n"
+        "- Also include the current CEO if clearly central, and include the current chair / chair of the board when they are verified on current official leadership pages.\n"
+        "- Only add other executives after that, and only if they are especially likely to be quoted or central to coverage.\n"
+        "- Do not fill the list with generic executive-board members when named official spokesperson or media-contact people are available.\n"
+        "- Exclude former executives, former board leaders, recently departed leaders, or governance-only names unless they are still current official representatives and clearly media-relevant.\n"
         "- Prefer public-facing names that are likely to appear in media coverage.\n"
         "- Avoid duplicates of existing items.\n"
         "- If a category is weak or uncertain, keep it sparse and say so in the assessment.\n"
@@ -691,6 +845,9 @@ def build_analysis_context_discovery_prompt(
         "  Do not include broader place names, adjacent organizations, partner groups, destinations, departments, or generic language translations unless they are genuinely used as alternate labels for the same thing.\n"
         "- Key spokespeople: actual named people who are likely to be quoted or mentioned as representatives.\n"
         "  Do not include organizations, brands, destinations, ministries, agencies, offices, or unnamed roles by themselves.\n"
+        "  Use the person's current official title in the role field, and explain briefly why they are current and relevant.\n"
+        "  For companies, strong outputs often include one or two named official media/communications spokespeople, the current CEO, and the current chair when those people are verified from official current sources and likely to matter in coverage.\n"
+        "  Every spokesperson suggestion must include a current official source URL and source title.\n"
         "- Products / sub-brands / initiatives: named programs, campaigns, product lines, initiatives, or sub-brands directly tied to the client/topic.\n"
         "  Do not include unrelated organizations, umbrella industry groups, or broad place names unless they function as a real branded initiative.\n\n"
         "Bad bucket examples to avoid:\n"
@@ -701,6 +858,7 @@ def build_analysis_context_discovery_prompt(
         "- prefer fewer, higher-confidence items\n"
         "- for current people, verified and current beats plausible but stale\n"
         "- explain uncertainty in the assessment rather than padding the lists\n"
+        "- if you cannot verify a current spokesperson from an official current source, return no spokesperson for that slot\n"
     )
 
 
@@ -727,8 +885,10 @@ def generate_analysis_context_suggestions(
                     "properties": {
                         "name": {"type": "string"},
                         "detail": {"type": "string"},
+                        "source_title": {"type": "string"},
+                        "source_url": {"type": "string"},
                     },
-                    "required": ["name", "detail"],
+                    "required": ["name", "detail", "source_title", "source_url"],
                 },
             },
             "spokespeople": {
@@ -738,9 +898,13 @@ def generate_analysis_context_suggestions(
                     "additionalProperties": False,
                     "properties": {
                         "name": {"type": "string"},
+                        "role": {"type": "string"},
                         "detail": {"type": "string"},
+                        "why_current": {"type": "string"},
+                        "source_title": {"type": "string"},
+                        "source_url": {"type": "string"},
                     },
-                    "required": ["name", "detail"],
+                    "required": ["name", "role", "detail", "why_current", "source_title", "source_url"],
                 },
             },
             "products": {
@@ -751,8 +915,10 @@ def generate_analysis_context_suggestions(
                     "properties": {
                         "name": {"type": "string"},
                         "detail": {"type": "string"},
+                        "source_title": {"type": "string"},
+                        "source_url": {"type": "string"},
                     },
-                    "required": ["name", "detail"],
+                    "required": ["name", "detail", "source_title", "source_url"],
                 },
             },
         },
@@ -811,11 +977,7 @@ def generate_analysis_context_suggestions(
         client_name=client_name,
         primary_name=primary_name,
     )
-    cleaned_spokespeople = [
-        item
-        for item in _clean_suggestion_items(parsed.get("spokespeople", []))
-        if _looks_like_person_name(item["name"])
-    ]
+    cleaned_spokespeople = _prioritize_spokespeople(parsed.get("spokespeople", []))
     cleaned_products = _clean_suggestion_items(parsed.get("products", []))
 
     return {
@@ -839,7 +1001,7 @@ def apply_analysis_context_suggestions(session_state, suggestions: dict[str, Any
     spokesperson_names = [
         item["name"]
         for item in _clean_suggestion_items(suggestions.get("spokespeople", []))
-        if " " in item["name"].strip()
+        if _looks_like_current_spokesperson_item(item)
     ]
     product_names = [
         item["name"]
@@ -867,6 +1029,7 @@ def init_analysis_context_state(session_state) -> None:
     client_name = str(session_state.get("client_name", "") or "").strip()
     present_junky_flags = get_present_junky_coverage_flags(session_state.get("df_traditional"))
     present_media_types = get_present_media_types(session_state.get("df_traditional"))
+    present_prominence_columns = get_prominence_columns(session_state.get("df_traditional"))
     dataset_start, dataset_end = get_dataset_date_bounds(session_state.get("df_traditional"))
 
     primary_seed = []
@@ -920,6 +1083,13 @@ def init_analysis_context_state(session_state) -> None:
     session_state.setdefault("analysis_dataset_end_date", dataset_end.isoformat() if dataset_end else None)
     session_state.setdefault("analysis_dataset_media_types", present_media_types)
     session_state.setdefault("analysis_media_type_commentary_mode", DEFAULT_MEDIA_TYPE_COMMENTARY_MODE)
+    session_state.setdefault(
+        "analysis_selected_prominence_column",
+        normalize_selected_prominence_column(
+            session_state.get("analysis_selected_prominence_column", ""),
+            present_prominence_columns,
+        ),
+    )
     session_state.setdefault("analysis_qualitative_exclusion_keep_keys", [])
     session_state.setdefault("analysis_dataset_exclusion_keep_keys", [])
     if "analysis_qualitative_excluded_flags" not in session_state:
@@ -954,6 +1124,7 @@ def save_analysis_context(
     dataset_excluded_flags: list[str],
     exclude_aggregators_from_outlet_insights: bool,
     media_type_commentary_mode: str = DEFAULT_MEDIA_TYPE_COMMENTARY_MODE,
+    selected_prominence_column: str = "",
     dataset_start_date: date | None = None,
     dataset_end_date: date | None = None,
     dataset_media_types: list[str] | None = None,
@@ -985,6 +1156,10 @@ def save_analysis_context(
     session_state.analysis_dataset_end_date = _coerce_date_value(dataset_end_date).isoformat() if _coerce_date_value(dataset_end_date) else None
     session_state.analysis_dataset_media_types = _clean_list(dataset_media_types or [])
     session_state.analysis_exclude_aggregators_from_outlet_insights = bool(exclude_aggregators_from_outlet_insights)
+    session_state.analysis_selected_prominence_column = normalize_selected_prominence_column(
+        selected_prominence_column,
+        get_prominence_columns(session_state.get("df_traditional")),
+    )
     normalized_commentary_mode = str(media_type_commentary_mode or DEFAULT_MEDIA_TYPE_COMMENTARY_MODE).strip()
     if normalized_commentary_mode not in MEDIA_TYPE_COMMENTARY_OPTIONS:
         normalized_commentary_mode = DEFAULT_MEDIA_TYPE_COMMENTARY_MODE
@@ -1010,6 +1185,7 @@ def get_analysis_context_payload(session_state) -> dict[str, Any]:
     client_name = str(session_state.get("client_name", "") or "").strip()
     present_junky_flags = get_present_junky_coverage_flags(session_state.get("df_traditional"))
     present_media_types = get_present_media_types(session_state.get("df_traditional"))
+    present_prominence_columns = get_prominence_columns(session_state.get("df_traditional"))
     dataset_min_date, dataset_max_date = get_dataset_date_bounds(session_state.get("df_traditional"))
     primary_names = _clean_list(session_state.get("analysis_primary_names", []))
     if not primary_names and client_name:
@@ -1025,6 +1201,11 @@ def get_analysis_context_payload(session_state) -> dict[str, Any]:
         "guidance": str(session_state.get("analysis_guidance", "") or "").strip(),
         "available_junky_flags": present_junky_flags,
         "available_media_types": present_media_types,
+        "available_prominence_columns": present_prominence_columns,
+        "prominence_column_preview": get_prominence_column_preview(
+            session_state.get("df_traditional"),
+            columns=present_prominence_columns,
+        ),
         "dataset_min_date": dataset_min_date,
         "dataset_max_date": dataset_max_date,
         "dataset_start_date": _coerce_date_value(session_state.get("analysis_dataset_start_date")) or dataset_min_date,
@@ -1049,6 +1230,10 @@ def get_analysis_context_payload(session_state) -> dict[str, Any]:
             session_state.get("analysis_media_type_commentary_mode", DEFAULT_MEDIA_TYPE_COMMENTARY_MODE)
             if session_state.get("analysis_media_type_commentary_mode", DEFAULT_MEDIA_TYPE_COMMENTARY_MODE) in MEDIA_TYPE_COMMENTARY_OPTIONS
             else DEFAULT_MEDIA_TYPE_COMMENTARY_MODE
+        ),
+        "selected_prominence_column": normalize_selected_prominence_column(
+            session_state.get("analysis_selected_prominence_column", ""),
+            present_prominence_columns,
         ),
         "outlet_insight_excluded_flags": get_outlet_insight_coverage_flag_exclusions(session_state),
         "qualitative_exclusion_keep_keys": _clean_list(session_state.get("analysis_qualitative_exclusion_keep_keys", [])),
@@ -1101,6 +1286,11 @@ def build_analysis_context_text(session_state) -> str:
         lines.append(f"Data scope ends: {payload['dataset_end_date'].isoformat()}")
     if payload["dataset_media_types"]:
         lines.append("Data scope media types: " + "; ".join(payload["dataset_media_types"]))
+    if payload["selected_prominence_column"]:
+        lines.append(
+            "Prominence weighting: favor stories with stronger relevance in "
+            + payload["selected_prominence_column"]
+        )
     if payload["exclude_aggregators_from_outlet_insights"]:
         lines.append("Outlet insights rule: exclude Aggregator coverage from outlet charts and narrative")
     if payload["media_type_commentary_mode"] == "Emphasize":
@@ -1132,6 +1322,8 @@ def build_analysis_context_caption(session_state) -> str:
         parts.append(f"Media types: {len(payload['dataset_media_types'])}")
     if payload["dataset_start_date"] or payload["dataset_end_date"]:
         parts.append("Data scope date range set")
+    if payload["selected_prominence_column"]:
+        parts.append(f"Prominence: {payload['selected_prominence_column']}")
     if payload["exclude_aggregators_from_outlet_insights"]:
         parts.append("Aggregators excluded from Outlet insights")
     if payload["media_type_commentary_mode"] != DEFAULT_MEDIA_TYPE_COMMENTARY_MODE:
