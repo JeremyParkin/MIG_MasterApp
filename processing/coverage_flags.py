@@ -116,6 +116,9 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
 
     df["Snippet_Limited"] = df["Snippet"].apply(extract_relevant_text)
 
+    headline_series = df["Headline"].fillna("").astype(str)
+    outlet_series = df["Outlet"].fillna("").astype(str)
+
     newswire_mask = df["Snippet_Limited"].str.contains(
         "|".join(re.escape(phrase) for phrase in newswire_phrases),
         case=False,
@@ -127,6 +130,12 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
 
     newswire_mask = (
         newswire_mask
+        | outlet_series.str.contains(
+            "|".join(re.escape(phrase) for phrase in newswire_phrases),
+            case=False,
+            na=False,
+            regex=True,
+        )
         | df["Outlet"].str.contains("EurekAlert", case=False, na=False)
         | df["URL"].str.contains(r"/pr\.|news-release|press-release|newswise\.com", case=False, na=False, regex=True)
         | df["Author"].str.contains(newswire_author_pattern, case=False, na=False, regex=True)
@@ -158,24 +167,26 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
 
     df.drop(columns=["Snippet_Limited"], inplace=True, errors="ignore")
 
-    financial_outlet_mask = df["Outlet"].str.contains(
+    financial_outlet_mask = outlet_series.str.contains(
         "|".join(re.escape(phrase) for phrase in stock_moves_phrases),
         case=False,
         na=False,
         regex=True,
     )
-    market_report_mask = (
-        df["Headline"].str.contains(r"\bglobal\b", case=False, na=False, regex=True)
-        & df["Headline"].str.contains(r"\bmarket\b", case=False, na=False, regex=True)
+    market_report_mask = headline_series.str.contains(r"\bmarket\b", case=False, na=False, regex=True) & (
+        headline_series.str.contains(r"\bglobal\b", case=False, na=False, regex=True)
+        | headline_series.str.contains(r"\b20\d{2}\b", case=False, na=False, regex=True)
     )
 
-    reputable_outlet_mask = df["Outlet"].str.contains(
-        "|".join(map(re.escape, outlet_names)),
+    reputable_outlet_pattern = r"(?<!\w)(?:%s)(?!\w)" % "|".join(map(re.escape, outlet_names))
+    reputable_outlet_mask = outlet_series.str.contains(
+        reputable_outlet_pattern,
         case=False,
         na=False,
+        regex=True,
     )
 
-    aggregator_mask = df["Outlet"].str.contains(
+    aggregator_mask = outlet_series.str.contains(
         "|".join(re.escape(name) for name in aggregators_list),
         case=False,
         na=False,
@@ -189,10 +200,10 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
         regex=True,
     )
 
-    df.loc[newswire_mask, "Newswire Flag"] = "Press Release"
-    df.loc[~newswire_mask & market_report_mask, "Market Report Flag"] = "Market Report Spam"
+    df.loc[market_report_mask, "Market Report Flag"] = "Market Report Spam"
+    df.loc[newswire_mask & ~market_report_mask, "Newswire Flag"] = "Press Release"
     df.loc[~newswire_mask & ~market_report_mask & financial_outlet_mask, "Financial Outlet Flag"] = "Financial Outlet"
-    df.loc[~newswire_mask & advertorial_mask, "Advertorial Flag"] = "Advertorial"
+    df.loc[~newswire_mask & ~market_report_mask & advertorial_mask, "Advertorial Flag"] = "Advertorial"
     # Disabled for now: snippet-only advertorial hints are too noisy to surface as a live flag.
     # df.loc[~newswire_mask & ~advertorial_mask & possible_advertorial_mask, "Possible Advertorial Flag"] = "Possible Advertorial?"
     df.loc[aggregator_mask, "Aggregator Flag"] = "Aggregator"
@@ -204,7 +215,9 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
     ] = "Good Outlet"
 
     def combine_flags(row):
-        if row.get("Newswire Flag"):
+        if row.get("Market Report Flag"):
+            return row["Market Report Flag"]
+        elif row.get("Newswire Flag"):
             return row["Newswire Flag"]
         elif row.get("Advertorial Flag"):
             return row["Advertorial Flag"]
@@ -216,8 +229,6 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
             return row["Aggregator Flag"]
         elif row.get("User-Generated Flag"):
             return row["User-Generated Flag"]
-        elif row.get("Market Report Flag"):
-            return row["Market Report Flag"]
         elif row.get("Financial Outlet Flag"):
             return row["Financial Outlet Flag"]
         return ""
