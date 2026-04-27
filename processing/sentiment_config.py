@@ -451,6 +451,9 @@ def build_sentiment_configuration(
         "- Straight factual coverage is Neutral.",
         "- Passing mentions without a strong stance are generally Neutral.",
         "- Brief/Passing Mentions: If the collective entity appears only briefly in a longer story without explicit praise/criticism or clear attribution of outcomes to the entity, default to NEUTRAL.",
+        "- Judge sentiment toward the collective entity itself, not toward the broader topic, event, market condition, social problem, or historic issue being discussed.",
+        "- Negative subject matter does not automatically mean negative sentiment toward the collective entity.",
+        "- If the entity is acting in a normal, appropriate, or expected role - such as researching, forecasting, warning, hosting, teaching, commemorating, reporting, or responding - that is usually Neutral unless the coverage clearly criticizes or praises how the entity did it.",
         "",
         "Carry-over / Attribution Rules (collective entity):",
         f"1) When a spokesperson acts explicitly for {named_entity}, attribute their stance to the entity.",
@@ -485,6 +488,12 @@ CRITERIA:
 - NEUTRAL: Factual/balanced coverage with no clear stance on the collective entity.
 - NEGATIVE: Criticism, unfavorable framing, or negative outcomes attributed to the collective entity.
 - NOT RELEVANT: The collective entity (as defined) is not present.
+
+DECISION RULES:
+- Judge sentiment toward the collective entity itself, not toward the broader topic or issue.
+- If the story mainly reports the entity's statements, research, forecast, event, or public-service activity without judging the entity, label NEUTRAL.
+- Use NEGATIVE only when the coverage portrays the collective entity itself unfavorably through blame, criticism, failure, wrongdoing, poor judgment, harm, scandal, hypocrisy, incompetence, or reputational damage.
+- Do not justify NEGATIVE merely because the story discusses decline, crisis, violence, tragedy, conflict, or other bad outcomes affecting the broader topic.
 
 OUTPUT:
 - Provide the UPPERCASE label, a confidence (0–100), and a 1–2 sentence explanation focused on the collective entity.
@@ -522,6 +531,12 @@ CRITERIA:
 - SOMEWHAT NEGATIVE: Mild criticism or limited negative impact.
 - VERY NEGATIVE: Strong criticism or substantial negative impact attributed to the collective entity.
 - NOT RELEVANT: The collective entity (as defined) is not present.
+
+DECISION RULES:
+- Judge sentiment toward the collective entity itself, not toward the broader topic or issue.
+- If the story mainly reports the entity's statements, research, forecast, event, or public-service activity without judging the entity, label NEUTRAL.
+- Use SOMEWHAT NEGATIVE or VERY NEGATIVE only when the coverage portrays the collective entity itself unfavorably through blame, criticism, failure, wrongdoing, poor judgment, harm, scandal, hypocrisy, incompetence, or reputational damage.
+- Do not justify a negative label merely because the story discusses decline, crisis, violence, tragedy, conflict, or other bad outcomes affecting the broader topic.
 
 OUTPUT:
 - Provide the UPPERCASE label, a confidence (0–100), and a 1–2 sentence explanation focused on the collective entity.

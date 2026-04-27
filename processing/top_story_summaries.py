@@ -210,6 +210,16 @@ entity_sentiment_rationale:
 - Focus on what the coverage says or does regarding the entity.
 - Use concrete signals.
 
+ENTITY-SENTIMENT DECISION RULES
+- Judge sentiment toward the primary entity, not toward the broader topic, event, market condition, social problem, or historic issue being discussed.
+- Negative subject matter does not automatically mean negative sentiment toward the entity.
+- If the entity is acting in a normal, appropriate, or expected role - such as researching, forecasting, warning, hosting, teaching, commemorating, reporting, or responding - that is usually Neutral unless the coverage clearly criticizes or praises how the entity did it.
+- Use Negative only when the coverage portrays the entity itself unfavorably through blame, criticism, failure, wrongdoing, poor judgment, harm, scandal, hypocrisy, incompetence, or reputational damage.
+- Use Positive only when the coverage clearly credits, praises, or endorses the entity itself.
+- If the story mainly reports the entity's statements, research, forecast, event, or public-service activity without judging the entity, label it Neutral.
+- The rationale must describe how the coverage treats the entity itself.
+- Do not justify Negative merely because the story contains decline, crisis, violence, tragedy, conflict, or other bad outcomes affecting the broader topic.
+
 STORY INPUT
 Headline: {headline}
 Outlet: {outlet}
