@@ -1065,10 +1065,15 @@ def init_analysis_context_state(session_state) -> None:
         session_state.get("analysis_highlight_keywords")
         or []
     )
-    guidance_seed = str(
-        session_state.get("analysis_guidance")
+    guidance_general_seed = str(
+        session_state.get("analysis_guidance_general")
+        or session_state.get("analysis_guidance")
         or session_state.get("ui_toning_rationale")
         or session_state.get("top_story_guidance")
+        or ""
+    ).strip()
+    guidance_sentiment_seed = str(
+        session_state.get("analysis_guidance_sentiment")
         or ""
     ).strip()
 
@@ -1077,7 +1082,9 @@ def init_analysis_context_state(session_state) -> None:
     session_state.setdefault("analysis_spokespeople", spokes_seed)
     session_state.setdefault("analysis_products", products_seed)
     session_state.setdefault("analysis_highlight_keywords", highlight_keywords_seed)
-    session_state.setdefault("analysis_guidance", guidance_seed)
+    session_state.setdefault("analysis_guidance_general", guidance_general_seed)
+    session_state.setdefault("analysis_guidance_sentiment", guidance_sentiment_seed)
+    session_state.setdefault("analysis_guidance", guidance_general_seed)
     session_state.setdefault("analysis_exclude_aggregators_from_outlet_insights", True)
     session_state.setdefault("analysis_dataset_start_date", dataset_start.isoformat() if dataset_start else None)
     session_state.setdefault("analysis_dataset_end_date", dataset_end.isoformat() if dataset_end else None)
@@ -1119,7 +1126,8 @@ def save_analysis_context(
     spokespeople: list[str],
     products: list[str],
     highlight_keywords: list[str],
-    guidance: str,
+    general_guidance: str,
+    sentiment_guidance: str,
     qualitative_excluded_flags: list[str],
     dataset_excluded_flags: list[str],
     exclude_aggregators_from_outlet_insights: bool,
@@ -1137,7 +1145,8 @@ def save_analysis_context(
     spokespeople = _clean_list(spokespeople)
     products = _clean_list(products)
     highlight_keywords = _clean_list(highlight_keywords)
-    guidance = str(guidance or "").strip()
+    general_guidance = str(general_guidance or "").strip()
+    sentiment_guidance = str(sentiment_guidance or "").strip()
 
     session_state.client_name = client_name
     session_state.analysis_primary_names = primary_names
@@ -1145,7 +1154,9 @@ def save_analysis_context(
     session_state.analysis_spokespeople = spokespeople
     session_state.analysis_products = products
     session_state.analysis_highlight_keywords = highlight_keywords
-    session_state.analysis_guidance = guidance
+    session_state.analysis_guidance_general = general_guidance
+    session_state.analysis_guidance_sentiment = sentiment_guidance
+    session_state.analysis_guidance = general_guidance
     session_state.analysis_qualitative_excluded_flags = [
         flag for flag in _clean_list(qualitative_excluded_flags) if flag in AVAILABLE_JUNKY_COVERAGE_FLAGS
     ]
@@ -1172,12 +1183,12 @@ def save_analysis_context(
     session_state.ui_alternate_names = list(alternate_names)
     session_state.ui_spokespeople = list(spokespeople)
     session_state.ui_products = list(products)
-    session_state.ui_toning_rationale = guidance
+    session_state.ui_toning_rationale = general_guidance
 
     session_state.top_story_entity_names = list(primary_names + alternate_names)
     session_state.top_story_spokespeople = list(spokespeople)
     session_state.top_story_products = list(products)
-    session_state.top_story_guidance = guidance
+    session_state.top_story_guidance = general_guidance
 
 
 def get_analysis_context_payload(session_state) -> dict[str, Any]:
@@ -1191,6 +1202,13 @@ def get_analysis_context_payload(session_state) -> dict[str, Any]:
     if not primary_names and client_name:
         primary_names = [client_name]
 
+    general_guidance = str(
+        session_state.get("analysis_guidance_general")
+        or session_state.get("analysis_guidance")
+        or ""
+    ).strip()
+    sentiment_guidance = str(session_state.get("analysis_guidance_sentiment", "") or "").strip()
+
     return {
         "client_name": client_name,
         "primary_name": primary_names[0] if primary_names else "",
@@ -1198,7 +1216,9 @@ def get_analysis_context_payload(session_state) -> dict[str, Any]:
         "spokespeople": _clean_list(session_state.get("analysis_spokespeople", [])),
         "products": _clean_list(session_state.get("analysis_products", [])),
         "highlight_keywords": _clean_list(session_state.get("analysis_highlight_keywords", [])),
-        "guidance": str(session_state.get("analysis_guidance", "") or "").strip(),
+        "general_guidance": general_guidance,
+        "sentiment_guidance": sentiment_guidance,
+        "guidance": general_guidance,
         "available_junky_flags": present_junky_flags,
         "available_media_types": present_media_types,
         "available_prominence_columns": present_prominence_columns,
@@ -1255,8 +1275,8 @@ def build_analysis_context_text(session_state) -> str:
         lines.append("Key spokespeople: " + "; ".join(payload["spokespeople"]))
     if payload["products"]:
         lines.append("Products / sub-brands / initiatives: " + "; ".join(payload["products"]))
-    if payload["guidance"]:
-        lines.append("Additional analytical guidance: " + payload["guidance"])
+    if payload["general_guidance"]:
+        lines.append("Shared analysis guidance: " + payload["general_guidance"])
     if payload["qualitative_excluded_flags"]:
         lines.append(
             "Coverage flag rule for qualitative workflows: exclude "
@@ -1298,6 +1318,22 @@ def build_analysis_context_text(session_state) -> str:
     elif payload["media_type_commentary_mode"] == "De-emphasize":
         lines.append("Media-type commentary: de-emphasize media-type mix unless it is unusually important")
 
+    return "\n".join(lines).strip()
+
+
+def build_sentiment_analysis_context_text(session_state) -> str:
+    payload = get_analysis_context_payload(session_state)
+    general_guidance = str(payload.get("general_guidance", "") or "").strip()
+    sentiment_guidance = str(payload.get("sentiment_guidance", "") or "").strip()
+
+    base_text = build_analysis_context_text(session_state)
+    lines: list[str] = []
+    if base_text:
+        lines.append(base_text)
+    if sentiment_guidance:
+        lines.append("Sentiment-specific guidance: " + sentiment_guidance)
+    if general_guidance and not base_text:
+        lines.append("Shared analysis guidance: " + general_guidance)
     return "\n".join(lines).strip()
 
 

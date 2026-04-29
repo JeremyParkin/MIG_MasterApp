@@ -392,7 +392,8 @@ def build_sentiment_configuration(
     spokespeople: list[str],
     products: list[str],
     highlight_keywords: list[str] | None,
-    toning_rationale: str,
+    shared_guidance: str,
+    sentiment_guidance: str,
     sentiment_type: str,
     model: str,
 ) -> None:
@@ -400,7 +401,12 @@ def build_sentiment_configuration(
     session_state.ui_alternate_names = _clean_list(alternate_names)
     session_state.ui_spokespeople = _clean_list(spokespeople)
     session_state.ui_products = _clean_list(products)
-    session_state.ui_toning_rationale = toning_rationale or ""
+    combined_guidance_parts = [
+        str(shared_guidance or "").strip(),
+        str(sentiment_guidance or "").strip(),
+    ]
+    combined_guidance = "\n\n".join([part for part in combined_guidance_parts if part])
+    session_state.ui_toning_rationale = combined_guidance
     session_state.ui_sentiment_type = sentiment_type
     session_state.sentiment_type = sentiment_type
     session_state.model_choice = model
@@ -409,7 +415,8 @@ def build_sentiment_configuration(
     aliases = session_state.ui_alternate_names
     spokes = session_state.ui_spokespeople
     prods = session_state.ui_products
-    rationale_str = session_state.ui_toning_rationale.strip() if session_state.ui_toning_rationale else None
+    shared_guidance_str = str(shared_guidance or "").strip() or None
+    sentiment_guidance_str = str(sentiment_guidance or "").strip() or None
 
     display_keywords = list(session_state.ui_primary_names) + aliases + spokes + prods + _clean_list(highlight_keywords or [])
     seen_cf, deduped_display = set(), []
@@ -466,12 +473,21 @@ def build_sentiment_configuration(
         "- Prefer explicit attributions, direct quotes, headlines, and framing to infer stance.",
     ]
 
-    if rationale_str:
+    if shared_guidance_str:
         context_lines += [
             "",
-            "Analyst Guidance — PRIORITY (overrides defaults in gray areas):",
-            f"- {rationale_str}",
-            "If this guidance changes the default outcome, follow it and reflect that in your explanation.",
+            "Shared analysis guidance:",
+            f"- {shared_guidance_str}",
+            "Use this guidance to shape interpretation when it is relevant to the coverage and entity.",
+        ]
+
+    if sentiment_guidance_str:
+        context_lines += [
+            "",
+            "Sentiment-specific guidance — HIGH PRIORITY workflow rule:",
+            f"- {sentiment_guidance_str}",
+            "Apply this guidance whenever it is relevant to the story and entity, not only in gray areas.",
+            "If it conflicts with default heuristics, tie-breakers, or label tendencies, follow this workflow-specific guidance and reflect that in your explanation.",
         ]
 
     session_state.post_prompt = "\n".join(context_lines).strip()

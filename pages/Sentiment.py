@@ -14,7 +14,7 @@ from ui.insight_blocks import build_linked_example_blocks_html
 
 from processing.analysis_context import (
     apply_session_coverage_flag_policy,
-    build_analysis_context_text,
+    build_sentiment_analysis_context_text,
     build_analysis_context_caption,
     format_qualitative_exclusion_caption,
     get_qualitative_coverage_flag_exclusions,
@@ -386,8 +386,10 @@ if st.session_state.sentiment_section == "Setup":
     primary_names = [analysis_payload["primary_name"].strip()] if analysis_payload["primary_name"].strip() else []
 
     st.divider()
-    if analysis_payload["guidance"]:
-        st.caption(f"Shared guidance: {analysis_payload['guidance']}")
+    if analysis_payload.get("general_guidance"):
+        st.caption(f"Shared guidance: {analysis_payload['general_guidance']}")
+    if analysis_payload.get("sentiment_guidance"):
+        st.caption(f"Sentiment-specific guidance: {analysis_payload['sentiment_guidance']}")
 
     prep_clicked = st.button("Prepare Sentiment Dataset", type="primary")
 
@@ -433,7 +435,8 @@ if st.session_state.sentiment_section == "Setup":
             spokespeople=analysis_payload["spokespeople"],
             products=analysis_payload["products"],
             highlight_keywords=analysis_payload.get("highlight_keywords", []),
-            toning_rationale=analysis_payload["guidance"],
+            shared_guidance=analysis_payload.get("general_guidance", analysis_payload["guidance"]),
+            sentiment_guidance=analysis_payload.get("sentiment_guidance", ""),
             sentiment_type=sentiment_type,
             model=model,
         )
@@ -714,7 +717,7 @@ with generate_obs_col1:
                     include_not_relevant=include_not_relevant_final,
                     api_key=st.secrets["key"],
                     model=DEFAULT_SENTIMENT_OBSERVATION_MODEL,
-                    analysis_context=build_analysis_context_text(st.session_state),
+                    analysis_context=build_sentiment_analysis_context_text(st.session_state),
                     selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
                 )
                 st.session_state.sentiment_observation_output = obs_output

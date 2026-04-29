@@ -99,7 +99,8 @@ if "analysis_context_draft_initialized" not in st.session_state:
     st.session_state.analysis_context_draft_spokespeople = list(payload["spokespeople"])
     st.session_state.analysis_context_draft_products = list(payload["products"])
     st.session_state.analysis_context_draft_highlight_keywords = list(payload.get("highlight_keywords", []))
-    st.session_state.analysis_context_draft_guidance = payload["guidance"]
+    st.session_state.analysis_context_draft_general_guidance = payload.get("general_guidance", payload["guidance"])
+    st.session_state.analysis_context_draft_sentiment_guidance = payload.get("sentiment_guidance", "")
     st.session_state.analysis_context_draft_exclude_aggregators = payload["exclude_aggregators_from_outlet_insights"]
     st.session_state.analysis_context_draft_media_type_commentary_mode = payload.get("media_type_commentary_mode", "Auto")
     st.session_state.analysis_context_draft_selected_prominence_column = payload.get("selected_prominence_column", "")
@@ -116,6 +117,14 @@ if "analysis_context_draft_initialized" not in st.session_state:
 st.session_state.setdefault(
     "analysis_context_draft_highlight_keywords",
     list(payload.get("highlight_keywords", [])),
+)
+st.session_state.setdefault(
+    "analysis_context_draft_general_guidance",
+    payload.get("general_guidance", payload["guidance"]),
+)
+st.session_state.setdefault(
+    "analysis_context_draft_sentiment_guidance",
+    payload.get("sentiment_guidance", ""),
 )
 st.session_state.setdefault(
     "analysis_context_draft_media_type_commentary_mode",
@@ -222,7 +231,7 @@ with st.container(border=True):
                             alternate_names=st.session_state.analysis_context_draft_alternate_names,
                             spokespeople=st.session_state.analysis_context_draft_spokespeople,
                             products=st.session_state.analysis_context_draft_products,
-                            guidance=st.session_state.analysis_context_draft_guidance,
+                            guidance=st.session_state.analysis_context_draft_general_guidance,
                             api_key=st.secrets["key"],
                             model=analysis_context.DEFAULT_ANALYSIS_CONTEXT_MODEL,
                         )
@@ -238,7 +247,8 @@ with st.container(border=True):
                 st.session_state.analysis_context_draft_spokespeople = []
                 st.session_state.analysis_context_draft_products = []
                 st.session_state.analysis_context_draft_highlight_keywords = []
-                st.session_state.analysis_context_draft_guidance = ""
+                st.session_state.analysis_context_draft_general_guidance = ""
+                st.session_state.analysis_context_draft_sentiment_guidance = ""
                 st.session_state.analysis_context_suggestion_payload = None
                 st.session_state.analysis_context_tag_widget_version += 1
                 st.rerun()
@@ -308,14 +318,23 @@ with st.container(border=True):
             )
 
     with st.container(border=True):
-        st.markdown("**Prompt shaping**")
-        st.caption("Add optional analytical framing that should shape how downstream AI outputs interpret the coverage.")
-        guidance = st.text_area(
-            "Additional rationale, context, or guidance (optional)",
-            key="analysis_context_draft_guidance",
-            height=110,
-            help="Use this for analytical framing, nuances, or focus that should shape AI-generated summaries and observations.",
-        )
+        st.markdown("**Analytical guidance**")
+        st.caption("Add optional framing for downstream AI outputs. Use shared guidance for broad interpretation, and sentiment-specific guidance for label-decision nuances that should stay inside Sentiment.")
+        guidance_col1, guidance_col2 = st.columns(2, gap="medium")
+        with guidance_col1:
+            general_guidance = st.text_area(
+                "Shared analysis guidance (optional)",
+                key="analysis_context_draft_general_guidance",
+                height=130,
+                help="Use this for analytical framing, nuances, or focus that should shape AI-generated summaries and observations across the app.",
+            )
+        with guidance_col2:
+            sentiment_guidance = st.text_area(
+                "Sentiment-specific guidance (optional)",
+                key="analysis_context_draft_sentiment_guidance",
+                height=130,
+                help="Use this for sentiment interpretation or label-decision guidance that should apply only inside the Sentiment workflow.",
+            )
 
     st.session_state.analysis_context_draft_alternate_names = alternate_names
     st.session_state.analysis_context_draft_spokespeople = spokespeople
@@ -576,7 +595,8 @@ with save_col:
             spokespeople=spokespeople,
             products=products,
             highlight_keywords=highlight_keywords,
-            guidance=guidance,
+            general_guidance=general_guidance,
+            sentiment_guidance=sentiment_guidance,
             qualitative_excluded_flags=qualitative_excluded_flags,
             dataset_excluded_flags=dataset_excluded_flags,
             exclude_aggregators_from_outlet_insights=exclude_aggregators_from_outlet_insights,
