@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 import importlib
 
 import streamlit as st
@@ -8,6 +7,7 @@ from streamlit_tags import st_tags
 
 import processing.analysis_context as analysis_context
 from ui.page_help import set_page_help_context
+from utils.time_display import format_local_timestamp
 
 analysis_context = importlib.reload(analysis_context)
 set_page_help_context(st.session_state, "Analysis Context")
@@ -608,7 +608,7 @@ with save_col:
             qualitative_exclusion_keep_keys=qualitative_exclusion_keep_keys,
             dataset_exclusion_keep_keys=dataset_exclusion_keep_keys,
         )
-        saved_at = datetime.now().astimezone().strftime("%b %-d, %Y at %-I:%M %p")
+        saved_at = format_local_timestamp()
         st.session_state.analysis_context_save_message = f"Saved {saved_at}"
 
 with save_status_col:

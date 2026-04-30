@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_mode: str | None = None) -> None:
-    from datetime import datetime
-
     import streamlit as st
     if embedded_review is not None:
         st.session_state["sentiment_review_embedded"] = embedded_review
@@ -40,6 +38,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         estimate_cost_usd,
         get_api_cost_usd,
     )
+    from utils.time_display import format_local_timestamp
     
     warnings.filterwarnings("ignore")
     
@@ -465,7 +464,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
                         "elapsed": 0.0,
                         "errors": batch_errors,
                     }
-                    completed_at = datetime.now().astimezone().strftime("%b %-d, %Y at %-I:%M %p")
+                    completed_at = format_local_timestamp()
                     st.session_state.spotcheck_pre_review_message = (
                         f"AI pre-review batch completed {completed_at}. Review counts updated below."
                     )

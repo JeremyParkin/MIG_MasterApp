@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import warnings
 
-import pandas as pd
 import streamlit as st
 from ui.page_help import set_page_help_context
+from utils.time_display import format_local_timestamp
 
 from processing.download_exports import (
     build_clean_workbook_bytes,
@@ -35,7 +35,7 @@ if build_xlsx:
     try:
         with st.spinner("Building workbook now..."):
             st.session_state.clean_excel_bytes = build_clean_workbook_bytes(st.session_state)
-            st.session_state.clean_excel_built_at = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+            st.session_state.clean_excel_built_at = format_local_timestamp()
             action_word = "rebuilt" if had_clean_workbook else "built"
             st.success(f"Cleaned workbook {action_word} at {st.session_state.clean_excel_built_at}")
     except Exception as e:
@@ -68,7 +68,7 @@ if build_report_copy:
     try:
         with st.spinner("Building report copy document..."):
             st.session_state.report_copy_docx_bytes = build_report_copy_docx_bytes(st.session_state)
-            st.session_state.report_copy_built_at = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+            st.session_state.report_copy_built_at = format_local_timestamp()
             action_word = "rebuilt" if had_report_copy else "built"
             st.success(f"Report copy document {action_word} at {st.session_state.report_copy_built_at}")
     except Exception as e:
@@ -113,7 +113,7 @@ if build_nlm:
             )
         st.session_state.notebooklm_zip_bytes = nlm_zip_io.getvalue()
         st.session_state.notebooklm_info = nlm_info
-        st.session_state.notebooklm_built_at = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+        st.session_state.notebooklm_built_at = format_local_timestamp()
         action_word = "rebuilt" if had_notebooklm_bundle else "built"
         st.success(f"NotebookLM bundle {action_word} at {st.session_state.notebooklm_built_at}")
     except ValueError as e:

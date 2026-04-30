@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import math
 import re
-from datetime import datetime
 from typing import Literal
 
 import pandas as pd
 from processing.coverage_flags import has_coverage_flag, split_coverage_flags
+from utils.time_display import format_local_timestamp
 
 
 SampleMode = Literal["full", "representative", "custom", "reuse_other_sample"]
@@ -585,7 +585,7 @@ OUTPUT:
         }]
 
     session_state.toning_config_step = True
-    session_state.last_saved = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    session_state.last_saved = format_local_timestamp()
 
 
 def reset_sentiment_config_state(session_state) -> None:

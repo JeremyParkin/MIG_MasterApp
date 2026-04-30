@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-from datetime import datetime
 from typing import Any
 
 import pandas as pd
@@ -27,6 +26,7 @@ from processing.regions import (
     filter_regions_df,
 )
 from processing.top_story_summaries import normalize_summary_df
+from utils.time_display import format_local_timestamp
 
 
 # ---------- Core helpers ----------
@@ -941,7 +941,7 @@ def build_export_metadata_sheet(
     sentiment_sample_rows = shared_sample_rows if sentiment_sample_sheet == "SAMPLED AI RESULTS" else len(build_sentiment_sample_export(session_state))
 
     rows = [
-        ("Export Timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("Export Timestamp", format_local_timestamp()),
         ("Export Name", session_state.get("export_name", "")),
         ("Client Name", session_state.get("client_name", "")),
         ("Original Rows", original_rows),
@@ -1412,7 +1412,7 @@ def build_report_copy_docx_bytes(session_state) -> bytes:
     document.add_heading("Report Copy", level=0)
     client_name = _safe_string(session_state.get("client_name", "")) or "Client"
     document.add_paragraph(f"{client_name} report copy export")
-    document.add_paragraph(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    document.add_paragraph(format_local_timestamp())
 
     has_content = False
 

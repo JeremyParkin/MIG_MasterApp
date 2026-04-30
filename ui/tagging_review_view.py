@@ -2,8 +2,6 @@ from __future__ import annotations
 
 
 def render_tagging_review_page(*, review_stage: str) -> None:
-    from datetime import datetime
-
     import pandas as pd
     import streamlit as st
 
@@ -29,6 +27,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         apply_translation_to_group,
     )
     from utils.api_meter import apply_usage_to_session
+    from utils.time_display import format_local_timestamp
 
     def sync_tagging_state(unique_df: pd.DataFrame, rows_df: pd.DataFrame) -> None:
         st.session_state.df_tagging_unique = unique_df
@@ -128,7 +127,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
                     )
                 sync_tagging_state(unique2, rows2)
                 apply_usage_to_session(total_in, total_out, DEFAULT_TAGGING_REVIEW_MODEL)
-                completed_at = datetime.now().astimezone().strftime("%b %-d, %Y at %-I:%M %p")
+                completed_at = format_local_timestamp()
                 st.session_state.tagging_pre_review_message = (
                     f"AI pre-review batch completed {completed_at}. Review counts updated below."
                 )

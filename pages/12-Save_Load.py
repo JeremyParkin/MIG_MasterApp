@@ -1,13 +1,17 @@
 # 12-Save_Load.py
 from __future__ import annotations
 
-from datetime import datetime
 import io
 
 import dill
 import pandas as pd
 import streamlit as st
 from ui.page_help import set_page_help_context
+from utils.time_display import (
+    current_timestamp_filename_string,
+    current_timestamp_storage_string,
+    format_local_timestamp,
+)
 
 SNAPSHOT_VERSION = 2
 EXCLUDED_SESSION_KEYS = {
@@ -40,7 +44,7 @@ def _discover_dataframe_keys() -> list[str]:
 def _build_serializable_session_payload() -> tuple[dict, list[str]]:
     payload: dict = {
         "_snapshot_version": SNAPSHOT_VERSION,
-        "_saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "_saved_at": current_timestamp_storage_string(),
     }
     skipped: list[str] = []
 
@@ -125,7 +129,7 @@ else:
     st.info("Save your current processing session as a .pkl file.")
 
     payload, skipped_keys = _build_serializable_session_payload()
-    dt_string = datetime.now().strftime("%Y-%m-%d-%H-%M")
+    dt_string = current_timestamp_filename_string()
     client_name = st.session_state.get("client_name", "session").strip() or "session"
     file_name = f"{client_name} - {dt_string}.pkl"
 
@@ -155,7 +159,7 @@ if uploaded_file is not None:
         load_session_state(uploaded_file)
         loaded_saved_at = st.session_state.get("loaded_session_saved_at")
         if loaded_saved_at:
-            st.success(f"Session state loaded successfully. Snapshot saved at {loaded_saved_at}.")
+            st.success(f"Session state loaded successfully. Snapshot saved at {format_local_timestamp(loaded_saved_at)}.")
         else:
             st.success("Session state loaded successfully.")
     except Exception as e:
