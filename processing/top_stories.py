@@ -379,7 +379,7 @@ def _pick_consolidated_top_story_row(group: pd.DataFrame) -> pd.Series:
 
 def _top_story_merge_type(example_type: str) -> str:
     example_type = str(example_type or "").strip().upper()
-    if example_type in {"ONLINE", "PRINT"}:
+    if example_type in {"ONLINE", "ONLINE NEWS", "PRESS RELEASE", "BLOGS", "PRINT", "MAGAZINE", "NEWSPAPER"}:
         return "TEXT"
     return example_type
 
@@ -502,7 +502,7 @@ def build_prime_grouped_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
 
 def consolidate_top_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Consolidate likely duplicate Top Story candidates for ONLINE/PRINT together
+    Consolidate likely duplicate text-based Top Story candidates together
     using normalized headline + date, while keeping broadcast types separate.
     """
     working = normalize_top_stories_df(df)

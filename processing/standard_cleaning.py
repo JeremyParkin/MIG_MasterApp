@@ -12,6 +12,61 @@ from processing.coverage_flags import add_coverage_flags
 
 SOCIAL_TYPES = ["FACEBOOK", "TWITTER", "X", "INSTAGRAM", "REDDIT", "YOUTUBE", "TIKTOK", "LINKEDIN", "BLUESKY"]
 BROADCAST_TYPES = ["RADIO", "TV"]
+CANONICAL_MEDIA_TYPES = {
+    "ONLINE",
+    "ONLINE NEWS",
+    "PRESS RELEASE",
+    "BLOGS",
+    "PRINT",
+    "MAGAZINE",
+    "NEWSPAPER",
+    "TV",
+    "RADIO",
+    *SOCIAL_TYPES,
+}
+
+
+def normalize_media_type_value(value, *, merge_online: bool = True) -> str:
+    raw = "" if pd.isna(value) else str(value).strip()
+    if not raw:
+        return ""
+
+    key = re.sub(r"\s+", " ", raw.upper().replace("_", " ")).strip()
+
+    if key in {"FACEBOOK", "TWITTER", "X", "INSTAGRAM", "REDDIT", "YOUTUBE", "TIKTOK", "LINKEDIN", "BLUESKY"}:
+        return "X" if key == "TWITTER" else key
+
+    if key in {"ONLINE", "ONLINE NEWS", "PRESS RELEASE", "BLOGS"}:
+        if merge_online:
+            return "ONLINE"
+        return {
+            "ONLINE": "ONLINE",
+            "ONLINE NEWS": "ONLINE NEWS",
+            "PRESS RELEASE": "PRESS RELEASE",
+            "BLOGS": "BLOGS",
+        }[key]
+
+    if key in {"PRINT", "PRINT GENERIC"}:
+        return "PRINT"
+
+    if key in {"MAGAZINE", "PRINT MAGAZINE", "PRINT (MAGAZINE)"}:
+        return "MAGAZINE"
+
+    if key in {"NEWSPAPER", "PRINT DAILY", "PRINT (DAILY)"}:
+        return "NEWSPAPER"
+
+    if key in {"TV", "RADIO"}:
+        return key
+
+    return key
+
+
+def get_unrecognized_media_types(series: pd.Series, *, merge_online: bool = True) -> list[str]:
+    normalized = series.fillna("").astype(str).map(
+        lambda value: normalize_media_type_value(value, merge_online=merge_online)
+    )
+    candidates = normalized.loc[normalized.str.strip().ne("")]
+    return sorted(value for value in candidates.unique().tolist() if value not in CANONICAL_MEDIA_TYPES)
 
 
 def lengths_are_similar_enough(len_a: int, len_b: int, min_length_ratio: float = 0.70) -> bool:
@@ -100,12 +155,9 @@ def standardize_media_types(df: pd.DataFrame, merge_online: bool = True) -> pd.D
         df.loc[df["Original URL"].notnull(), "URL"] = df["Original URL"]
         df.drop(columns=["Original URL"], inplace=True, errors="ignore")
 
-    df["Type"] = df["Type"].fillna("").astype(str)
-
-    df["Type"] = df["Type"].replace({
-        "ONLINE_NEWS": "ONLINE NEWS",
-        "PRESS_RELEASE": "PRESS RELEASE",
-    })
+    df["Type"] = df["Type"].fillna("").astype(str).map(
+        lambda value: normalize_media_type_value(value, merge_online=merge_online)
+    )
 
     if "URL" in df.columns:
         url_series = df["URL"].fillna("").astype(str)
@@ -127,12 +179,9 @@ def standardize_media_types(df: pd.DataFrame, merge_online: bool = True) -> pd.D
             "Outlet",
         ] = "The Globe and Mail"
 
-    if merge_online:
-        df["Type"] = df["Type"].replace({
-            "ONLINE NEWS": "ONLINE",
-            "PRESS RELEASE": "ONLINE",
-            "BLOGS": "ONLINE",
-        })
+    df["Type"] = df["Type"].fillna("").astype(str).map(
+        lambda value: normalize_media_type_value(value, merge_online=merge_online)
+    )
 
     return df
 

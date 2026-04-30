@@ -112,7 +112,7 @@ def _score_outlet_story_rows(
         working[col] = pd.to_numeric(working[col], errors="coerce").fillna(0)
 
     working["_has_url"] = working.get("Representative URL", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.strip().ne("")
-    working["_is_online"] = working.get("Type", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.upper().eq("ONLINE")
+    working["_is_online"] = working.get("Type", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.upper().isin({"ONLINE", "ONLINE NEWS", "PRESS RELEASE", "BLOGS"})
     working["_Story_Mentions_rank_score"] = _normalized_rank_score(working["Story Mentions"])
     working["_Story_Impressions_rank_score"] = _normalized_rank_score(working["Story Impressions"])
     working["_Story_Effective_Reach_rank_score"] = _normalized_rank_score(working["Story Effective Reach"])

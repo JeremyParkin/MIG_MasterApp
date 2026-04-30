@@ -17,7 +17,12 @@ TYPE_DICT = {
     "TV": "broadcast transcript",
     "PODCAST": "broadcast transcript",
     "ONLINE": "online article",
+    "ONLINE NEWS": "online article",
+    "PRESS RELEASE": "press release",
+    "BLOGS": "blog post",
     "PRINT": "print article",
+    "MAGAZINE": "magazine article",
+    "NEWSPAPER": "newspaper article",
 }
 
 DEFAULT_MODEL = "gpt-5.4-mini"

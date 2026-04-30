@@ -97,6 +97,30 @@ This file is a lightweight parking lot for product and workflow ideas that are w
   - respect `Analysis Context > Analysis Focus` guidance about whether media-type commentary should be emphasized or de-emphasized
   - keep the module useful both for mixed-media accounts and simpler online-only accounts
 
+### Key Entity Module
+- Consider a dedicated `Key Entities` module that identifies and analyzes the most important people, spokespeople, products, initiatives, or other named entities appearing in the coverage.
+- Goal:
+  - help analysts quickly understand which key entities are most visible in the dataset
+  - provide structured metrics and narrative observations for each major entity, instead of relying only on broader story-, author-, or outlet-level views
+- Suggested approach:
+  - use keyword matching first, anchored in `Analysis Context` fields such as primary topic, alternate names, spokespeople, products, and other reference names
+  - optionally expand later with lightweight entity extraction or fuzzy matching if the keyword-first version proves useful
+  - aggregate mentions, impressions, effective reach, outlet count, and representative example stories for each matched entity
+  - build an LLM payload that includes the strongest example rows and key metrics for each entity, then generate concise observations on how each entity is showing up in coverage
+- Possible outputs:
+  - ranked entity table with `#` and key metrics
+  - one or more representative grouped stories per entity
+  - AI-generated entity observations such as:
+    - who or what is driving visibility
+    - whether the entity appears in positive, negative, or mixed contexts
+    - how concentrated or distributed the coverage is
+    - how the entity is framed relative to the broader topic
+- Important overlap note:
+  - this may intersect with `Tagging` in some use cases, especially when tags are effectively acting as named entities or themes
+  - but the analyst need is different:
+    - `Tagging` organizes coverage into conceptual buckets
+    - `Key Entities` would focus on named people, brands, products, and similar reference targets with their own metrics and observations
+
 ### Social Analysis App
 - Build a separate `Social Analysis` app in the same repo rather than stretching the current app further.
 - Keep the current app focused on traditional/media-intelligence workflows, terminology, and navigation.

@@ -464,7 +464,7 @@ def build_sentiment_observation_payload(
         working["Display Snippet"] = working["Display Snippet"].where(working["Display Snippet"] != "", _get_text_series(working, "Prime Snippet"))
 
     working["_has_url"] = working["Display URL"].ne("")
-    working["_is_online_example"] = working["Display Type"].str.upper().eq("ONLINE")
+    working["_is_online_example"] = working["Display Type"].str.upper().isin({"ONLINE", "ONLINE NEWS", "PRESS RELEASE", "BLOGS"})
     working = _build_sentiment_observation_scores(
         working,
         selected_prominence_column=selected_prominence_column,

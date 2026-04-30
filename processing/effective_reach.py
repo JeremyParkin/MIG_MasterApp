@@ -200,12 +200,21 @@ def normalize_platform(value) -> str | None:
 
 
 def normalize_trad_media_type(media_type: str) -> str | None:
-    s = str(media_type).strip().lower()
+    s = str(media_type).strip().upper().replace("_", " ")
     mapping = {
-        "online": "online",
-        "print": "print_generic",
-        "tv": "tv",
-        "radio": "radio",
+        "ONLINE": "online",
+        "ONLINE NEWS": "online",
+        "PRESS RELEASE": "online",
+        "BLOGS": "online",
+        "PRINT": "print_generic",
+        "MAGAZINE": "print_magazine",
+        "NEWSPAPER": "print_daily",
+        "TV": "tv",
+        "RADIO": "radio",
+        "PRINT MAGAZINE": "print_magazine",
+        "PRINT DAILY": "print_daily",
+        "PRINT (MAGAZINE)": "print_magazine",
+        "PRINT (DAILY)": "print_daily",
     }
     return mapping.get(s)
 

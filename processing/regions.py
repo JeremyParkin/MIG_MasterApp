@@ -523,7 +523,7 @@ def _build_top_story_context(
     )
     grouped["Metric Share Pct"] = grouped[metric_col].apply(lambda value: _share_pct(value, total_metric))
     grouped["_has_url"] = grouped["Example URL"].fillna("").astype(str).str.strip().ne("")
-    grouped["_is_online"] = grouped["Example Type"].fillna("").astype(str).str.upper().eq("ONLINE")
+    grouped["_is_online"] = grouped["Example Type"].fillna("").astype(str).str.upper().isin({"ONLINE", "ONLINE NEWS", "PRESS RELEASE", "BLOGS"})
     grouped[f"_{metric_col}_rank_score"] = _normalized_rank_score(grouped[metric_col])
     grouped["_Mentions_rank_score"] = _normalized_rank_score(grouped["Mentions"])
     grouped["_Impressions_rank_score"] = _normalized_rank_score(grouped["Impressions"])
@@ -1025,7 +1025,7 @@ def build_region_example_rows(
         working[col] = pd.to_numeric(working[col], errors="coerce").fillna(0)
 
     working["_has_url"] = working["URL"].fillna("").astype(str).str.strip().ne("")
-    working["_is_online"] = working["Media Type"].fillna("").astype(str).str.upper().eq("ONLINE")
+    working["_is_online"] = working["Media Type"].fillna("").astype(str).str.upper().isin({"ONLINE", "ONLINE NEWS", "PRESS RELEASE", "BLOGS"})
     working["_Mentions_rank_score"] = _normalized_rank_score(working["Mentions"])
     working["_Impressions_rank_score"] = _normalized_rank_score(working["Impressions"])
     working["_Effective_Reach_rank_score"] = _normalized_rank_score(working["Effective Reach"])

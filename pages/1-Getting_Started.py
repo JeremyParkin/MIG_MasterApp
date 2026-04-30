@@ -18,6 +18,8 @@ from ui.charts import build_time_series_area_chart
 
 warnings.filterwarnings("ignore")
 
+UNRECOGNIZED_TYPE_COLOR = "#b8734c"
+
 st.title("Getting Started")
 st.caption("Upload an Agility export, normalize the file structure, and set the client/reporting context for the rest of the workflow.")
 set_page_help_context(st.session_state, "Getting Started")
@@ -162,6 +164,11 @@ if st.session_state.upload_step:
             with st.expander("Review example rows with missing media type", expanded=False):
                 st.caption("These source row numbers refer to the uploaded file and can help you find the problematic values.")
                 st.dataframe(media_type_issue_examples, use_container_width=True, hide_index=True)
+        unrecognized_media_type_examples = upload_quality_report.get("unrecognized_media_type_examples")
+        if isinstance(unrecognized_media_type_examples, pd.DataFrame) and not unrecognized_media_type_examples.empty:
+            with st.expander("Review example rows with unrecognized media type", expanded=False):
+                st.caption("These source row numbers refer to the uploaded file and can help you inspect unexpected media type values.")
+                st.dataframe(unrecognized_media_type_examples, use_container_width=True, hide_index=True)
 
     df_display = st.session_state.df_traditional.copy()
     impressions = df_display["Impressions"].sum() if "Impressions" in df_display.columns else 0
@@ -233,8 +240,17 @@ if st.session_state.upload_step:
                 .reset_index(name="count")
             )
             if not media_type_df.empty:
+                unrecognized_media_type_values = set(
+                    st.session_state.get("upload_quality_report", {}).get("unrecognized_media_type_values") or []
+                )
+
+                def _highlight_unrecognized_type(row):
+                    if str(row.get("Type", "")).strip() in unrecognized_media_type_values:
+                        return [f"color: {UNRECOGNIZED_TYPE_COLOR}", ""]
+                    return ["", ""]
+
                 st.dataframe(
-                    media_type_df,
+                    media_type_df.style.apply(_highlight_unrecognized_type, axis=1),
                     use_container_width=True,
                     hide_index=True,
                 )

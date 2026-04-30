@@ -4,6 +4,11 @@ from __future__ import annotations
 import re
 import pandas as pd
 import streamlit as st
+from processing.standard_cleaning import (
+    CANONICAL_MEDIA_TYPES,
+    get_unrecognized_media_types,
+    normalize_media_type_value,
+)
 
 
 def _normalize_numeric_upload_series(series: pd.Series, *, prefer_integer: bool = False) -> pd.Series:
@@ -108,6 +113,9 @@ def normalize_uploaded_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns:
             df[col] = df[col].fillna("").astype(str)
 
+    if "Type" in df.columns:
+        df["Type"] = df["Type"].map(lambda value: normalize_media_type_value(value, merge_online=False))
+
     # Drop columns not needed for app processing
     df.drop(
         [
@@ -147,6 +155,8 @@ def build_upload_quality_report(df_raw: pd.DataFrame, df_normalized: pd.DataFram
         "media_type_issue_examples": pd.DataFrame(),
         "media_type_issue_indices": [],
         "media_type_issue_row_numbers": [],
+        "unrecognized_media_type_examples": pd.DataFrame(),
+        "unrecognized_media_type_values": [],
     }
 
     if df_raw is None or df_raw.empty:
@@ -252,6 +262,44 @@ def build_upload_quality_report(df_raw: pd.DataFrame, df_normalized: pd.DataFram
                 }
             ).head(5)
             report["media_type_issue_examples"] = examples.reset_index(drop=True)
+
+        recognized_media_types = CANONICAL_MEDIA_TYPES
+        unrecognized_media_types = get_unrecognized_media_types(normalized["Type"], merge_online=False)
+        if unrecognized_media_types:
+            unrecognized_mask = (
+                normalized_media_type != ""
+            ) & ~normalized_media_type.isin(recognized_media_types)
+            unrecognized_row_numbers = (raw.index[unrecognized_mask] + 2).tolist()
+            type_examples = ", ".join(unrecognized_media_types[:5])
+            if len(unrecognized_media_types) > 5:
+                type_examples += ", ..."
+
+            example_row_text = ""
+            if unrecognized_row_numbers:
+                example_numbers = ", ".join(str(num) for num in unrecognized_row_numbers[:5])
+                if len(unrecognized_row_numbers) > 5:
+                    example_numbers += ", ..."
+                example_row_text = f" Example row numbers: {example_numbers}."
+
+            report["unrecognized_media_type_values"] = unrecognized_media_types
+            report["warnings"].append(
+                {
+                    "title": "Some media types are unrecognized",
+                    "message": (
+                        f"The app does not currently normalize these media type value(s): {type_examples}."
+                        f"{example_row_text}"
+                    ),
+                }
+            )
+
+            examples = pd.DataFrame(
+                {
+                    "Source Row": (raw.index[unrecognized_mask] + 2).astype(int),
+                    media_type_source_col: raw_media_type.loc[unrecognized_mask],
+                    "Normalized Type": normalized_media_type.loc[unrecognized_mask],
+                }
+            ).head(5)
+            report["unrecognized_media_type_examples"] = examples.reset_index(drop=True)
 
     return report
 

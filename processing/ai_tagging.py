@@ -429,7 +429,7 @@ def build_tag_observation_payload(
     distribution["Share"] = distribution["Count"] / float(distribution["Count"].sum())
 
     working["_has_url"] = working["URL"].ne("")
-    working["_is_online"] = working["Type"].str.upper().eq("ONLINE")
+    working["_is_online"] = working["Type"].str.upper().isin({"ONLINE", "ONLINE NEWS", "PRESS RELEASE", "BLOGS"})
     working = _build_tag_observation_scores(
         working,
         selected_prominence_column=selected_prominence_column,
