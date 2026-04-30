@@ -592,9 +592,12 @@ def build_tag_observation_prompt(
     client_name: str,
     include_other: bool,
     payload: dict[str, Any],
+    analysis_context: str = "",
 ) -> str:
+    context_block = f"\nANALYSIS CONTEXT\n{analysis_context.strip()}\n" if analysis_context.strip() else ""
     return f"""
 You are helping a media intelligence analyst write concise, report-ready tagging observations for {client_name or 'the client'}.
+{context_block}
 
 Use the finalized tag distribution and representative grouped stories below.
 The primary examples are selected from the most prominent grouped coverage in each tag bucket, with only a slight preference for linkable online stories.
@@ -631,6 +634,7 @@ def generate_tag_observations(
     include_other: bool,
     api_key: str,
     model: str = DEFAULT_TAGGING_OBSERVATION_MODEL,
+    analysis_context: str = "",
     selected_prominence_column: str = "",
 ) -> tuple[dict[str, Any], int, int]:
     payload = build_tag_observation_payload(
@@ -642,6 +646,7 @@ def generate_tag_observations(
         client_name=client_name,
         include_other=include_other,
         payload=payload,
+        analysis_context=analysis_context,
     )
 
     client = OpenAI(api_key=api_key)

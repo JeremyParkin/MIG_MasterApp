@@ -13,6 +13,7 @@ from ui.insight_blocks import build_linked_example_blocks_html
 
 from processing.analysis_context import (
     apply_session_coverage_flag_policy,
+    build_analysis_context_text,
     format_qualitative_exclusion_caption,
     get_analysis_context_payload,
     get_qualitative_coverage_flag_exclusions,
@@ -623,6 +624,7 @@ with obs_button_col:
                 client_name=client_name,
                 include_other=include_other,
                 api_key=st.secrets["key"],
+                analysis_context=build_analysis_context_text(st.session_state),
                 selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
             )
             st.session_state.tagging_observation_output = observation_output

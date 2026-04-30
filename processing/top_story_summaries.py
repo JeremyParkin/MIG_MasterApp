@@ -165,7 +165,7 @@ def build_master_prompt(
     return f"""
 You are a media intelligence analyst producing structured outputs for an executive report.
 
-ENTITY CONTEXT
+ANALYSIS CONTEXT
 {entity_context}
 
 OUTPUTS REQUIRED
@@ -514,9 +514,15 @@ def build_top_story_observation_payload(df: pd.DataFrame) -> dict[str, Any]:
     return {"stories": stories}
 
 
-def build_top_story_observation_prompt(entity_name: str, payload: dict[str, Any]) -> str:
+def build_top_story_observation_prompt(
+    entity_name: str,
+    payload: dict[str, Any],
+    analysis_context: str = "",
+) -> str:
+    context_block = f"\nANALYSIS CONTEXT\n{analysis_context.strip()}\n" if analysis_context.strip() else ""
     return f"""
 You are helping a media intelligence analyst write a concise, report-ready overall observation for a set of top stories about {entity_name or 'the entity'}.
+{context_block}
 
 Use the representative story set below. Each story may already include a summary, chart callout, and sentiment rationale.
 
@@ -540,10 +546,11 @@ def generate_top_story_observation(
     df: pd.DataFrame,
     entity_name: str,
     api_key: str,
+    analysis_context: str = "",
     model: str = DEFAULT_OBSERVATION_MODEL,
 ) -> tuple[dict[str, Any], int, int]:
     payload = build_top_story_observation_payload(df)
-    prompt = build_top_story_observation_prompt(entity_name, payload)
+    prompt = build_top_story_observation_prompt(entity_name, payload, analysis_context=analysis_context)
     client = OpenAI(api_key=api_key)
     response = client.responses.create(
         model=model,

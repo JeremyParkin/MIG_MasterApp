@@ -10,6 +10,7 @@ def render_top_story_summaries() -> None:
     
     from processing.analysis_context import (
         build_analysis_context_caption,
+        build_analysis_context_text,
         get_analysis_context_payload,
         init_analysis_context_state,
     )
@@ -17,7 +18,6 @@ def render_top_story_summaries() -> None:
     from processing.top_story_summaries import (
         init_top_story_summary_state,
         normalize_summary_df,
-        build_entity_context,
         build_prompt_preview,
         generate_outputs_for_dataframe,
         build_markdown_output,
@@ -63,10 +63,7 @@ def render_top_story_summaries() -> None:
     
     analysis_payload = get_analysis_context_payload(st.session_state)
     primary_name = analysis_payload["primary_name"]
-    alternate_names = analysis_payload["alternate_names"]
-    spokespeople = analysis_payload["spokespeople"]
-    products = analysis_payload["products"]
-    additional_guidance = analysis_payload["guidance"]
+    analysis_context_text = build_analysis_context_text(st.session_state)
 
     st.write("**Shared analysis context**")
     analysis_caption = build_analysis_context_caption(st.session_state)
@@ -85,14 +82,6 @@ def render_top_story_summaries() -> None:
         st.error("Primary entity is required to proceed.")
     
     if submitted and primary_name.strip():
-        entity_context = build_entity_context(
-            primary_name=primary_name,
-            alternate_names=alternate_names,
-            spokespeople=spokespeople,
-            products=products,
-            additional_guidance=additional_guidance,
-        )
-    
         progress_bar = st.progress(0)
         status = st.empty()
     
@@ -118,7 +107,7 @@ def render_top_story_summaries() -> None:
                     executor.submit(
                         generate_outputs_for_row,
                         row_tuple,
-                        entity_context,
+                        analysis_context_text,
                         st.secrets["key"],
                     ): row_tuple[0]
                     for row_tuple in rows_for_workers
@@ -157,6 +146,7 @@ def render_top_story_summaries() -> None:
             observation_output, obs_in, obs_out = generate_top_story_observation(
                 df=updated_df,
                 entity_name=primary_name,
+                analysis_context=analysis_context_text,
                 api_key=st.secrets["key"],
             )
             total_in += int(obs_in or 0)
@@ -178,18 +168,10 @@ def render_top_story_summaries() -> None:
         }
     
         st.rerun()
+
+
     
-    
-    
-    entity_context = ""
-    if primary_name.strip():
-        entity_context = build_entity_context(
-            primary_name=primary_name,
-            alternate_names=alternate_names,
-            spokespeople=spokespeople,
-            products=products,
-            additional_guidance=additional_guidance,
-        )
+    entity_context = analysis_context_text if primary_name.strip() else ""
     
     with st.expander("Show AI prompt preview", expanded=False):
         st.caption("This shows the exact prompt template sent to OpenAI (with example story placeholders).")
