@@ -7,6 +7,7 @@ import re
 
 import numpy as np
 import pandas as pd
+from processing.coverage_flags import has_coverage_flag, split_coverage_flags
 
 
 HIDDEN_FLAGS = {"Good Outlet", "Aggregator"}
@@ -366,7 +367,11 @@ def prepare_author_working_df(
     excluded_flags = excluded_flags or []
 
     if excluded_flags and "Coverage Flags" in df.columns:
-        df = df[~df["Coverage Flags"].fillna("").isin(excluded_flags)].copy()
+        df = df[
+            ~df["Coverage Flags"].apply(
+                lambda value: any(has_coverage_flag(value, flag) for flag in excluded_flags or [])
+            )
+        ].copy()
 
     return df
 
@@ -377,11 +382,11 @@ def get_available_visible_flags(df: pd.DataFrame) -> tuple[list[str], list[str]]
         return [], []
 
     available_flags = sorted(
-        [
-            f
-            for f in df["Coverage Flags"].fillna("").astype(str).unique().tolist()
-            if f.strip()
-        ]
+        {
+            flag
+            for value in df["Coverage Flags"].tolist()
+            for flag in split_coverage_flags(value)
+        }
     )
 
     default_excluded_flags = [

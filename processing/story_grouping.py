@@ -14,6 +14,7 @@ from scipy import sparse
 from scipy.sparse import csgraph
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.neighbors import NearestNeighbors
+from processing.coverage_flags import has_coverage_flag
 
 PUNCT_TRANSLATOR = str.maketrans("", "", string.punctuation)
 CLUSTER_SOURCE_ID_COL = "__cluster_source_row__"
@@ -349,15 +350,15 @@ def mark_prime_examples_legacy(grouped_df: pd.DataFrame) -> pd.DataFrame:
         regex=True,
     )
 
-    flags = working["Coverage Flags"].str.strip()
     working["_quality_rank"] = 2
-    working.loc[flags.eq("Advertorial"), "_quality_rank"] = 7
-    working.loc[flags.eq("Market Report Spam"), "_quality_rank"] = 6
-    working.loc[flags.eq("Press Release"), "_quality_rank"] = 5
-    working.loc[flags.eq("Financial Outlet"), "_quality_rank"] = 4
-    working.loc[flags.eq("Aggregator"), "_quality_rank"] = 3
-    working.loc[flags.eq(""), "_quality_rank"] = 2
-    working.loc[flags.eq("Good Outlet"), "_quality_rank"] = 1
+    working.loc[working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Advertorial")), "_quality_rank"] = 7
+    working.loc[working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Market Report Spam")), "_quality_rank"] = 6
+    working.loc[working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Press Release")), "_quality_rank"] = 5
+    working.loc[working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Financial Outlet")), "_quality_rank"] = 4
+    working.loc[working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Aggregator")), "_quality_rank"] = 3
+    working.loc[working["Coverage Flags"].fillna("").astype(str).str.strip().eq(""), "_quality_rank"] = 2
+    good_only_mask = working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Good Outlet")) & working["_quality_rank"].eq(2)
+    working.loc[good_only_mask, "_quality_rank"] = 1
     working.loc[working["_is_preferred_wire"], "_quality_rank"] = 0
 
     if "Date" in working.columns:
@@ -400,14 +401,14 @@ def mark_prime_examples(grouped_df: pd.DataFrame) -> pd.DataFrame:
 
     preferred_wire_pattern = r"Reuters|Associated Press|Canadian Press"
     working["_quality_rank"] = 2
-    flags = working["Coverage Flags"].str.strip()
-    working.loc[flags.eq("Advertorial"), "_quality_rank"] = 7
-    working.loc[flags.eq("Market Report Spam"), "_quality_rank"] = 6
-    working.loc[flags.eq("Press Release"), "_quality_rank"] = 5
-    working.loc[flags.eq("Financial Outlet"), "_quality_rank"] = 4
-    working.loc[flags.eq("Aggregator"), "_quality_rank"] = 3
-    working.loc[flags.eq(""), "_quality_rank"] = 2
-    working.loc[flags.eq("Good Outlet"), "_quality_rank"] = 1
+    working.loc[working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Advertorial")), "_quality_rank"] = 7
+    working.loc[working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Market Report Spam")), "_quality_rank"] = 6
+    working.loc[working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Press Release")), "_quality_rank"] = 5
+    working.loc[working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Financial Outlet")), "_quality_rank"] = 4
+    working.loc[working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Aggregator")), "_quality_rank"] = 3
+    working.loc[working["Coverage Flags"].fillna("").astype(str).str.strip().eq(""), "_quality_rank"] = 2
+    good_only_mask = working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Good Outlet")) & working["_quality_rank"].eq(2)
+    working.loc[good_only_mask, "_quality_rank"] = 1
     working.loc[
         working["Outlet"].str.contains(preferred_wire_pattern, case=False, na=False, regex=True),
         "_quality_rank",

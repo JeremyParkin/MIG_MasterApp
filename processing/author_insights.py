@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 from openai import OpenAI
 
+from processing.coverage_flags import has_coverage_flag
 from processing.prominence import get_prominence_weight_series
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
@@ -55,7 +56,7 @@ def _clean_author_df(df: pd.DataFrame) -> pd.DataFrame:
         working["Group ID"] = working["Headline"].replace("", pd.NA).fillna(working.index.astype(str))
 
     working["Coverage Flags"] = working["Coverage Flags"].fillna("")
-    working["_is_good_outlet"] = working["Coverage Flags"].eq("Good Outlet")
+    working["_is_good_outlet"] = working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Good Outlet"))
 
     return working
 

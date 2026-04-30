@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 from openai import OpenAI
 
+from processing.coverage_flags import has_coverage_flag
 from processing.prominence import get_prominence_weight_series
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
@@ -77,7 +78,7 @@ def _clean_outlet_df(df: pd.DataFrame) -> pd.DataFrame:
         working["Group ID"] = working["Headline"].replace("", pd.NA).fillna(working.index.astype(str))
 
     working = working[working["Outlet"] != ""].copy()
-    working["_is_good_outlet"] = working["Coverage Flags"].eq("Good Outlet")
+    working["_is_good_outlet"] = working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Good Outlet"))
     working["_normalized_key"] = working["Outlet"].apply(_normalize_outlet_key)
     return working
 
@@ -272,7 +273,7 @@ def build_outlet_metrics(df_traditional: pd.DataFrame, outlet_rollup_map: dict[s
     summary = summary.merge(source_counts, on="Outlet", how="left")
 
     good_rate = (
-        story_level.assign(_is_good=story_level["Representative Flag"].eq("Good Outlet"))
+        story_level.assign(_is_good=story_level["Representative Flag"].apply(lambda value: has_coverage_flag(value, "Good Outlet")))
         .groupby("Outlet", as_index=False)["_is_good"]
         .mean()
         .rename(columns={"_is_good": "Good_Outlet_Rate"})

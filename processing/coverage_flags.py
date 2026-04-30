@@ -3,6 +3,24 @@
 import pandas as pd
 import re
 
+FLAG_SPLIT_PATTERN = r"[;,]\s*|\|\s*"
+
+
+def split_coverage_flags(value: object) -> list[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return []
+    parts = re.split(FLAG_SPLIT_PATTERN, raw)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def has_coverage_flag(value: object, target_flag: str) -> bool:
+    target = str(target_flag or "").strip()
+    if not target:
+        return False
+    return target in split_coverage_flags(value)
+
+
 def extract_relevant_text(snippet: str) -> str:
     words = str(snippet or "").split()
     if len(words) > 250:
@@ -215,23 +233,18 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
     ] = "Good Outlet"
 
     def combine_flags(row):
-        if row.get("Market Report Flag"):
-            return row["Market Report Flag"]
-        elif row.get("Newswire Flag"):
-            return row["Newswire Flag"]
-        elif row.get("Advertorial Flag"):
-            return row["Advertorial Flag"]
-        elif row.get("Good Outlet Flag"):
-            return row["Good Outlet Flag"]
-        elif row.get("Possible Advertorial Flag"):
-            return row["Possible Advertorial Flag"]
-        elif row.get("Aggregator Flag"):
-            return row["Aggregator Flag"]
-        elif row.get("User-Generated Flag"):
-            return row["User-Generated Flag"]
-        elif row.get("Financial Outlet Flag"):
-            return row["Financial Outlet Flag"]
-        return ""
+        ordered_flags = [
+            row.get("Newswire Flag", ""),
+            row.get("Advertorial Flag", ""),
+            row.get("Possible Advertorial Flag", ""),
+            row.get("Good Outlet Flag", ""),
+            row.get("Market Report Flag", ""),
+            row.get("Financial Outlet Flag", ""),
+            row.get("Aggregator Flag", ""),
+            row.get("User-Generated Flag", ""),
+        ]
+        cleaned = [str(flag).strip() for flag in ordered_flags if str(flag or "").strip()]
+        return " | ".join(cleaned)
 
     df["Coverage Flags"] = df.apply(combine_flags, axis=1)
 

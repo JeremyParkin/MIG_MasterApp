@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pandas as pd
+from processing.coverage_flags import has_coverage_flag
 
 
 def pick_best_story_row(group: pd.DataFrame) -> pd.Series | None:
@@ -34,15 +35,13 @@ def pick_best_story_row(group: pd.DataFrame) -> pd.Series | None:
     is_broadcast = working["Type"].str.upper().isin(["TV", "RADIO", "PODCAST"]).any()
 
     # Coverage flag buckets
-    flags = working["Coverage Flags"].str.strip()
-
-    working["_is_good_outlet"] = flags.eq("Good Outlet")
-    working["_is_aggregator"] = flags.eq("Aggregator")
-    working["_is_newswire"] = flags.eq("Press Release")
-    working["_is_financial_outlet"] = flags.eq("Financial Outlet")
-    working["_is_market_report"] = flags.eq("Market Report Spam")
-    working["_is_advertorial"] = flags.eq("Advertorial")
-    working["_is_unflagged"] = flags.eq("")
+    working["_is_good_outlet"] = working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Good Outlet"))
+    working["_is_aggregator"] = working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Aggregator"))
+    working["_is_newswire"] = working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Press Release"))
+    working["_is_financial_outlet"] = working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Financial Outlet"))
+    working["_is_market_report"] = working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Market Report Spam"))
+    working["_is_advertorial"] = working["Coverage Flags"].apply(lambda value: has_coverage_flag(value, "Advertorial"))
+    working["_is_unflagged"] = working["Coverage Flags"].fillna("").astype(str).str.strip().eq("")
 
     # Quality rank: lower is better
     # 0 = Reuters/AP/Canadian Press

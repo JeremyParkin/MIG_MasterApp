@@ -5,6 +5,7 @@ import math
 from typing import Literal
 
 import pandas as pd
+from processing.coverage_flags import has_coverage_flag, split_coverage_flags
 
 
 SampleMode = Literal["full", "representative", "custom", "reuse_other_sample"]
@@ -81,11 +82,11 @@ def get_available_coverage_flags(df_rows: pd.DataFrame) -> tuple[list[str], list
         return [], []
 
     available_flags = sorted(
-        [
-            f
-            for f in df_rows["Coverage Flags"].fillna("").astype(str).unique().tolist()
-            if f.strip()
-        ]
+        {
+            flag
+            for value in df_rows["Coverage Flags"].tolist()
+            for flag in split_coverage_flags(value)
+        }
     )
     default_flags = [f for f in DEFAULT_EXCLUDED_COVERAGE_FLAGS if f in available_flags]
     return available_flags, default_flags
@@ -102,7 +103,11 @@ def apply_coverage_flag_exclusions(
     if not excluded_flags or "Coverage Flags" not in df_rows.columns:
         return df_rows.copy().reset_index(drop=True)
 
-    return df_rows[~df_rows["Coverage Flags"].fillna("").isin(excluded_flags)].copy().reset_index(drop=True)
+    return df_rows[
+        ~df_rows["Coverage Flags"].apply(
+            lambda value: any(has_coverage_flag(value, flag) for flag in excluded_flags or [])
+        )
+    ].copy().reset_index(drop=True)
 
 
 def sample_tagging_rows(
