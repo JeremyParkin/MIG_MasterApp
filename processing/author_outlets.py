@@ -216,7 +216,7 @@ def apply_author_name_fix(
 ) -> None:
     """
     Apply a corrected author name to df_traditional and rebuild auth_outlet_table.
-    Keep the user on the renamed author so outlet assignment can happen next.
+    Preserve any existing outlet assignment for the renamed author.
     """
     old_name = str(old_name).strip()
     new_name = str(new_name).strip()
@@ -235,6 +235,12 @@ def apply_author_name_fix(
         if len(session_state.auth_outlet_table) > 0
         else None
     )
+    if existing_assignments is not None and not existing_assignments.empty:
+        existing_assignments = existing_assignments.copy()
+        existing_assignments.loc[
+            existing_assignments["Author"].fillna("").astype(str).str.strip() == old_name,
+            "Author",
+        ] = new_name
 
     session_state.auth_outlet_table = build_auth_outlet_table(
         session_state.df_traditional.copy(),

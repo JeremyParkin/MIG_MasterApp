@@ -91,49 +91,67 @@ def _has_meaningful_downstream_work() -> bool:
     return False
 
 payload = analysis_context.get_analysis_context_payload(st.session_state)
-if "analysis_context_draft_initialized" not in st.session_state:
-    st.session_state.analysis_context_draft_initialized = True
-    st.session_state.analysis_context_draft_client_name = payload["client_name"]
-    st.session_state.analysis_context_draft_primary_name = payload["primary_name"]
-    st.session_state.analysis_context_draft_alternate_names = list(payload["alternate_names"])
-    st.session_state.analysis_context_draft_spokespeople = list(payload["spokespeople"])
-    st.session_state.analysis_context_draft_products = list(payload["products"])
-    st.session_state.analysis_context_draft_highlight_keywords = list(payload.get("highlight_keywords", []))
-    st.session_state.analysis_context_draft_general_guidance = payload.get("general_guidance", payload["guidance"])
-    st.session_state.analysis_context_draft_sentiment_guidance = payload.get("sentiment_guidance", "")
-    st.session_state.analysis_context_draft_exclude_aggregators = payload["exclude_aggregators_from_outlet_insights"]
-    st.session_state.analysis_context_draft_media_type_commentary_mode = payload.get("media_type_commentary_mode", "Auto")
-    st.session_state.analysis_context_draft_selected_prominence_column = payload.get("selected_prominence_column", "")
-    st.session_state.analysis_context_draft_qualitative_flags = list(payload["qualitative_excluded_flags"])
-    st.session_state.analysis_context_draft_dataset_flags = list(payload["dataset_excluded_flags"])
-    st.session_state.analysis_context_draft_dataset_date_range = (
-        payload.get("dataset_start_date"),
-        payload.get("dataset_end_date"),
-    )
-    st.session_state.analysis_context_draft_dataset_media_types = list(payload.get("dataset_media_types", []))
-    st.session_state.analysis_context_draft_qualitative_keep_keys = list(payload.get("qualitative_exclusion_keep_keys", []))
-    st.session_state.analysis_context_draft_dataset_keep_keys = list(payload.get("dataset_exclusion_keep_keys", []))
 
-st.session_state.setdefault(
-    "analysis_context_draft_highlight_keywords",
-    list(payload.get("highlight_keywords", [])),
+
+def _sync_draft_value(key: str, value):
+    seed_key = f"{key}__seed"
+    if isinstance(value, list):
+        normalized_value = list(value)
+    elif isinstance(value, tuple):
+        normalized_value = tuple(value)
+    else:
+        normalized_value = value
+
+    current = st.session_state.get(key, None)
+    last_seed = st.session_state.get(seed_key, None)
+
+    should_update = (
+        key not in st.session_state
+        or current == last_seed
+        or (
+            isinstance(normalized_value, str)
+            and str(current or "").strip() == ""
+            and normalized_value.strip() != ""
+        )
+        or (
+            isinstance(normalized_value, list)
+            and (current is None or current == [])
+            and len(normalized_value) > 0
+        )
+        or (
+            isinstance(normalized_value, tuple)
+            and (current is None or current == (None, None))
+            and normalized_value != (None, None)
+        )
+    )
+
+    if should_update:
+        st.session_state[key] = normalized_value
+
+    st.session_state[seed_key] = normalized_value
+
+
+st.session_state.analysis_context_draft_initialized = True
+_sync_draft_value("analysis_context_draft_client_name", payload["client_name"])
+_sync_draft_value("analysis_context_draft_primary_name", payload["primary_name"])
+_sync_draft_value("analysis_context_draft_alternate_names", list(payload["alternate_names"]))
+_sync_draft_value("analysis_context_draft_spokespeople", list(payload["spokespeople"]))
+_sync_draft_value("analysis_context_draft_products", list(payload["products"]))
+_sync_draft_value("analysis_context_draft_highlight_keywords", list(payload.get("highlight_keywords", [])))
+_sync_draft_value("analysis_context_draft_general_guidance", payload.get("general_guidance", payload["guidance"]))
+_sync_draft_value("analysis_context_draft_sentiment_guidance", payload.get("sentiment_guidance", ""))
+_sync_draft_value("analysis_context_draft_exclude_aggregators", payload["exclude_aggregators_from_outlet_insights"])
+_sync_draft_value("analysis_context_draft_media_type_commentary_mode", payload.get("media_type_commentary_mode", "Auto"))
+_sync_draft_value("analysis_context_draft_selected_prominence_column", payload.get("selected_prominence_column", ""))
+_sync_draft_value("analysis_context_draft_qualitative_flags", list(payload["qualitative_excluded_flags"]))
+_sync_draft_value("analysis_context_draft_dataset_flags", list(payload["dataset_excluded_flags"]))
+_sync_draft_value(
+    "analysis_context_draft_dataset_date_range",
+    (payload.get("dataset_start_date"), payload.get("dataset_end_date")),
 )
-st.session_state.setdefault(
-    "analysis_context_draft_general_guidance",
-    payload.get("general_guidance", payload["guidance"]),
-)
-st.session_state.setdefault(
-    "analysis_context_draft_sentiment_guidance",
-    payload.get("sentiment_guidance", ""),
-)
-st.session_state.setdefault(
-    "analysis_context_draft_media_type_commentary_mode",
-    payload.get("media_type_commentary_mode", "Auto"),
-)
-st.session_state.setdefault(
-    "analysis_context_draft_selected_prominence_column",
-    payload.get("selected_prominence_column", ""),
-)
+_sync_draft_value("analysis_context_draft_dataset_media_types", list(payload.get("dataset_media_types", [])))
+_sync_draft_value("analysis_context_draft_qualitative_keep_keys", list(payload.get("qualitative_exclusion_keep_keys", [])))
+_sync_draft_value("analysis_context_draft_dataset_keep_keys", list(payload.get("dataset_exclusion_keep_keys", [])))
 
 if _has_meaningful_downstream_work():
         st.warning(

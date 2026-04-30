@@ -645,16 +645,11 @@ def render_authors_page() -> None:
                 else:
                     apply_author_name_fix(st.session_state, selected_author, new_name)
                     invalidate_author_outlet_cache([selected_author, new_name])
-                    updated_rows = []
-                    for row in current_auto_rows:
-                        row_author = str(row.get("Author", "") or "").strip()
-                        if row_author == selected_author:
-                            updated = dict(row)
-                            updated["Author"] = new_name
-                            updated_rows.append(updated)
-                        else:
-                            updated_rows.append(row)
-                    st.session_state.author_outlet_auto_assigned_rows = updated_rows
+                    st.session_state.author_outlet_auto_assigned_rows = [
+                        row
+                        for row in current_auto_rows
+                        if str(row.get("Author", "") or "").strip() != selected_author
+                    ]
                     st.session_state.author_outlet_state_dirty = True
                     st.rerun()
 
