@@ -315,7 +315,7 @@ def build_sentiment_distribution(df_unique: pd.DataFrame, sentiment_type: str) -
         ]
 
     assigned = _get_text_series(df_unique, "Assigned Sentiment")
-    ai = _get_text_series(df_unique, "AI Sentiment")
+    ai = build_effective_ai_sentiment_series(df_unique)
 
     final = assigned.where(assigned != "", ai)
     final = final.where(final != "", "UNASSIGNED").str.upper()
@@ -340,9 +340,35 @@ def _get_text_series(df: pd.DataFrame, column_name: str) -> pd.Series:
     return values.fillna("").astype(str).str.strip()
 
 
+def build_effective_ai_sentiment_series(df_unique: pd.DataFrame) -> pd.Series:
+    base_ai = _get_text_series(df_unique, "AI Sentiment")
+    review_ai = _get_text_series(df_unique, "Review AI Sentiment")
+    return review_ai.where(review_ai != "", base_ai)
+
+
+def build_effective_ai_sentiment_confidence_series(df_unique: pd.DataFrame) -> pd.Series:
+    base_conf = pd.to_numeric(
+        df_unique.get("AI Sentiment Confidence", pd.Series(index=df_unique.index, dtype="float")),
+        errors="coerce",
+    )
+    review_ai = _get_text_series(df_unique, "Review AI Sentiment")
+    review_conf = pd.to_numeric(
+        df_unique.get("Review AI Confidence", pd.Series(index=df_unique.index, dtype="float")),
+        errors="coerce",
+    )
+    return review_conf.where(review_ai != "", base_conf)
+
+
+def build_effective_ai_sentiment_rationale_series(df_unique: pd.DataFrame) -> pd.Series:
+    base_rationale = _get_text_series(df_unique, "AI Sentiment Rationale")
+    review_ai = _get_text_series(df_unique, "Review AI Sentiment")
+    review_rationale = _get_text_series(df_unique, "Review AI Rationale")
+    return review_rationale.where(review_ai != "", base_rationale)
+
+
 def build_final_sentiment_series(df_unique: pd.DataFrame) -> pd.Series:
     assigned = _get_text_series(df_unique, "Assigned Sentiment")
-    ai = _get_text_series(df_unique, "AI Sentiment")
+    ai = build_effective_ai_sentiment_series(df_unique)
     final = assigned.where(assigned != "", ai)
     return final.where(final != "", pd.NA).astype("string").str.upper()
 
@@ -416,6 +442,10 @@ def build_sentiment_observation_payload(
         if col not in working.columns:
             working[col] = ""
         working[col] = _get_text_series(working, col)
+
+    working["Effective AI Sentiment"] = build_effective_ai_sentiment_series(working)
+    working["Effective AI Sentiment Confidence"] = build_effective_ai_sentiment_confidence_series(working)
+    working["Effective AI Sentiment Rationale"] = build_effective_ai_sentiment_rationale_series(working)
 
     prime_lookup = pd.DataFrame(columns=["Group ID", "Prime URL", "Prime Outlet", "Prime Type", "Prime Snippet"])
     if isinstance(df_grouped_rows, pd.DataFrame) and not df_grouped_rows.empty and "Group ID" in df_grouped_rows.columns:
@@ -498,12 +528,12 @@ def build_sentiment_observation_payload(
                 "effective_reach": int(row.get("Effective Reach", 0) or 0),
                 "group_count": int(row.get("Group Count", 0) or 0),
                 "snippet": _truncate_text(row.get("Display Snippet", ""), 420),
-                "sentiment_rationale": _truncate_text(row.get("AI Sentiment Rationale", ""), 220),
+                "sentiment_rationale": _truncate_text(row.get("Effective AI Sentiment Rationale", ""), 220),
             })
         examples_by_sentiment[str(sentiment)] = examples
 
         aligned_group = ranked[
-            ranked["AI Sentiment"].fillna("").astype(str).str.strip().str.upper()
+            ranked["Effective AI Sentiment"].fillna("").astype(str).str.strip().str.upper()
             == ranked["Final Sentiment"].fillna("").astype(str).str.strip().str.upper()
         ].copy()
         if primary_group_ids:
@@ -526,7 +556,7 @@ def build_sentiment_observation_payload(
                     "url": row.get("Display URL", ""),
                     "mentions": int(row.get("Mentions", 0) or 0),
                     "group_count": int(row.get("Group Count", 0) or 0),
-                    "sentiment_rationale": _truncate_text(row.get("AI Sentiment Rationale", ""), 220),
+                    "sentiment_rationale": _truncate_text(row.get("Effective AI Sentiment Rationale", ""), 220),
                 }
             )
         aligned_evidence_by_sentiment[str(sentiment)] = aligned_evidence

@@ -180,18 +180,92 @@ def get_effective_tag_series(df_tagging_unique: pd.DataFrame) -> pd.Series:
     if df_tagging_unique is None or df_tagging_unique.empty:
         return pd.Series(dtype="object")
 
+    ai = get_effective_ai_tag_series(df_tagging_unique)
     assigned = (
         df_tagging_unique.get("Assigned Tag", pd.Series(index=df_tagging_unique.index, dtype="object"))
         .fillna("")
         .astype(str)
         .str.strip()
     )
-    ai = (
+    return assigned.where(assigned != "", ai)
+
+
+def get_effective_ai_tag_series(df_tagging_unique: pd.DataFrame) -> pd.Series:
+    if df_tagging_unique is None or df_tagging_unique.empty:
+        return pd.Series(dtype="object")
+
+    base_ai = (
         df_tagging_unique.get("AI Tag", pd.Series(index=df_tagging_unique.index, dtype="object"))
         .fillna("")
         .astype(str)
         .str.strip()
     )
+    review_ai = (
+        df_tagging_unique.get("Review AI Tag", pd.Series(index=df_tagging_unique.index, dtype="object"))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+    return review_ai.where(review_ai != "", base_ai)
+
+
+def get_effective_ai_tag_rationale_series(df_tagging_unique: pd.DataFrame) -> pd.Series:
+    if df_tagging_unique is None or df_tagging_unique.empty:
+        return pd.Series(dtype="object")
+
+    base_rationale = (
+        df_tagging_unique.get("AI Tag Rationale", pd.Series(index=df_tagging_unique.index, dtype="object"))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+    review_tag = (
+        df_tagging_unique.get("Review AI Tag", pd.Series(index=df_tagging_unique.index, dtype="object"))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+    review_rationale = (
+        df_tagging_unique.get("Review AI Rationale", pd.Series(index=df_tagging_unique.index, dtype="object"))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+    return review_rationale.where(review_tag != "", base_rationale)
+
+
+def get_effective_ai_tag_confidence_series(df_tagging_unique: pd.DataFrame) -> pd.Series:
+    if df_tagging_unique is None or df_tagging_unique.empty:
+        return pd.Series(dtype="float64")
+
+    base_conf = pd.to_numeric(
+        df_tagging_unique.get("AI Tag Confidence", pd.Series(index=df_tagging_unique.index, dtype="float")),
+        errors="coerce",
+    )
+    review_tag = (
+        df_tagging_unique.get("Review AI Tag", pd.Series(index=df_tagging_unique.index, dtype="object"))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+    review_conf = pd.to_numeric(
+        df_tagging_unique.get("Review AI Confidence", pd.Series(index=df_tagging_unique.index, dtype="float")),
+        errors="coerce",
+    )
+    return review_conf.where(review_tag != "", base_conf)
+
+
+def get_effective_tag_series(df_tagging_unique: pd.DataFrame) -> pd.Series:
+    if df_tagging_unique is None or df_tagging_unique.empty:
+        return pd.Series(dtype="object")
+
+    assigned = (
+        df_tagging_unique.get("Assigned Tag", pd.Series(index=df_tagging_unique.index, dtype="object"))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+    ai = get_effective_ai_tag_series(df_tagging_unique)
     return assigned.where(assigned != "", ai)
 
 
@@ -395,7 +469,7 @@ def build_tag_observation_payload(
         return {"distribution": [], "examples_by_tag": {}}
 
     working = df_tagging_unique.copy()
-    for col in ["Headline", "Snippet", "URL", "Outlet", "Type", "AI Tag", "Assigned Tag", "AI Tag Rationale"]:
+    for col in ["Headline", "Snippet", "URL", "Outlet", "Type", "Assigned Tag"]:
         if col not in working.columns:
             working[col] = ""
         working[col] = working[col].fillna("").astype(str).str.strip()
@@ -405,6 +479,9 @@ def build_tag_observation_payload(
             working[col] = 0
         working[col] = pd.to_numeric(working[col], errors="coerce").fillna(0)
 
+    working["Effective AI Tag"] = get_effective_ai_tag_series(working)
+    working["Effective AI Tag Confidence"] = get_effective_ai_tag_confidence_series(working)
+    working["Effective AI Tag Rationale"] = get_effective_ai_tag_rationale_series(working)
     effective_tags = get_effective_tag_series(working)
     tags_expanded = (
         working[["Group ID"]]
@@ -467,12 +544,12 @@ def build_tag_observation_payload(
                     "effective_reach": int(row.get("Effective Reach", 0) or 0),
                     "group_count": int(row.get("Group Count", 0) or 0),
                     "snippet": _truncate_text(row.get("Snippet", ""), 420),
-                    "tag_rationale": _truncate_text(row.get("AI Tag Rationale", ""), 220),
+                    "tag_rationale": _truncate_text(row.get("Effective AI Tag Rationale", ""), 220),
                 }
             )
         examples_by_tag[str(tag_name)] = examples
 
-        ai_tag_matches = ranked["AI Tag"].fillna("").astype(str).apply(
+        ai_tag_matches = ranked["Effective AI Tag"].fillna("").astype(str).apply(
             lambda value: str(tag_name).casefold() in {tag.casefold() for tag in normalize_tag_list(value)}
         )
         aligned_group = ranked[ai_tag_matches].copy()
@@ -499,7 +576,7 @@ def build_tag_observation_payload(
                     "url": str(row.get("URL", "") or "").strip(),
                     "mentions": int(row.get("Mentions", 0) or 0),
                     "group_count": int(row.get("Group Count", 0) or 0),
-                    "tag_rationale": _truncate_text(row.get("AI Tag Rationale", ""), 220),
+                    "tag_rationale": _truncate_text(row.get("Effective AI Tag Rationale", ""), 220),
                 }
             )
         aligned_evidence_by_tag[str(tag_name)] = aligned_evidence
