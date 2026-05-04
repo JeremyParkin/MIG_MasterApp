@@ -134,6 +134,7 @@ def remove_inactive_workflow_columns(df: pd.DataFrame, session_state) -> pd.Data
     ]
     sentiment_detail_cols = [
         "Assigned Sentiment",
+        "Assigned Sentiment Source",
         "Review AI Sentiment",
         "Review AI Confidence",
         "Review AI Rationale",
@@ -158,6 +159,7 @@ def remove_inactive_workflow_columns(df: pd.DataFrame, session_state) -> pd.Data
     ]
     tagging_detail_cols = [
         "Assigned Tag",
+        "Assigned Tag Source",
         "Review AI Tag",
         "Review AI Confidence",
         "Review AI Rationale",
@@ -649,6 +651,7 @@ def _trim_tagging_export_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     excluded_cols = {
         "Assigned Tag",
+        "Assigned Tag Source",
         "Review AI Tag",
         "Review AI Confidence",
         "Review AI Rationale",
@@ -685,6 +688,7 @@ def _trim_sentiment_export_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     excluded_cols = {
         "Assigned Sentiment",
+        "Assigned Sentiment Source",
         "Review AI Sentiment",
         "Review AI Confidence",
         "Review AI Rationale",

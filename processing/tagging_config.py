@@ -294,6 +294,8 @@ def reset_tagging_config_state(session_state) -> None:
         "tagging_review_low_conf_threshold",
         "tagging_pre_review_message",
         "__last_tagging_pre_review_summary__",
+        "tagging_second_opinion_target_batch",
+        "tagging_second_opinion_target_source_count",
     ]:
         session_state.pop(key, None)
 

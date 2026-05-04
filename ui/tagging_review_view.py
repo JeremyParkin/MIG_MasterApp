@@ -7,6 +7,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
 
     from processing.analysis_context import get_analysis_context_payload
     from processing.ai_tagging import (
+        auto_assign_resolved_tag_matches,
         compute_all_tagged_candidates,
         DEFAULT_TAGGING_REVIEW_BATCH_SIZE,
         DEFAULT_TAGGING_REVIEW_CONFIDENCE_THRESHOLD,
@@ -16,6 +17,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         ensure_tag_review_columns,
         filter_tag_candidates_for_review_mode,
         normalize_tag_list,
+        recommend_tag_second_opinion_batch_size,
         run_batch_tag_second_opinion,
         set_assigned_tag,
     )
@@ -40,56 +42,108 @@ def render_tagging_review_page(*, review_stage: str) -> None:
     sync_tagging_state(df_unique, df_rows)
     tagging_mode = st.session_state.get("tagging_mode", "Single best tag")
 
-    base_candidates = compute_tag_review_candidates(st.session_state.df_tagging_unique)
+    review_base_candidates = compute_tag_review_candidates(st.session_state.df_tagging_unique, exclude_reviewed=False)
+    base_candidates = compute_tag_review_candidates(st.session_state.df_tagging_unique, exclude_reviewed=True)
     all_tagged_candidates = compute_all_tagged_candidates(st.session_state.df_tagging_unique)
-    reviewed_candidates = (
-        base_candidates[base_candidates["Review AI Tag"].notna()].copy()
-        if "Review AI Tag" in base_candidates.columns
-        else base_candidates.iloc[0:0].copy()
-    )
-    disagreement_count = int(
-        (reviewed_candidates.get("AI Tag Agreement", pd.Series(dtype="object")).fillna("") == "Disagree").sum()
-    ) if not reviewed_candidates.empty else 0
-    needs_review_count = int(
-        (reviewed_candidates.get("Needs Human Review", pd.Series(dtype="object")).fillna("") == "Yes").sum()
-    ) if not reviewed_candidates.empty else 0
+    ai_tag_all = df_unique.get("AI Tag", pd.Series(index=df_unique.index, dtype="object")).fillna("").astype(str).str.strip()
+    review_tag_all = df_unique.get("Review AI Tag", pd.Series(index=df_unique.index, dtype="object")).fillna("").astype(str).str.strip()
+    assigned_all = df_unique.get("Assigned Tag", pd.Series(index=df_unique.index, dtype="object")).fillna("").astype(str).str.strip()
+    assigned_source_all = df_unique.get("Assigned Tag Source", pd.Series(index=df_unique.index, dtype="object")).fillna("").astype(str).str.strip()
+    agreement_all = df_unique.get("AI Tag Agreement", pd.Series(index=df_unique.index, dtype="object")).fillna("").astype(str).str.strip()
+    needs_review_all = df_unique.get("Needs Human Review", pd.Series(index=df_unique.index, dtype="object")).fillna("").astype(str).str.strip()
+
+    with_first_opinion_count = int((ai_tag_all != "").sum())
+    with_second_opinion_count = int((review_tag_all != "").sum())
+    eligible_second_opinion_count = int(((assigned_all == "") & (ai_tag_all != "") & (review_tag_all == "")).sum())
+    auto_resolved_count = int((assigned_source_all == "AI_AUTO_RESOLVED").sum())
+    disagreement_count = int(((review_tag_all != "") & (agreement_all == "Disagree")).sum())
+    needs_review_count = int(((review_tag_all != "") & (assigned_all == "") & (needs_review_all == "Yes")).sum())
 
     pre_review_message = st.session_state.get("tagging_pre_review_message")
     if pre_review_message and review_stage == "pre_review":
         st.success(pre_review_message)
         st.session_state.tagging_pre_review_message = None
 
+    auto_resolve_message = st.session_state.get("tagging_auto_resolve_message")
+    if auto_resolve_message and review_stage == "pre_review":
+        st.success(auto_resolve_message)
+        st.session_state.tagging_auto_resolve_message = None
+
     if review_stage == "pre_review":
-        st.subheader("Step 3: AI Pre-Review")
-        st.caption("Run a second AI pass on top tagging candidates so likely agreements can be auto-resolved before human spot checks.")
+        st.subheader("Step 3: AI Second Opinion")
+        st.caption("Generate one second AI opinion per already-tagged story group so likely high-confidence matches can be auto-resolved before human spot checks.")
 
         if base_candidates.empty:
-            st.success("All set — no remaining grouped stories need tag review.")
-            summary1, summary2, summary3 = st.columns(3)
+            st.success("All set — no grouped stories remain eligible for a second AI opinion.")
+            summary1, summary2, summary3, summary4, summary5 = st.columns(5)
             with summary1:
-                st.metric("Ready for review", "0")
+                st.metric("With 1st opinion", f"{with_first_opinion_count:,}")
             with summary2:
-                st.metric("Needs human review", f"{needs_review_count:,}")
+                st.metric("With 2nd opinion", f"{with_second_opinion_count:,}")
             with summary3:
-                st.metric("Disagreements", f"{disagreement_count:,}")
+                st.metric("Still eligible", f"{eligible_second_opinion_count:,}")
+            with summary4:
+                st.metric("Auto-resolved by AI", f"{auto_resolved_count:,}")
+            with summary5:
+                st.metric("Needs human review", f"{needs_review_count:,}")
             return
 
-        adv1, adv2 = st.columns(2)
-        with adv1:
+        stored_source_count = int(st.session_state.get("tagging_second_opinion_target_source_count", 0) or 0)
+        stored_target = int(st.session_state.get("tagging_second_opinion_target_batch", 0) or 0)
+        if stored_target <= 0 or with_first_opinion_count > stored_source_count:
+            stored_target = recommend_tag_second_opinion_batch_size(len(base_candidates))
+            st.session_state.tagging_second_opinion_target_batch = stored_target
+            st.session_state.tagging_second_opinion_target_source_count = with_first_opinion_count
+        completed_second_opinion_count = with_second_opinion_count
+        remaining_recommended = max(0, stored_target - completed_second_opinion_count)
+        recommended_batch = min(len(base_candidates), remaining_recommended)
+        if "tagging_pre_review_n" not in st.session_state:
+            st.session_state.tagging_pre_review_n = max(
+                1,
+                min(
+                    len(base_candidates),
+                    recommended_batch or DEFAULT_TAGGING_REVIEW_BATCH_SIZE,
+                ),
+            )
+        current_batch_size = int(st.session_state.get("tagging_pre_review_n", 0) or 0)
+        if current_batch_size > len(base_candidates):
+            current_batch_size = len(base_candidates)
+        # If the widget is still sitting on the generic default while the recommendation
+        # is something more specific, seed it from the recommendation instead.
+        if (
+            recommended_batch > 0
+            and current_batch_size == DEFAULT_TAGGING_REVIEW_BATCH_SIZE
+            and recommended_batch != DEFAULT_TAGGING_REVIEW_BATCH_SIZE
+            and with_second_opinion_count == 0
+        ):
+            current_batch_size = recommended_batch
+        if recommended_batch == 0 and len(base_candidates) > 0:
+            current_batch_size = min(current_batch_size or min(10, len(base_candidates)), len(base_candidates))
+        st.session_state.tagging_pre_review_n = max(1, current_batch_size)
+        default_batch_size = st.session_state.tagging_pre_review_n
+
+        st.caption("Second-opinion priority favors more syndicated, higher-visibility, lower-confidence stories before you move on to human review.")
+
+        batch_col1, batch_col2 = st.columns([1.25, 1], gap="medium")
+        with batch_col1:
             st.number_input(
-                "Top candidates to send for AI pre-review",
+                "Stories to send for AI second opinion",
                 min_value=1,
                 max_value=min(len(base_candidates), 200),
-                value=min(
-                    int(st.session_state.get("tagging_pre_review_n", DEFAULT_TAGGING_REVIEW_BATCH_SIZE)),
-                    len(base_candidates),
-                ),
+                value=max(1, default_batch_size),
                 step=1,
                 key="tagging_pre_review_n",
             )
-        with adv2:
-            st.number_input(
-                "Review confidence cutoff",
+        with batch_col2:
+            st.metric("Recommended batch", f"{recommended_batch:,}")
+            if recommended_batch > 0:
+                st.caption(f"Selected for this batch: {int(st.session_state.get('tagging_pre_review_n', default_batch_size)):,} of {len(base_candidates):,} eligible groups.")
+            else:
+                st.caption("The current recommended second-opinion coverage has already been reached. You can still run more manually if desired.")
+
+        with st.expander("Advanced auto-resolve options", expanded=False):
+            threshold_value = st.number_input(
+                "Auto-resolve confidence threshold",
                 min_value=1,
                 max_value=100,
                 value=int(
@@ -101,14 +155,32 @@ def render_tagging_review_page(*, review_stage: str) -> None:
                 step=1,
                 key="tagging_review_low_conf_threshold",
             )
+            st.caption("This only controls whether matching first and second AI opinions are auto-resolved. It does not control which stories are selected for second opinion.")
+            if st.button("Apply threshold to reviewed matches", key="tagging_apply_auto_resolve_threshold", use_container_width=True):
+                unique2, rows2, accepted_count, reopened_count = auto_assign_resolved_tag_matches(
+                    st.session_state.df_tagging_unique,
+                    st.session_state.df_tagging_rows,
+                    tagging_mode=tagging_mode,
+                    confidence_threshold=int(threshold_value),
+                )
+                sync_tagging_state(unique2, rows2)
+                st.session_state.tagging_auto_resolve_message = (
+                    f"Applied the auto-resolve threshold to existing reviewed matches. "
+                    f"{accepted_count:,} grouped storie(s) were finalized and {reopened_count:,} were reopened."
+                )
+                st.rerun()
 
         action1, action2 = st.columns(2)
         with action1:
-            if st.button("Run AI pre-review", type="secondary", use_container_width=True):
+            if st.button("Run AI second opinion", type="secondary", use_container_width=True):
                 tag_definitions = st.session_state.get("tag_definitions", {})
                 st.session_state.pop("tagging_pre_review_message", None)
+                selected_batch_size = int(st.session_state.get("tagging_pre_review_n", default_batch_size))
+                progress_text = st.empty()
+                progress_bar = st.progress(0.0)
+                progress_text.caption(f"Running second opinions: 0/{selected_batch_size}")
                 with st.spinner("Running AI second opinions on top tagging candidates..."):
-                    unique2, rows2, batch_errors, total_in, total_out = run_batch_tag_second_opinion(
+                    unique2, rows2, batch_errors, total_in, total_out, batch_auto_resolved = run_batch_tag_second_opinion(
                         candidates_df=base_candidates,
                         df_unique=st.session_state.df_tagging_unique,
                         df_grouped=st.session_state.df_tagging_rows,
@@ -116,7 +188,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
                         tagging_mode=tagging_mode,
                         api_key=st.secrets["key"],
                         review_model=DEFAULT_TAGGING_REVIEW_MODEL,
-                        limit=int(st.session_state.get("tagging_pre_review_n", min(50, len(base_candidates)))),
+                        limit=selected_batch_size,
                         max_workers=DEFAULT_TAGGING_MAX_WORKERS,
                         low_conf_threshold=int(
                             st.session_state.get(
@@ -124,29 +196,47 @@ def render_tagging_review_page(*, review_stage: str) -> None:
                                 DEFAULT_TAGGING_REVIEW_CONFIDENCE_THRESHOLD,
                             )
                         ),
+                        progress_callback=lambda completed, total: (
+                            progress_bar.progress(completed / max(1, total)),
+                            progress_text.caption(f"Running second opinions: {completed}/{total}"),
+                        ),
                     )
+                progress_bar.progress(1.0)
+                progress_text.caption(f"Completed second opinions: {min(selected_batch_size, len(base_candidates))}/{min(selected_batch_size, len(base_candidates))}")
                 sync_tagging_state(unique2, rows2)
                 apply_usage_to_session(total_in, total_out, DEFAULT_TAGGING_REVIEW_MODEL)
                 completed_at = format_local_timestamp()
                 st.session_state.tagging_pre_review_message = (
-                    f"AI pre-review batch completed {completed_at}. Review counts updated below."
+                    f"AI second-opinion batch completed {completed_at}. Review counts updated below."
                 )
                 st.session_state["__last_tagging_pre_review_summary__"] = {
                     "errors": batch_errors,
+                    "processed": min(selected_batch_size, len(base_candidates)),
+                    "auto_resolved": batch_auto_resolved,
                 }
                 st.rerun()
         with action2:
-            st.caption("High-confidence matching tag opinions are auto-assigned during AI pre-review.")
+            st.caption("High-confidence matching tag opinions can auto-resolve here before you move on to human spot checks.")
 
-        summary1, summary2, summary3 = st.columns(3)
+        summary1, summary2, summary3, summary4, summary5, summary6 = st.columns(6)
         with summary1:
-            st.metric("Ready for review", f"{len(base_candidates):,}")
+            st.metric("With 1st opinion", f"{with_first_opinion_count:,}")
         with summary2:
-            st.metric("Needs human review", f"{needs_review_count:,}")
+            st.metric("With 2nd opinion", f"{with_second_opinion_count:,}")
         with summary3:
+            st.metric("Still eligible", f"{len(base_candidates):,}")
+        with summary4:
+            st.metric("Auto-resolved by AI", f"{auto_resolved_count:,}")
+        with summary5:
+            st.metric("Needs human review", f"{needs_review_count:,}")
+        with summary6:
             st.metric("Disagreements", f"{disagreement_count:,}")
 
         last_summary = st.session_state.get("__last_tagging_pre_review_summary__")
+        if last_summary and (last_summary.get("processed") or last_summary.get("auto_resolved")):
+            st.caption(
+                f"Last second-opinion batch: {int(last_summary.get('processed', 0)):,} processed, {int(last_summary.get('auto_resolved', 0)):,} auto-resolved."
+            )
         if last_summary and last_summary.get("errors"):
             with st.expander(f"Completed with {len(last_summary['errors'])} error(s)", expanded=False):
                 for err in last_summary["errors"]:
@@ -163,12 +253,12 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         label_visibility="collapsed",
         key="tagging_review_mode",
     )
-    review_source_df = all_tagged_candidates if review_mode == "All Tagged Coverage" else base_candidates
+    review_source_df = all_tagged_candidates if review_mode == "All Tagged Coverage" else review_base_candidates
     candidates = filter_tag_candidates_for_review_mode(review_source_df, review_mode)
 
     summary1, summary2, summary3, summary4 = st.columns(4)
     with summary1:
-        st.metric("Ready for review", f"{len(base_candidates):,}")
+        st.metric("Ready for review", f"{len(review_base_candidates):,}")
     with summary2:
         st.metric("Needs human review", f"{needs_review_count:,}")
     with summary3:
@@ -285,9 +375,10 @@ def render_tagging_review_page(*, review_stage: str) -> None:
             st.caption(meta_line)
 
     with right:
+        current_assignment_source = _safe_text(row.get("Assigned Tag Source", ""))
         if agreement == "Disagree":
             st.warning("AI opinions disagree.")
-        elif agreement == "Match" and needs_review != "Yes":
+        elif current_assignment_source == "AI_AUTO_RESOLVED":
             st.success("Auto-resolved by AI (high confidence match).")
         elif needs_review == "Yes":
             st.info("Flagged for review.")
@@ -327,7 +418,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         if st.button("Re-run review AI", use_container_width=True, disabled=not bool(ai_tag)):
             tag_definitions = st.session_state.get("tag_definitions", {})
             rerun_candidates = candidates[candidates["Group ID"] == current_group_id].copy()
-            unique2, rows2, _, total_in, total_out = run_batch_tag_second_opinion(
+            unique2, rows2, _, total_in, total_out, _ = run_batch_tag_second_opinion(
                 candidates_df=rerun_candidates,
                 df_unique=st.session_state.df_tagging_unique,
                 df_grouped=st.session_state.df_tagging_rows,

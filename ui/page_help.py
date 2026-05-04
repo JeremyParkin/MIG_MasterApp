@@ -527,7 +527,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
             ],
         },
         ("Tagging", "Run"): {
-            "title": "Tagging > Run",
+            "title": "Tagging > AI First Pass",
             "intro": "Run the first AI tagging pass across the prepared unique-story set.",
             "sections": [
                 {
@@ -546,19 +546,19 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                 {
                     "heading": "What to review manually",
                     "bullets": [
-                        "You do not need to judge quality story by story here yet. The real review happens in AI Pre-Review, Spot Checks, and Insights.",
+                        "You do not need to judge quality story by story here yet. The real review happens in AI Second Opinion, Spot Checks, and Insights.",
                     ],
                 },
             ],
         },
         ("Tagging", "AI Pre-Review"): {
-            "title": "Tagging > AI Pre-Review",
-            "intro": "Run a second AI pass on top candidates so exact high-confidence matches can be auto-resolved before human review.",
+            "title": "Tagging > AI Second Opinion",
+            "intro": "Run one second AI opinion per already-tagged story group so exact high-confidence matches can be auto-resolved before human review.",
             "sections": [
                 {
                     "heading": "What this step does",
                     "bullets": [
-                        "Runs a second AI opinion on the strongest review candidates before you do human spot checks.",
+                        "Runs one second AI opinion on the strongest untouched review candidates before you do human spot checks.",
                     ],
                 },
                 {
@@ -566,7 +566,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "bullets": [
                         "Single-tag mode compares the first and second AI opinion directly.",
                         "Multi-tag mode compares normalized tag sets and only exact high-confidence matches auto-resolve.",
-                        "Exact high-confidence agreement can reduce the human review queue before you reach Spot Checks.",
+                        "Re-running this step continues deeper into the remaining eligible queue instead of redoing groups that already have a second opinion.",
                     ],
                 },
                 {
@@ -578,6 +578,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                 {
                     "heading": "Key logic / heuristics",
                     "bullets": [
+                        "Second-opinion priority favors more syndicated, higher-visibility, lower-confidence stories first.",
                         "Auto-resolution is intentionally strict. Multi-tag mode only auto-resolves exact high-confidence set matches.",
                     ],
                 },
@@ -642,7 +643,8 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                 {
                     "heading": "Key logic / heuristics",
                     "bullets": [
-                        "In multi-tag mode, tag percentages represent the share of grouped stories carrying that tag, not share of all tag assignments.",
+                        "The main distribution uses underlying story volume first, with grouped-story counts shown as secondary context.",
+                        "In multi-tag mode, tag percentages represent the share of expanded underlying story volume carrying that tag, not share of all tag assignments.",
                     ],
                 },
             ],
@@ -682,7 +684,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
             ],
         },
         ("Sentiment", "Run"): {
-            "title": "Sentiment > Run",
+            "title": "Sentiment > AI First Pass",
             "intro": "Run the first AI sentiment pass across the prepared unique stories.",
             "sections": [
                 {
@@ -701,32 +703,38 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                 {
                     "heading": "What to review manually",
                     "bullets": [
-                        "You do not need to judge quality here yet. The real review happens in AI Pre-Review, Spot Checks, and Insights.",
+                        "You do not need to judge quality here yet. The real review happens in AI Second Opinion, Spot Checks, and Insights.",
                     ],
                 },
             ],
         },
         ("Sentiment", "AI Pre-Review"): {
-            "title": "Sentiment > AI Pre-Review",
-            "intro": "Run a second AI pass on the strongest review candidates so high-confidence matches can be auto-resolved before human spot checks.",
+            "title": "Sentiment > AI Second Opinion",
+            "intro": "Run one second AI opinion on already-labeled story groups so high-confidence matches can be auto-resolved before human spot checks.",
             "sections": [
                 {
                     "heading": "What this step does",
                     "bullets": [
-                        "Runs a second AI opinion on the strongest review candidates before you do human spot checks.",
+                        "Runs one second AI opinion on the strongest untouched review candidates before you do human spot checks.",
                     ],
                 },
                 {
                     "heading": "What the app does automatically",
                     "bullets": [
                         "Compares first and second AI sentiment opinions and auto-resolves exact high-confidence matches.",
-                        "Exact high-confidence agreement can reduce the human review queue before you reach Spot Checks.",
+                        "Re-running this step continues deeper into the remaining eligible queue instead of redoing groups that already have a second opinion.",
                     ],
                 },
                 {
                     "heading": "What to review manually",
                     "bullets": [
                         "Use this step to reduce manual review volume, not to assume every auto-resolved call is beyond question.",
+                    ],
+                },
+                {
+                    "heading": "Key logic / heuristics",
+                    "bullets": [
+                        "Second-opinion priority favors more syndicated, higher-visibility, lower-confidence stories first, with extra weight on negative sentiment coverage.",
                     ],
                 },
             ],
@@ -780,6 +788,12 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "heading": "What to review manually",
                     "bullets": [
                         "If the distribution or themes feel off, the better fix is usually in Setup, Spot Checks, or the final sentiment decisions rather than the wording of the insight text.",
+                    ],
+                },
+                {
+                    "heading": "Key logic / heuristics",
+                    "bullets": [
+                        "The main distribution uses underlying story volume first, with grouped-story counts shown as secondary context.",
                     ],
                 },
             ],

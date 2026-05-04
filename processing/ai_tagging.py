@@ -176,6 +176,25 @@ def get_remaining_tagging_rows(df_tagging_unique: pd.DataFrame) -> pd.DataFrame:
     return remaining
 
 
+def recommend_tag_second_opinion_batch_size(
+    eligible_count: int,
+    *,
+    cap: int = 50,
+    prior_batch_size: int | None = None,
+) -> int:
+    eligible_count = max(0, int(eligible_count))
+    if eligible_count == 0:
+        return 0
+    sticky_floor = 0
+    if prior_batch_size is not None:
+        sticky_floor = max(0, int(prior_batch_size))
+    if eligible_count <= 12:
+        return min(eligible_count, max(sticky_floor, eligible_count))
+    if eligible_count <= 40:
+        return min(cap, eligible_count, max(sticky_floor, 12, round(eligible_count * 0.6)))
+    return min(cap, eligible_count, max(sticky_floor, 20, round(eligible_count * 0.35)))
+
+
 def get_effective_tag_series(df_tagging_unique: pd.DataFrame) -> pd.Series:
     if df_tagging_unique is None or df_tagging_unique.empty:
         return pd.Series(dtype="object")
@@ -497,12 +516,24 @@ def build_tag_observation_payload(
     if tags_expanded.empty:
         return {"distribution": [], "examples_by_tag": {}}
 
-    distribution = (
-        tags_expanded["Tag"]
-        .value_counts()
-        .rename_axis("Tag")
-        .reset_index(name="Count")
+    tags_expanded = tags_expanded.merge(
+        working[["Group ID", "Group Count"]].drop_duplicates(subset=["Group ID"], keep="first"),
+        on="Group ID",
+        how="left",
     )
+    tags_expanded["Group Count"] = pd.to_numeric(tags_expanded["Group Count"], errors="coerce").fillna(1)
+    distribution = (
+        tags_expanded.groupby("Tag", dropna=False)
+        .agg(
+            Count=("Group Count", "sum"),
+            Grouped_Stories=("Group ID", "nunique"),
+        )
+        .reset_index()
+        .sort_values(["Count", "Grouped_Stories", "Tag"], ascending=[False, False, True])
+        .reset_index(drop=True)
+    )
+    distribution["Grouped Stories"] = distribution.pop("Grouped_Stories").astype(int)
+    distribution["Count"] = distribution["Count"].astype(int)
     distribution["Share"] = distribution["Count"] / float(distribution["Count"].sum())
 
     working["_has_url"] = working["URL"].ne("")
@@ -683,6 +714,7 @@ def ensure_tag_review_columns(
         "AI Tag Agreement": pd.NA,
         "Needs Human Review": pd.NA,
         "Assigned Tag": pd.NA,
+        "Assigned Tag Source": pd.NA,
     }
 
     for df in [unique, grouped]:
@@ -695,7 +727,7 @@ def ensure_tag_review_columns(
     return unique, grouped
 
 
-def compute_tag_review_candidates(df_unique: pd.DataFrame) -> pd.DataFrame:
+def compute_tag_review_candidates(df_unique: pd.DataFrame, *, exclude_reviewed: bool = True) -> pd.DataFrame:
     if df_unique is None or df_unique.empty:
         return pd.DataFrame()
 
@@ -703,8 +735,10 @@ def compute_tag_review_candidates(df_unique: pd.DataFrame) -> pd.DataFrame:
     assigned = working.get("Assigned Tag", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.strip()
     ai_tag = working.get("AI Tag", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.strip()
     ai_conf = pd.to_numeric(working.get("AI Tag Confidence", pd.Series(index=working.index, dtype="float")), errors="coerce")
+    review_tag = working.get("Review AI Tag", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.strip()
 
-    pool = working[(assigned == "") & (ai_tag != "")].copy()
+    review_mask = (review_tag == "") if exclude_reviewed else pd.Series(True, index=working.index)
+    pool = working[(assigned == "") & (ai_tag != "") & review_mask].copy()
     if pool.empty:
         return pool
 
@@ -714,13 +748,41 @@ def compute_tag_review_candidates(df_unique: pd.DataFrame) -> pd.DataFrame:
             pool[col] = 0
         pool[col] = pd.to_numeric(pool[col], errors="coerce").fillna(0)
 
+    pool["Group Count"] = pd.to_numeric(pool.get("Group Count", 1), errors="coerce").fillna(1)
     pool["_ai_conf_sort"] = ai_conf.loc[pool.index].fillna(-1)
+    max_group_count = pool["Group Count"].max()
+    max_mentions = pool["Mentions"].max()
+    max_impressions = pool["Impressions"].max()
+    max_effective_reach = pool["Effective Reach"].max()
+    pool["_group_norm"] = (pool["Group Count"] / max_group_count) if max_group_count > 0 else 0.0
+    pool["_mentions_norm"] = (pool["Mentions"] / max_mentions) if max_mentions > 0 else 0.0
+    pool["_impressions_norm"] = (pool["Impressions"] / max_impressions) if max_impressions > 0 else 0.0
+    pool["_effective_reach_norm"] = (pool["Effective Reach"] / max_effective_reach) if max_effective_reach > 0 else 0.0
+    pool["_low_conf_norm"] = ((100 - pool["_ai_conf_sort"]) / 100).clip(lower=0, upper=1)
+    pool["_second_opinion_score"] = (
+        pool["_group_norm"] * 0.30
+        + pool["_mentions_norm"] * 0.20
+        + pool["_impressions_norm"] * 0.20
+        + pool["_effective_reach_norm"] * 0.15
+        + pool["_low_conf_norm"] * 0.15
+    )
     pool = (
         pool.sort_values(
-            ["_ai_conf_sort", "Mentions", "Impressions", "Effective Reach"],
-            ascending=[True, False, False, False],
+            ["_second_opinion_score", "Group Count", "Mentions", "Impressions", "Effective Reach", "_ai_conf_sort"],
+            ascending=[False, False, False, False, False, True],
         )
-        .drop(columns=["_ai_conf_sort"], errors="ignore")
+        .drop(
+            columns=[
+                "_ai_conf_sort",
+                "_group_norm",
+                "_mentions_norm",
+                "_impressions_norm",
+                "_effective_reach_norm",
+                "_low_conf_norm",
+                "_second_opinion_score",
+            ],
+            errors="ignore",
+        )
         .reset_index()
     )
     return pool
@@ -842,13 +904,36 @@ def set_assigned_tag(
     df_grouped: pd.DataFrame,
     group_id: int,
     label: str,
+    *,
+    source: str = "HUMAN",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     unique = df_unique.copy()
     grouped = df_grouped.copy()
 
     for df in [unique, grouped]:
+        if "Assigned Tag Source" not in df.columns:
+            df["Assigned Tag Source"] = pd.NA
         mask = df["Group ID"] == group_id
         df.loc[mask, "Assigned Tag"] = label
+        df.loc[mask, "Assigned Tag Source"] = source
+
+    return unique, grouped
+
+
+def clear_assigned_tag(
+    df_unique: pd.DataFrame,
+    df_grouped: pd.DataFrame,
+    group_id: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    unique = df_unique.copy()
+    grouped = df_grouped.copy()
+
+    for df in [unique, grouped]:
+        if "Assigned Tag Source" not in df.columns:
+            df["Assigned Tag Source"] = pd.NA
+        mask = df["Group ID"] == group_id
+        df.loc[mask, "Assigned Tag"] = pd.NA
+        df.loc[mask, "Assigned Tag Source"] = pd.NA
 
     return unique, grouped
 
@@ -858,7 +943,7 @@ def auto_assign_resolved_tag_matches(
     df_grouped: pd.DataFrame,
     tagging_mode: str = "Single best tag",
     confidence_threshold: int = DEFAULT_TAGGING_REVIEW_CONFIDENCE_THRESHOLD,
-) -> tuple[pd.DataFrame, pd.DataFrame, int]:
+) -> tuple[pd.DataFrame, pd.DataFrame, int, int]:
     unique = df_unique.copy()
     grouped = df_grouped.copy()
 
@@ -872,11 +957,17 @@ def auto_assign_resolved_tag_matches(
     ]
     for col in required_cols:
         if col not in unique.columns:
-            return unique, grouped, 0
+            return unique, grouped, 0, 0
 
     ai_tag = unique["AI Tag"].fillna("").astype(str).str.strip()
     review_tag = unique["Review AI Tag"].fillna("").astype(str).str.strip()
+    if "Assigned Tag Source" not in unique.columns:
+        unique["Assigned Tag Source"] = pd.NA
+    if "Assigned Tag Source" not in grouped.columns:
+        grouped["Assigned Tag Source"] = pd.NA
+
     assigned = unique["Assigned Tag"].fillna("").astype(str).str.strip()
+    assigned_source = unique["Assigned Tag Source"].fillna("").astype(str).str.strip()
     review_conf = pd.to_numeric(unique["Review AI Confidence"], errors="coerce")
 
     if tagging_mode == "Multiple applicable tags":
@@ -895,16 +986,25 @@ def auto_assign_resolved_tag_matches(
         & exact_match_mask
         & review_conf.ge(confidence_threshold)
     )
+    auto_assigned_mask = assigned_source == "AI_AUTO_RESOLVED"
+    stale_mask = auto_assigned_mask & ~mask
+    reopened_count = int(stale_mask.sum())
+
+    for gid in unique.loc[stale_mask, "Group ID"].tolist():
+        unique, grouped = clear_assigned_tag(unique, grouped, gid)
 
     accepted_count = int(mask.sum())
-    if accepted_count == 0:
-        return unique, grouped, 0
-
     for gid in unique.loc[mask, "Group ID"].tolist():
         label = unique.loc[unique["Group ID"] == gid, "AI Tag"].iloc[0]
-        unique, grouped = set_assigned_tag(unique, grouped, gid, ", ".join(normalize_tag_list(label)))
+        unique, grouped = set_assigned_tag(
+            unique,
+            grouped,
+            gid,
+            ", ".join(normalize_tag_list(label)),
+            source="AI_AUTO_RESOLVED",
+        )
 
-    return unique, grouped, accepted_count
+    return unique, grouped, accepted_count, reopened_count
 
 
 def second_opinion_tag_worker(
@@ -946,7 +1046,8 @@ def run_batch_tag_second_opinion(
     limit: int = DEFAULT_TAGGING_REVIEW_BATCH_SIZE,
     max_workers: int = DEFAULT_TAGGING_MAX_WORKERS,
     low_conf_threshold: int = DEFAULT_TAGGING_REVIEW_CONFIDENCE_THRESHOLD,
-) -> tuple[pd.DataFrame, pd.DataFrame, list[str], int, int]:
+    progress_callback=None,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str], int, int, int]:
     unique, grouped = ensure_tag_review_columns(df_unique, df_grouped)
 
     working_candidates = candidates_df.head(limit).copy()
@@ -955,6 +1056,8 @@ def run_batch_tag_second_opinion(
     total_in = 0
     total_out = 0
     errors: list[str] = []
+    total = len(rows_for_workers)
+    completed = 0
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_map = {
@@ -971,6 +1074,7 @@ def run_batch_tag_second_opinion(
 
         for future in as_completed(future_map):
             idx = future_map[future]
+            completed += 1
             try:
                 _, result, error_message, in_tok, out_tok = future.result()
                 total_in += int(in_tok or 0)
@@ -1015,15 +1119,18 @@ def run_batch_tag_second_opinion(
                 )
             except Exception as e:
                 errors.append(str(e))
+            finally:
+                if progress_callback is not None:
+                    progress_callback(completed, total)
 
-    unique, grouped, _ = auto_assign_resolved_tag_matches(
+    unique, grouped, auto_resolved_count, _ = auto_assign_resolved_tag_matches(
         unique,
         grouped,
         tagging_mode=tagging_mode,
         confidence_threshold=low_conf_threshold,
     )
 
-    return unique, grouped, errors, total_in, total_out
+    return unique, grouped, errors, total_in, total_out, auto_resolved_count
 
 
 def reset_ai_tagging_results(
@@ -1039,14 +1146,14 @@ def reset_ai_tagging_results(
     tag_columns_unique = [
         col
         for col in unique.columns
-        if col.startswith("AI Tag") or col.startswith("Review AI") or col in {"Needs Human Review", "Assigned Tag", "AI Tag Agreement"}
+        if col.startswith("AI Tag") or col.startswith("Review AI") or col in {"Needs Human Review", "Assigned Tag", "Assigned Tag Source", "AI Tag Agreement"}
     ]
     unique.drop(columns=tag_columns_unique, inplace=True, errors="ignore")
 
     tag_columns_grouped = [
         col
         for col in grouped.columns
-        if col.startswith("AI Tag") or col.startswith("Review AI") or col in {"Needs Human Review", "Assigned Tag", "AI Tag Agreement"}
+        if col.startswith("AI Tag") or col.startswith("Review AI") or col in {"Needs Human Review", "Assigned Tag", "Assigned Tag Source", "AI Tag Agreement"}
     ]
     grouped.drop(columns=tag_columns_grouped, inplace=True, errors="ignore")
 

@@ -296,7 +296,12 @@ def reset_ai_sentiment_results(
 
     return unique, grouped
 
-def build_sentiment_distribution(df_unique: pd.DataFrame, sentiment_type: str) -> pd.DataFrame:
+def build_sentiment_distribution(
+    df_unique: pd.DataFrame,
+    sentiment_type: str,
+    *,
+    final_series: pd.Series | None = None,
+) -> pd.DataFrame:
     if sentiment_type == "5-way":
         order = [
             "VERY POSITIVE",
@@ -314,16 +319,38 @@ def build_sentiment_distribution(df_unique: pd.DataFrame, sentiment_type: str) -
             "NOT RELEVANT",
         ]
 
-    assigned = _get_text_series(df_unique, "Assigned Sentiment")
-    ai = build_effective_ai_sentiment_series(df_unique)
-
-    final = assigned.where(assigned != "", ai)
+    if final_series is None:
+        assigned = _get_text_series(df_unique, "Assigned Sentiment")
+        ai = build_effective_ai_sentiment_series(df_unique)
+        final = assigned.where(assigned != "", ai)
+    else:
+        final = final_series.fillna("").astype(str).str.strip()
     final = final.where(final != "", "UNASSIGNED").str.upper()
 
-    sentiment_counts = final.value_counts().rename_axis("Sentiment").reset_index(name="Count")
+    group_counts = pd.to_numeric(
+        df_unique.get("Group Count", pd.Series(index=df_unique.index, dtype="float")),
+        errors="coerce",
+    ).fillna(1)
+    working = pd.DataFrame(
+        {
+            "Sentiment": final,
+            "Count": group_counts,
+        }
+    )
+    working["Sentiment"] = working["Sentiment"].fillna("").astype(str).str.strip().str.upper()
+    sentiment_counts = (
+        working.groupby("Sentiment", dropna=False)["Count"]
+        .sum()
+        .reset_index()
+    )
+    grouped_story_counts = final.value_counts().rename_axis("Sentiment").reset_index(name="Grouped Stories")
+    sentiment_counts["Sentiment"] = sentiment_counts["Sentiment"].fillna("").astype(str).str.strip().str.upper()
+    grouped_story_counts["Sentiment"] = grouped_story_counts["Sentiment"].fillna("").astype(str).str.strip().str.upper()
     base = pd.DataFrame({"Sentiment": order})
     out = base.merge(sentiment_counts, on="Sentiment", how="left")
+    out = out.merge(grouped_story_counts, on="Sentiment", how="left")
     out["Count"] = out["Count"].fillna(0).astype(int)
+    out["Grouped Stories"] = out["Grouped Stories"].fillna(0).astype(int)
     total = int(out["Count"].sum())
     out["Share"] = out["Count"] / total if total > 0 else 0
     return out
@@ -500,7 +527,11 @@ def build_sentiment_observation_payload(
         selected_prominence_column=selected_prominence_column,
     )
 
-    distribution_df = build_sentiment_distribution(working.rename(columns={"Final Sentiment": "Assigned Sentiment"}), sentiment_type)
+    distribution_df = build_sentiment_distribution(
+        working,
+        sentiment_type,
+        final_series=working["Final Sentiment"],
+    )
     distribution_records = distribution_df.to_dict(orient="records")
 
     examples_by_sentiment: dict[str, list[dict[str, Any]]] = {}

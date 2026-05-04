@@ -158,7 +158,8 @@ def _build_distribution_view(sentiment_dist: pd.DataFrame, sentiment_type: str, 
         color=alt.Color("Sentiment:N", scale=color_scale, legend=None),
         tooltip=[
             "Sentiment",
-            alt.Tooltip("Count:Q", format=","),
+            alt.Tooltip("Count:Q", format=",", title="Underlying stories"),
+            alt.Tooltip("Grouped Stories:Q", format=",", title="Grouped stories"),
             alt.Tooltip("Share:Q", format=".1%", title="Share"),
         ],
     )
@@ -232,7 +233,7 @@ with step1:
         st.rerun()
 with step2:
     if st.button(
-        "2. Run",
+        "2. AI First Pass",
         key="sentiment_nav_run",
         use_container_width=True,
         type="primary" if st.session_state.sentiment_section == "Run" else "secondary",
@@ -242,7 +243,7 @@ with step2:
         st.rerun()
 with step3:
     if st.button(
-        "3. AI Pre-Review",
+        "3. AI Second Opinion",
         key="sentiment_nav_pre_review",
         use_container_width=True,
         type="primary" if st.session_state.sentiment_section == "AI Pre-Review" else "secondary",
@@ -445,7 +446,7 @@ if st.session_state.sentiment_section == "Setup":
         st.rerun()
 
     if st.session_state.sentiment_config_step:
-        st.info("A sentiment dataset is already prepared. You can adjust the setup and prepare again, or move to Run.")
+        st.info("A sentiment dataset is already prepared. You can adjust the setup and prepare again, or move to AI First Pass.")
     st.stop()
 
 
@@ -463,7 +464,7 @@ remaining_count = len(remaining_df)
 
 if st.session_state.sentiment_section == "Run":
     st.session_state.sentiment_review_embedded = False
-    st.subheader("Step 2: Run AI Sentiment")
+    st.subheader("Step 2: AI First Pass")
     processed_count = len(st.session_state.df_sentiment_unique) - remaining_count
 
     top_col1, top_col2, top_col3, top_col4, top_col5 = st.columns(5)
@@ -494,7 +495,7 @@ if st.session_state.sentiment_section == "Run":
     with config_col3:
         st.caption(f"Model: {st.session_state.get('model_choice', DEFAULT_SENTIMENT_MODEL)}")
 
-    st.info("Run AI sentiment in batches on grouped stories from the prepared sentiment dataset.")
+    st.info("Run the first AI sentiment pass in batches on grouped stories from the prepared sentiment dataset.")
 
     if remaining_count == 0:
         batch_size = 0
@@ -519,7 +520,7 @@ if st.session_state.sentiment_section == "Run":
 
     st.write(f"Selected grouped stories for analysis: {len(batch_df):,}")
 
-    run_clicked = st.button("Run AI Sentiment", type="primary", disabled=(len(batch_df) == 0))
+    run_clicked = st.button("Run AI first pass", type="primary", disabled=(len(batch_df) == 0))
     reset_ai_clicked = st.button("Reset AI Results")
 
     if reset_ai_clicked:
@@ -529,6 +530,8 @@ if st.session_state.sentiment_section == "Run":
         )
         st.session_state.df_sentiment_unique = unique
         st.session_state.df_sentiment_grouped_rows = grouped
+        st.session_state.pop("sentiment_second_opinion_target_batch", None)
+        st.session_state.pop("sentiment_second_opinion_target_source_count", None)
         st.success("Reset AI sentiment results.")
         st.rerun()
 
@@ -641,8 +644,12 @@ if st.session_state.sentiment_section == "Run":
         with preview_col1:
             st.altair_chart(sentiment_chart, use_container_width=True)
         with preview_col2:
-            display_table = sentiment_table[["Sentiment", "Count", "Share Label"]].rename(
-                columns={"Share Label": "Share"}
+            display_table = sentiment_table[["Sentiment", "Count", "Grouped Stories", "Share Label"]].rename(
+                columns={
+                    "Count": "Underlying stories",
+                    "Grouped Stories": "Grouped stories",
+                    "Share Label": "Share",
+                }
             )
             st.dataframe(display_table, hide_index=True, use_container_width=True)
 
@@ -662,28 +669,13 @@ st.subheader("Step 5: Sentiment Insights")
 st.caption("Review the current final sentiment mix and generated narrative insights after AI sentiment and spot-check assignments.")
 
 sentiment_type = st.session_state.get("sentiment_type")
-sentiment_dist = build_sentiment_distribution(st.session_state.df_sentiment_unique, sentiment_type)
-
-dist_col1, dist_col2, dist_col3 = st.columns(3)
-with dist_col1:
-    st.metric("Grouped stories", f"{len(st.session_state.df_sentiment_unique):,}")
-with dist_col2:
-    remaining_now = get_remaining_sentiment_rows(
-        st.session_state.df_sentiment_unique,
-        st.session_state.df_sentiment_grouped_rows,
-    )
-    st.metric("Remaining unlabeled", f"{len(remaining_now):,}")
-with dist_col3:
-    assigned_count = int(
-        st.session_state.df_sentiment_unique.get("Assigned Sentiment", pd.Series(dtype="object")).fillna("").astype(str).str.strip().ne("").sum()
-    )
-    st.metric("Human-assigned", f"{assigned_count:,}")
-
 include_not_relevant_final = st.toggle(
     "Include Not Relevant in percentages",
     value=False,
     key="sentiment_distribution_include_nr_final",
 )
+
+sentiment_dist = build_sentiment_distribution(st.session_state.df_sentiment_unique, sentiment_type)
 
 sentiment_table, sentiment_chart = _build_distribution_view(
     sentiment_dist=sentiment_dist,
@@ -691,12 +683,33 @@ sentiment_table, sentiment_chart = _build_distribution_view(
     include_not_relevant=include_not_relevant_final,
 )
 
+dist_col1, dist_col2, dist_col3, dist_col4 = st.columns(4)
+with dist_col1:
+    st.metric("Grouped stories", f"{len(st.session_state.df_sentiment_unique):,}")
+with dist_col2:
+    st.metric("Underlying stories shown", f"{int(sentiment_table['Count'].sum()):,}")
+with dist_col3:
+    remaining_now = get_remaining_sentiment_rows(
+        st.session_state.df_sentiment_unique,
+        st.session_state.df_sentiment_grouped_rows,
+    )
+    st.metric("Remaining unlabeled", f"{len(remaining_now):,}")
+with dist_col4:
+    finalized_count = int(
+        st.session_state.df_sentiment_unique.get("Assigned Sentiment", pd.Series(dtype="object")).fillna("").astype(str).str.strip().ne("").sum()
+    )
+    st.metric("Finalized groups", f"{finalized_count:,}")
+
 dist_view1, dist_view2 = st.columns([1.35, 1], gap="large")
 with dist_view1:
     st.altair_chart(sentiment_chart, use_container_width=True)
 with dist_view2:
-    display_table = sentiment_table[["Sentiment", "Count", "Share Label"]].rename(
-        columns={"Share Label": "Share"}
+    display_table = sentiment_table[["Sentiment", "Count", "Grouped Stories", "Share Label"]].rename(
+        columns={
+            "Count": "Underlying stories",
+            "Grouped Stories": "Grouped stories",
+            "Share Label": "Share",
+        }
     )
     st.dataframe(display_table, hide_index=True, use_container_width=True)
 

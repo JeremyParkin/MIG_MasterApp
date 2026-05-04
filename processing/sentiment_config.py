@@ -609,7 +609,8 @@ def reset_sentiment_config_state(session_state) -> None:
     for k in [
         "sentiment_type", "model_choice",
         "pre_prompt", "post_prompt", "sentiment_instruction", "functions",
-        "highlight_keyword", "highlight_regex_str"
+        "highlight_keyword", "highlight_regex_str",
+        "sentiment_second_opinion_target_batch", "sentiment_second_opinion_target_source_count",
     ]:
         session_state.pop(k, None)
 

@@ -16,15 +16,36 @@ from utils.api_meter import extract_usage_tokens
 # ====================
 # Priority defaults
 # ====================
-W_GROUP = 0.40
-W_NEG = 0.35
+W_GROUP = 0.25
+W_NEG = 0.25
+W_MENTIONS = 0.15
 W_IMP = 0.15
+W_ER = 0.10
 W_LOWCF = 0.10
 DEFAULT_CONF_THRESH = 75
 
 DEFAULT_SECOND_OPINION_MODEL = "gpt-5.4-mini"
 MAX_RETRIES = 2
 DEFAULT_REVIEW_CONFIDENCE_THRESHOLD = 90
+
+
+def recommend_second_opinion_batch_size(
+    eligible_count: int,
+    *,
+    cap: int = 50,
+    prior_batch_size: int | None = None,
+) -> int:
+    eligible_count = max(0, int(eligible_count))
+    if eligible_count == 0:
+        return 0
+    sticky_floor = 0
+    if prior_batch_size is not None:
+        sticky_floor = max(0, int(prior_batch_size))
+    if eligible_count <= 12:
+        return min(eligible_count, max(sticky_floor, eligible_count))
+    if eligible_count <= 40:
+        return min(cap, eligible_count, max(sticky_floor, 12, round(eligible_count * 0.6)))
+    return min(cap, eligible_count, max(sticky_floor, 20, round(eligible_count * 0.35)))
 
 
 def _allowed_sentiment_labels(sentiment_type: str) -> list[str]:
@@ -249,6 +270,8 @@ def compute_candidates(
     df_grouped: pd.DataFrame,
     sentiment_type: str,
     conf_thresh: int = DEFAULT_CONF_THRESH,
+    *,
+    exclude_reviewed: bool = False,
 ) -> pd.DataFrame:
     us = df_unique.copy()
     dt = df_grouped.copy()
@@ -258,12 +281,18 @@ def compute_candidates(
     assigned_any = assigned_us | assigned_dt
 
     pool = us[(~us["Group ID"].isin(assigned_any)) & (us["AI Sentiment"].notna())].copy()
+    if exclude_reviewed and "Review AI Sentiment" in pool.columns:
+        review_present = pool["Review AI Sentiment"].fillna("").astype(str).str.strip()
+        pool = pool[review_present == ""].copy()
     if pool.empty:
         return pool
 
     pool["AI_UPPER"] = pool["AI Sentiment"].astype(str).str.upper().str.strip()
     pool["AI_CONF"] = pd.to_numeric(pool["AI Sentiment Confidence"], errors="coerce").fillna(100)
     pool["GROUP_CT"] = pd.to_numeric(pool.get("Group Count", 1), errors="coerce").fillna(1)
+    pool["MENTIONS_NUM"] = pd.to_numeric(pool.get("Mentions", 0), errors="coerce").fillna(0)
+    pool["IMP_NUM"] = pd.to_numeric(pool.get("Impressions", 0), errors="coerce").fillna(0)
+    pool["ER_NUM"] = pd.to_numeric(pool.get("Effective Reach", 0), errors="coerce").fillna(0)
 
     if sentiment_type == "3-way":
         pool["NEG_SCORE"] = pool["AI_UPPER"].map({"NEGATIVE": 1.0}).fillna(0.0)
@@ -278,22 +307,28 @@ def compute_candidates(
     max_gc = pool["GROUP_CT"].max()
     pool["GC_NORM"] = (pool["GROUP_CT"] / max_gc) if max_gc > 0 else 0.0
 
-    imp_col = next((c for c in ["Impressions", "impressions", "IMPRESSIONS"] if c in pool.columns), None)
-    if imp_col:
-        pool["_IMP"] = pd.to_numeric(pool[imp_col], errors="coerce").fillna(0)
-        max_imp = pool["_IMP"].max()
-        pool["IMP_NORM"] = (pool["_IMP"] / max_imp) if max_imp > 0 else 0.0
-    else:
-        pool["IMP_NORM"] = 0.0
+    max_mentions = pool["MENTIONS_NUM"].max()
+    pool["MENTIONS_NORM"] = (pool["MENTIONS_NUM"] / max_mentions) if max_mentions > 0 else 0.0
+
+    max_imp = pool["IMP_NUM"].max()
+    pool["IMP_NORM"] = (pool["IMP_NUM"] / max_imp) if max_imp > 0 else 0.0
+
+    max_er = pool["ER_NUM"].max()
+    pool["ER_NORM"] = (pool["ER_NUM"] / max_er) if max_er > 0 else 0.0
 
     pool["SCORE"] = (
         W_GROUP * pool["GC_NORM"] +
         W_NEG * pool["NEG_SCORE"] +
+        W_MENTIONS * pool["MENTIONS_NORM"] +
         W_IMP * pool["IMP_NORM"] +
+        W_ER * pool["ER_NORM"] +
         W_LOWCF * pool["LOWCONF"]
     )
 
-    pool = pool.sort_values(["SCORE", "GROUP_CT", "IMP_NORM"], ascending=[False, False, False]).reset_index(drop=True)
+    pool = pool.sort_values(
+        ["SCORE", "GROUP_CT", "MENTIONS_NUM", "IMP_NUM", "ER_NUM"],
+        ascending=[False, False, False, False, False],
+    ).reset_index(drop=True)
     return pool
 
 
@@ -419,13 +454,36 @@ def set_assigned_sentiment(
     df_grouped: pd.DataFrame,
     group_id: int,
     label: str,
+    *,
+    source: str = "HUMAN",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     unique = df_unique.copy()
     grouped = df_grouped.copy()
 
     for df in [unique, grouped]:
+        if "Assigned Sentiment Source" not in df.columns:
+            df["Assigned Sentiment Source"] = pd.NA
         mask = df["Group ID"] == group_id
         df.loc[mask, "Assigned Sentiment"] = label
+        df.loc[mask, "Assigned Sentiment Source"] = source
+
+    return unique, grouped
+
+
+def clear_assigned_sentiment(
+    df_unique: pd.DataFrame,
+    df_grouped: pd.DataFrame,
+    group_id: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    unique = df_unique.copy()
+    grouped = df_grouped.copy()
+
+    for df in [unique, grouped]:
+        if "Assigned Sentiment Source" not in df.columns:
+            df["Assigned Sentiment Source"] = pd.NA
+        mask = df["Group ID"] == group_id
+        df.loc[mask, "Assigned Sentiment"] = pd.NA
+        df.loc[mask, "Assigned Sentiment Source"] = pd.NA
 
     return unique, grouped
 
@@ -461,6 +519,7 @@ def ensure_review_columns(
         "Review AI Rationale": pd.NA,
         "AI Agreement": pd.NA,
         "Needs Human Review": pd.NA,
+        "Assigned Sentiment Source": pd.NA,
     }
 
     for df in [unique, grouped]:
@@ -586,10 +645,13 @@ def auto_assign_resolved_match_to_group(
     if not should_auto_assign:
         return unique, grouped, False
 
-    for df in [unique, grouped]:
-        mask = df["Group ID"] == group_id
-        df.loc[mask, "Assigned Sentiment"] = ai_label_clean
-
+    unique, grouped = set_assigned_sentiment(
+        unique,
+        grouped,
+        group_id,
+        ai_label_clean,
+        source="AI_AUTO_RESOLVED",
+    )
     return unique, grouped, True
 
 
@@ -645,7 +707,8 @@ def run_batch_second_opinion(
     limit: int = 50,
     max_workers: int = 8,
     low_conf_threshold: int = 60,
-) -> tuple[pd.DataFrame, pd.DataFrame, list[str], int, int]:
+    progress_callback=None,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str], int, int, int]:
     unique, grouped = ensure_review_columns(df_unique, df_grouped)
 
     working_candidates = candidates_df.head(limit).copy()
@@ -654,6 +717,9 @@ def run_batch_second_opinion(
     total_in = 0
     total_out = 0
     errors: list[str] = []
+    auto_resolved_count = 0
+    total = len(rows_for_workers)
+    completed = 0
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_map = {
@@ -673,6 +739,7 @@ def run_batch_second_opinion(
 
         for future in as_completed(future_map):
             idx = future_map[future]
+            completed += 1
 
             try:
                 _, result, note, in_tok, out_tok = future.result()
@@ -706,7 +773,7 @@ def run_batch_second_opinion(
                     low_conf_threshold=low_conf_threshold,
                 )
 
-                unique, grouped, _ = auto_assign_resolved_match_to_group(
+                unique, grouped, auto_resolved = auto_assign_resolved_match_to_group(
                     unique,
                     grouped,
                     gid,
@@ -715,11 +782,15 @@ def run_batch_second_opinion(
                     review_confidence=review_conf,
                     confidence_threshold=low_conf_threshold,
                 )
+                auto_resolved_count += int(bool(auto_resolved))
 
                 if note:
                     errors.append(f"Group {gid}: {note}")
 
             except Exception as e:
                 errors.append(f"Candidate {idx}: {e}")
+            finally:
+                if progress_callback is not None:
+                    progress_callback(completed, total)
 
-    return unique, grouped, errors, total_in, total_out
+    return unique, grouped, errors, total_in, total_out, auto_resolved_count

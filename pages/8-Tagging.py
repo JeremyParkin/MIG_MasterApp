@@ -105,11 +105,19 @@ def build_tag_distribution(df_tagging_unique: pd.DataFrame) -> pd.DataFrame:
     if working.empty:
         return pd.DataFrame(columns=["Tag", "Count", "Share"])
 
-    total_stories = int(len(working))
+    for col in ["Group Count"]:
+        if col not in working.columns:
+            working[col] = 1
+        working[col] = pd.to_numeric(working[col], errors="coerce").fillna(1)
+
     tag_counter: dict[str, int] = {}
-    for tags in working["_effective_tag_list"]:
+    grouped_story_counter: dict[str, int] = {}
+    for _, row in working.iterrows():
+        tags = row["_effective_tag_list"]
+        group_count = int(row.get("Group Count", 1) or 1)
         for tag in tags:
-            tag_counter[tag] = tag_counter.get(tag, 0) + 1
+            tag_counter[tag] = tag_counter.get(tag, 0) + group_count
+            grouped_story_counter[tag] = grouped_story_counter.get(tag, 0) + 1
 
     out = (
         pd.Series(tag_counter)
@@ -118,6 +126,8 @@ def build_tag_distribution(df_tagging_unique: pd.DataFrame) -> pd.DataFrame:
         .sort_values(["Count", "Tag"], ascending=[False, True])
         .reset_index(drop=True)
     )
+    out["Grouped Stories"] = out["Tag"].map(grouped_story_counter).fillna(0).astype(int)
+    total_stories = int(out["Count"].sum())
     out["Share"] = out["Count"] / total_stories if total_stories > 0 else 0.0
     return out
 
@@ -138,7 +148,8 @@ def build_tag_distribution_chart(tag_dist: pd.DataFrame) -> alt.Chart:
         x=alt.X("Count:Q", axis=alt.Axis(title=None, grid=True, tickMinStep=1)),
         tooltip=[
             "Tag",
-            alt.Tooltip("Count:Q", format=","),
+            alt.Tooltip("Count:Q", format=",", title="Underlying stories"),
+            alt.Tooltip("Grouped Stories:Q", format=",", title="Grouped stories"),
             alt.Tooltip("Share:Q", format=".1%", title="Share"),
         ],
     )
@@ -200,7 +211,7 @@ with step1:
         st.rerun()
 with step2:
     if st.button(
-        "2. Run",
+        "2. AI First Pass",
         key="tagging_nav_run",
         use_container_width=True,
         type="primary" if st.session_state.tagging_section == "Run" else "secondary",
@@ -209,7 +220,7 @@ with step2:
         st.rerun()
 with step3:
     if st.button(
-        "3. AI Pre-Review",
+        "3. AI Second Opinion",
         key="tagging_nav_pre_review",
         use_container_width=True,
         type="primary" if st.session_state.tagging_section == "AI Pre-Review" else "secondary",
@@ -394,7 +405,7 @@ if st.session_state.tagging_section == "Setup":
         st.rerun()
 
     if st.session_state.tagging_config_step:
-        st.info("A tagging dataset is already prepared. You can adjust the setup and prepare again, or move to Run.")
+        st.info("A tagging dataset is already prepared. You can adjust the setup and prepare again, or move to AI First Pass.")
     st.stop()
 
 # =========================
@@ -409,7 +420,7 @@ remaining_df = get_remaining_tagging_rows(st.session_state.df_tagging_unique)
 remaining_count = len(remaining_df)
 
 if st.session_state.tagging_section == "Run":
-    st.subheader("Step 2: Run AI Tagging")
+    st.subheader("Step 2: AI First Pass")
     processed_count = len(st.session_state.df_tagging_unique) - remaining_count
 
     top_col1, top_col2, top_col3, top_col4, top_col5 = st.columns(5)
@@ -460,7 +471,7 @@ if st.session_state.tagging_section == "Run":
 
     st.write(f"Selected grouped stories for analysis: {len(batch_df):,}")
 
-    apply_clicked = st.button("Apply Tags", type="primary", disabled=(len(batch_df) == 0))
+    apply_clicked = st.button("Run AI first pass", type="primary", disabled=(len(batch_df) == 0))
     reset_results_clicked = st.button("Reset Processed Rows")
 
     if reset_results_clicked:
@@ -471,6 +482,8 @@ if st.session_state.tagging_section == "Run":
         st.session_state.df_tagging_unique = unique
         st.session_state.df_tagging_rows = rows
         st.session_state.tagging_observation_output = None
+        st.session_state.pop("tagging_second_opinion_target_batch", None)
+        st.session_state.pop("tagging_second_opinion_target_source_count", None)
         st.success("Reset AI tagging results.")
         st.rerun()
 
@@ -577,40 +590,46 @@ if st.session_state.tagging_section == "Spot Checks":
 st.subheader("Step 5: Tagging Insights")
 st.caption("Review the current tag distribution, generate report-ready tag observations, and inspect the grouped dataset when needed.")
 
-review_col1, review_col2, review_col3 = st.columns(3)
-with review_col1:
-    st.metric("Grouped stories", f"{len(st.session_state.df_tagging_unique):,}")
-with review_col2:
-    tagged_df = get_remaining_tagging_rows(st.session_state.df_tagging_unique)
-    processed_count = len(st.session_state.df_tagging_unique) - len(tagged_df)
-    st.metric("Processed stories", f"{processed_count:,}")
-with review_col3:
-    st.metric("Remaining stories", f"{len(tagged_df):,}")
-
-st.subheader("Distribution")
-tag_dist = build_tag_distribution(st.session_state.df_tagging_unique)
 include_other = st.toggle(
     "Include Other in percentages",
     value=False,
     key="tagging_distribution_include_other",
 )
 
-if tag_dist.empty:
-    st.caption("No AI tags have been assigned yet.")
+tag_dist = build_tag_distribution(st.session_state.df_tagging_unique)
+if include_other:
     filtered_dist = tag_dist.copy()
 else:
-    filtered_dist = tag_dist.copy()
-    if not include_other:
-        filtered_dist = filtered_dist[
-            filtered_dist["Tag"].fillna("").astype(str).str.strip().str.lower() != "other"
-        ].copy()
+    filtered_dist = tag_dist[
+        tag_dist["Tag"].fillna("").astype(str).str.strip().str.lower() != "other"
+    ].copy()
 
+review_col1, review_col2, review_col3, review_col4 = st.columns(4)
+with review_col1:
+    st.metric("Grouped stories", f"{len(st.session_state.df_tagging_unique):,}")
+with review_col2:
+    st.metric("Underlying stories shown", f"{int(filtered_dist['Count'].sum()) if not filtered_dist.empty else 0:,}")
+with review_col3:
+    tagged_df = get_remaining_tagging_rows(st.session_state.df_tagging_unique)
+    processed_count = len(st.session_state.df_tagging_unique) - len(tagged_df)
+    st.metric("With 1st opinion", f"{processed_count:,}")
+with review_col4:
+    finalized_count = int(
+        st.session_state.df_tagging_unique.get("Assigned Tag", pd.Series(dtype="object")).fillna("").astype(str).str.strip().ne("").sum()
+    )
+    st.metric("Finalized groups", f"{finalized_count:,}")
+
+st.subheader("Distribution")
+if tag_dist.empty:
+    st.caption("No AI tags have been assigned yet.")
+else:
     dist_col1, dist_col2 = st.columns([1.35, 1], gap="large")
     with dist_col1:
         st.altair_chart(build_tag_distribution_chart(filtered_dist), use_container_width=True)
     with dist_col2:
         tag_table = filtered_dist.copy()
         tag_table["Share"] = (tag_table["Share"] * 100).map(lambda x: f"{x:.1f}%")
+        tag_table = tag_table.rename(columns={"Count": "Underlying stories", "Grouped Stories": "Grouped stories"})
         st.dataframe(tag_table, use_container_width=True, hide_index=True)
 
 st.divider()
@@ -628,6 +647,7 @@ with obs_button_col:
                 selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
             )
             st.session_state.tagging_observation_output = observation_output
+            st.session_state.tagging_observation_include_other = include_other
         except Exception as e:
             st.session_state.tagging_observation_output = {"_error": str(e)}
         st.rerun()
@@ -700,6 +720,9 @@ observation_output = st.session_state.get("tagging_observation_output")
 if observation_output and observation_output.get("_error"):
     st.error(f"Could not generate tag observations: {observation_output['_error']}")
 elif observation_output:
+    if st.session_state.get("tagging_observation_include_other", True) != include_other:
+        st.info("The current observations were generated with a different Include Other setting. Regenerate if you want them aligned to the current distribution view.")
+
     overall_observation = str(observation_output.get("overall_observation", "") or "").strip()
     if overall_observation:
         st.markdown("### Overall Observations")
