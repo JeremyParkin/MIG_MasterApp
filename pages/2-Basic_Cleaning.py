@@ -11,6 +11,7 @@ from ui.page_help import set_page_help_context
 
 from processing.standard_cleaning import run_standard_cleaning
 from processing.coverage_flags import add_coverage_flags
+from processing.data_quality import build_data_quality_warnings
 from processing.effective_reach import (
     apply_effective_reach_traditional,
     apply_effective_reach_social,
@@ -333,6 +334,17 @@ def render_dataset_expander(
         render_preview_dataframe(df, preview_rows=preview_rows)
 
 
+def render_data_quality_checks(df: pd.DataFrame) -> None:
+    warnings_list = build_data_quality_warnings(df)
+    with st.expander(f"Data Quality Checks ({len(warnings_list)} warning{'s' if len(warnings_list) != 1 else ''})", expanded=bool(warnings_list)):
+        if not warnings_list:
+            st.info("No high-signal data-quality warnings were detected in the normalized upload.")
+            return
+        st.warning("The app can still proceed, but these issues may weaken some downstream workflows.")
+        warning_markdown = "\n".join(f"- {message}" for message in warnings_list)
+        st.markdown(warning_markdown)
+
+
 ensure_basic_cleaning_state()
 
 if not st.session_state.get("upload_step", False):
@@ -343,6 +355,8 @@ source_df_for_page = get_pre_standard_source_df()
 if source_df_for_page.empty:
     st.error("Uploaded data is missing or empty. Please return to Getting Started.")
     st.stop()
+
+render_data_quality_checks(source_df_for_page)
 
 
 if st.session_state.standard_step:
