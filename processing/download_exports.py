@@ -1112,6 +1112,27 @@ def _docx_add_example_block(
         m.paragraph_format.space_after = 0
 
 
+def _docx_add_linked_story_title(
+    document,
+    title: str,
+    url: str = "",
+) -> None:
+    title = str(title or "").strip()
+    url = str(url or "").strip()
+    if not title:
+        return
+
+    paragraph = document.add_paragraph()
+    paragraph.paragraph_format.space_after = 0
+    if url:
+        _docx_add_hyperlink(paragraph, title, url)
+        if paragraph.runs:
+            paragraph.runs[-1].bold = True
+    else:
+        run = paragraph.add_run(title)
+        run.bold = True
+
+
 def _format_metric_parts(parts: list[tuple[str, Any]]) -> str:
     formatted: list[str] = []
     for label, value in parts:
@@ -1391,7 +1412,9 @@ def _iter_top_story_blocks(session_state) -> tuple[str, list[dict[str, Any]]]:
         blocks.append(
             {
                 "title": headline,
-                "url": _safe_string(row.get("Example URL", "")),
+                "url": _safe_string(row.get("Example URL", ""))
+                or _safe_string(row.get("URL", ""))
+                or _safe_string(row.get("Representative URL", "")),
                 "summary": summary,
                 "metrics": _format_metric_parts(
                     [
@@ -1464,7 +1487,11 @@ def build_report_copy_docx_bytes(session_state) -> bytes:
             document.add_heading("Overall Observations", level=2)
             document.add_paragraph(top_story_overall)
         for block in top_story_blocks:
-            document.add_heading(block["title"], level=2)
+            _docx_add_linked_story_title(
+                document,
+                block["title"],
+                url=block.get("url", ""),
+            )
             if block.get("summary"):
                 document.add_paragraph(block["summary"])
             if block.get("metrics"):
