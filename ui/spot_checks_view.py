@@ -432,11 +432,25 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
     _s = str(_raw_st).strip().lower()
     sentiment_type = "5-way" if _s.startswith("5") or "5-way" in _s else "3-way"
     
-    keywords = st.session_state.get("highlight_keyword", [])
-    if not isinstance(keywords, list):
-        keywords = [str(keywords)] if keywords else []
-    keywords = [k for k in keywords if isinstance(k, str) and k.strip()]
-    tolerant_pat_str = st.session_state.get("highlight_regex_str")
+    display_keywords: list[str] = []
+    display_keywords.extend(analysis_payload.get("primary_names", []))
+    display_keywords.extend(analysis_payload.get("alternate_names", []))
+    display_keywords.extend(analysis_payload.get("spokespeople", []))
+    display_keywords.extend(analysis_payload.get("products", []))
+    display_keywords.extend(analysis_payload.get("highlight_keywords", []))
+    seen_cf: set[str] = set()
+    keywords: list[str] = []
+    for item in display_keywords:
+        cleaned = str(item or "").strip()
+        if not cleaned:
+            continue
+        cf = cleaned.casefold()
+        if cf in seen_cf:
+            continue
+        seen_cf.add(cf)
+        keywords.append(cleaned)
+    from processing.sentiment_config import build_tolerant_regex_str
+    tolerant_pat_str = build_tolerant_regex_str(keywords)
     
     review_base_candidates = compute_candidates(
         df_unique=st.session_state.df_sentiment_unique,
