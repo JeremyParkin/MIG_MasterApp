@@ -13,7 +13,11 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
     
     import pandas as pd
     import streamlit as st
-    from processing.ai_sentiment import build_sentiment_distribution
+    from processing.ai_sentiment import (
+        build_effective_ai_sentiment_confidence_series,
+        build_effective_ai_sentiment_series,
+        build_sentiment_distribution,
+    )
     from processing.spot_checks import (
         DEFAULT_CONF_THRESH,
         DEFAULT_SECOND_OPINION_MODEL,
@@ -230,28 +234,76 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
             return pd.DataFrame()
 
         working = unique_df.copy()
-        ai_label = working.get("AI Sentiment", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.strip()
-        pool = working[ai_label != ""].copy()
+        assigned = working.get("Assigned Sentiment", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.strip()
+        effective_ai = build_effective_ai_sentiment_series(working)
+        final_label = assigned.where(assigned != "", effective_ai).fillna("").astype(str).str.strip().str.upper()
+        pool = working[final_label != ""].copy()
         if pool.empty:
             return pool
+
+        pool["__effective_sentiment__"] = final_label.loc[pool.index]
+        pool["__effective_ai_confidence__"] = build_effective_ai_sentiment_confidence_series(working).loc[pool.index]
+        pool["__assigned_blank__"] = assigned.loc[pool.index].eq("")
+        pool["__needs_review__"] = working.get("Needs Human Review", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.strip().eq("Yes").loc[pool.index]
+        pool["__disagreement__"] = working.get("AI Agreement", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.strip().eq("Disagree").loc[pool.index]
 
         for col in ["Mentions", "Impressions", "Effective Reach"]:
             if col not in pool.columns:
                 pool[col] = 0
             pool[col] = pd.to_numeric(pool[col], errors="coerce").fillna(0)
 
-        pool["AI Sentiment Confidence"] = pd.to_numeric(
-            pool.get("AI Sentiment Confidence", pd.Series(index=pool.index, dtype="float")),
-            errors="coerce",
-        ).fillna(-1)
+        pool["__effective_ai_confidence__"] = pd.to_numeric(pool["__effective_ai_confidence__"], errors="coerce").fillna(-1)
         pool = (
             pool.sort_values(
-                ["Mentions", "Impressions", "Effective Reach", "AI Sentiment Confidence"],
-                ascending=[False, False, False, False],
+                [
+                    "__needs_review__",
+                    "__disagreement__",
+                    "__assigned_blank__",
+                    "Mentions",
+                    "Impressions",
+                    "Effective Reach",
+                    "__effective_ai_confidence__",
+                ],
+                ascending=[False, False, False, False, False, False, True],
             )
             .reset_index(drop=True)
         )
         return pool
+
+
+    def build_all_sentiment_candidates(unique_df: pd.DataFrame) -> pd.DataFrame:
+        if unique_df is None or unique_df.empty:
+            return pd.DataFrame()
+
+        working = unique_df.copy()
+        assigned = working.get("Assigned Sentiment", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.strip()
+        effective_ai = build_effective_ai_sentiment_series(working)
+        final_label = assigned.where(assigned != "", effective_ai).fillna("").astype(str).str.strip().str.upper()
+        working["__effective_sentiment__"] = final_label
+        working["__effective_ai_confidence__"] = build_effective_ai_sentiment_confidence_series(working)
+        working["__assigned_blank__"] = assigned.eq("")
+        working["__needs_review__"] = working.get("Needs Human Review", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.strip().eq("Yes")
+        working["__disagreement__"] = working.get("AI Agreement", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.strip().eq("Disagree")
+        for col in ["Mentions", "Impressions", "Effective Reach"]:
+            if col not in working.columns:
+                working[col] = 0
+            working[col] = pd.to_numeric(working[col], errors="coerce").fillna(0)
+        working["__effective_ai_confidence__"] = pd.to_numeric(working["__effective_ai_confidence__"], errors="coerce").fillna(-1)
+        return (
+            working.sort_values(
+                [
+                    "__needs_review__",
+                    "__disagreement__",
+                    "__assigned_blank__",
+                    "Mentions",
+                    "Impressions",
+                    "Effective Reach",
+                    "__effective_ai_confidence__",
+                ],
+                ascending=[False, False, False, False, False, False, True],
+            )
+            .reset_index(drop=True)
+        )
     
     
     # def build_sentiment_distribution(df_unique: pd.DataFrame, sentiment_type: str) -> pd.DataFrame:
@@ -590,21 +642,104 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         st.session_state.get("spotcheck_low_conf_threshold", DEFAULT_REVIEW_CONFIDENCE_THRESHOLD)
     )
     
-    review_mode = st.radio(
-        "Review queue",
-        ["Flagged for human review", "Disagreements only", "All unresolved stories", "All Toned Coverage"],
-        horizontal=True,
-        label_visibility="collapsed",
-        key="spotcheck_review_mode",
-    )
+    all_coverage_candidates = build_all_sentiment_candidates(st.session_state.df_sentiment_unique)
+    sentiment_bucket_options = [
+        label
+        for label in (
+            [
+                "POSITIVE",
+                "NEUTRAL",
+                "NEGATIVE",
+                "NOT RELEVANT",
+            ]
+            if sentiment_type == "3-way"
+            else [
+                "VERY POSITIVE",
+                "SOMEWHAT POSITIVE",
+                "NEUTRAL",
+                "SOMEWHAT NEGATIVE",
+                "VERY NEGATIVE",
+                "NOT RELEVANT",
+            ]
+        )
+        if not all_coverage_candidates.empty
+        and "__effective_sentiment__" in all_coverage_candidates.columns
+        and all_coverage_candidates["__effective_sentiment__"].eq(label).any()
+    ]
 
-    review_source_df = all_toned_candidates if review_mode == "All Toned Coverage" else review_base_candidates
+    view_col1, view_col2 = st.columns([1.2, 1], gap="medium")
+    with view_col1:
+        review_mode = st.selectbox(
+            "Spot check view",
+            [
+                "Flagged for human review",
+                "Disagreements only",
+                "All unresolved stories",
+                "All Toned Coverage",
+                "All Coverage",
+                "Specific Sentiment Bucket",
+            ],
+            key="spotcheck_review_mode",
+        )
+    selected_bucket = None
+    with view_col2:
+        if review_mode == "Specific Sentiment Bucket":
+            selected_bucket = st.selectbox(
+                "Sentiment bucket",
+                sentiment_bucket_options or ["No labeled buckets available"],
+                key="spotcheck_selected_bucket",
+                disabled=not sentiment_bucket_options,
+            )
 
-    if spot_checks_mode == "spot_checks":
-        pending_candidates = filter_candidates_for_review_mode(
-            review_source_df,
+    if review_mode == "All Toned Coverage":
+        review_source_df = all_toned_candidates
+    elif review_mode == "All Coverage":
+        review_source_df = all_coverage_candidates
+    elif review_mode == "Specific Sentiment Bucket":
+        review_source_df = all_coverage_candidates
+    else:
+        review_source_df = review_base_candidates
+
+    def _build_candidates_for_current_view(unique_df: pd.DataFrame, grouped_df: pd.DataFrame) -> pd.DataFrame:
+        base_review_df = compute_candidates(
+            df_unique=unique_df,
+            df_grouped=grouped_df,
+            sentiment_type=sentiment_type,
+            conf_thresh=DEFAULT_CONF_THRESH,
+        )
+        toned_df = build_all_toned_candidates(unique_df)
+        coverage_df = build_all_sentiment_candidates(unique_df)
+        if review_mode == "All Toned Coverage":
+            source_df = toned_df
+        elif review_mode == "All Coverage":
+            source_df = coverage_df
+        elif review_mode == "Specific Sentiment Bucket":
+            source_df = coverage_df
+        else:
+            source_df = base_review_df
+        filtered = filter_candidates_for_review_mode(
+            source_df,
             review_mode=review_mode,
             low_conf_threshold=low_conf_threshold,
+        )
+        if review_mode == "Specific Sentiment Bucket":
+            if selected_bucket and selected_bucket != "No labeled buckets available":
+                filtered = filtered[
+                    filtered.get("__effective_sentiment__", pd.Series(index=filtered.index, dtype="object"))
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                    .str.upper()
+                    .eq(str(selected_bucket).strip().upper())
+                ].copy()
+            else:
+                filtered = pd.DataFrame()
+        return filtered
+
+    if spot_checks_mode == "spot_checks":
+        pending_candidates = _build_candidates_for_current_view(
+            st.session_state.df_sentiment_unique,
+            st.session_state.df_sentiment_grouped_rows,
         )
         summary1, summary2, summary3, summary4 = st.columns(4)
         with summary1:
@@ -616,12 +751,14 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         with summary4:
             st.metric("In review queue", f"{len(pending_candidates):,}")
     
-    candidates = filter_candidates_for_review_mode(
-        review_source_df,
-        review_mode=review_mode,
-        low_conf_threshold=low_conf_threshold,
+    candidates = _build_candidates_for_current_view(
+        st.session_state.df_sentiment_unique,
+        st.session_state.df_sentiment_grouped_rows,
     )
-    st.caption("This filter changes the queue used by Prev/Next. Flagged focuses on stories marked for human review, Disagreements focuses only on first-vs-second AI mismatches, and All Toned Coverage shows every story the AI has labeled.")
+    st.caption(
+        "Flagged, Disagreements, and All unresolved keep the queue focused on review priority. "
+        "All Coverage and bucket views broaden the browse set, but still sort unresolved and higher-visibility stories toward the top."
+    )
     
     if candidates.empty:
         st.info("No stories match the current view.")
@@ -803,9 +940,11 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         if st.session_state.spot_ai_loading:
             st.info("AI is working…")
         else:
+            current_assignment_source = row_fresh.get("Assigned Sentiment Source")
+            current_assignment_source = "" if pd.isna(current_assignment_source) else str(current_assignment_source).strip()
             if agreement == "Disagree":
                 st.warning("AI opinions disagree.")
-            elif agreement == "Match" and needs_review != "Yes":
+            elif current_assignment_source == "AI_AUTO_RESOLVED":
                 st.success("Auto-resolved by AI (high confidence match).")
             elif needs_review == "Yes":
                 st.info("Flagged for review.")
@@ -834,16 +973,9 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
                 final_label,
             )
     
-            new_base = compute_candidates(
+            new_filtered = _build_candidates_for_current_view(
                 st.session_state.df_sentiment_unique,
                 st.session_state.df_sentiment_grouped_rows,
-                sentiment_type,
-                DEFAULT_CONF_THRESH,
-            )
-            new_filtered = filter_candidates_for_review_mode(
-                new_base,
-                review_mode=review_mode,
-                low_conf_threshold=low_conf_threshold,
             )
     
             if new_filtered.empty:

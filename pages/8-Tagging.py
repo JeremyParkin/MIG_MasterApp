@@ -574,6 +574,13 @@ if st.session_state.tagging_section == "Run":
 # STEP 3: AI PRE-REVIEW
 # =========================
 if st.session_state.tagging_section == "AI Pre-Review":
+    tagging_unique_df = st.session_state.get("df_tagging_unique")
+    if not isinstance(tagging_unique_df, pd.DataFrame) or tagging_unique_df.empty:
+        st.info("Complete Step 1: Setup before using AI Second Opinion.")
+        st.stop()
+    if tagging_unique_df.get("AI Tag", pd.Series(index=tagging_unique_df.index, dtype="object")).fillna("").astype(str).str.strip().eq("").all():
+        st.info("Run Step 2: AI First Pass before using AI Second Opinion.")
+        st.stop()
     render_tagging_review_page(review_stage="pre_review")
     st.stop()
 
@@ -581,12 +588,26 @@ if st.session_state.tagging_section == "AI Pre-Review":
 # STEP 4: SPOT CHECKS
 # =========================
 if st.session_state.tagging_section == "Spot Checks":
+    tagging_unique_df = st.session_state.get("df_tagging_unique")
+    if not isinstance(tagging_unique_df, pd.DataFrame) or tagging_unique_df.empty:
+        st.info("Complete Step 1: Setup before using Spot Checks.")
+        st.stop()
+    if tagging_unique_df.get("AI Tag", pd.Series(index=tagging_unique_df.index, dtype="object")).fillna("").astype(str).str.strip().eq("").all():
+        st.info("Run Step 2: AI First Pass before using Spot Checks.")
+        st.stop()
     render_tagging_review_page(review_stage="spot_checks")
     st.stop()
 
 # =========================
 # STEP 5: REVIEW OUTPUTS
 # =========================
+tagging_unique_df = st.session_state.get("df_tagging_unique")
+if not isinstance(tagging_unique_df, pd.DataFrame) or tagging_unique_df.empty:
+    st.info("Complete Step 1: Setup before using Insights.")
+    st.stop()
+if tagging_unique_df.get("AI Tag", pd.Series(index=tagging_unique_df.index, dtype="object")).fillna("").astype(str).str.strip().eq("").all():
+    st.info("Run Step 2: AI First Pass before using Insights.")
+    st.stop()
 st.subheader("Step 5: Tagging Insights")
 st.caption("Review the current tag distribution, generate report-ready tag observations, and inspect the grouped dataset when needed.")
 

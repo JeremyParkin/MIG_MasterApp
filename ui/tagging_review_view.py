@@ -16,6 +16,8 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         compute_tag_review_candidates,
         ensure_tag_review_columns,
         filter_tag_candidates_for_review_mode,
+        get_effective_ai_tag_confidence_series,
+        get_effective_tag_series,
         normalize_tag_list,
         recommend_tag_second_opinion_batch_size,
         run_batch_tag_second_opinion,
@@ -246,15 +248,109 @@ def render_tagging_review_page(*, review_stage: str) -> None:
     st.subheader("Step 4: Tag Spot Checks")
     st.caption("Review, correct, and finalize tag decisions on grouped stories that still need human judgment.")
 
-    review_mode = st.radio(
-        "Review queue",
-        ["Flagged for human review", "Disagreements only", "All unresolved stories", "All Tagged Coverage"],
-        horizontal=True,
-        label_visibility="collapsed",
-        key="tagging_review_mode",
-    )
-    review_source_df = all_tagged_candidates if review_mode == "All Tagged Coverage" else review_base_candidates
-    candidates = filter_tag_candidates_for_review_mode(review_source_df, review_mode)
+    def build_all_tagging_candidates(unique_df: pd.DataFrame) -> pd.DataFrame:
+        if unique_df is None or unique_df.empty:
+            return pd.DataFrame()
+
+        working = unique_df.copy()
+        working["__effective_tag__"] = get_effective_tag_series(working).fillna("").astype(str).str.strip()
+        working["__effective_ai_confidence__"] = get_effective_ai_tag_confidence_series(working)
+        working["__assigned_blank__"] = working.get("Assigned Tag", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.strip().eq("")
+        working["__needs_review__"] = working.get("Needs Human Review", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.strip().eq("Yes")
+        working["__disagreement__"] = working.get("AI Tag Agreement", pd.Series(index=working.index, dtype="object")).fillna("").astype(str).str.strip().eq("Disagree")
+        for col in ["Mentions", "Impressions", "Effective Reach"]:
+            if col not in working.columns:
+                working[col] = 0
+            working[col] = pd.to_numeric(working[col], errors="coerce").fillna(0)
+        working["__effective_ai_confidence__"] = pd.to_numeric(working["__effective_ai_confidence__"], errors="coerce").fillna(-1)
+        return (
+            working.sort_values(
+                [
+                    "__needs_review__",
+                    "__disagreement__",
+                    "__assigned_blank__",
+                    "Mentions",
+                    "Impressions",
+                    "Effective Reach",
+                    "__effective_ai_confidence__",
+                ],
+                ascending=[False, False, False, False, False, False, True],
+            )
+            .reset_index(drop=True)
+        )
+
+    all_coverage_candidates = build_all_tagging_candidates(st.session_state.df_tagging_unique)
+    available_tag_buckets: list[str] = []
+    if not all_coverage_candidates.empty and "__effective_tag__" in all_coverage_candidates.columns:
+        seen_tags: set[str] = set()
+        for value in all_coverage_candidates["__effective_tag__"].fillna("").astype(str):
+            for tag_label in normalize_tag_list(value):
+                key = tag_label.casefold()
+                if key in seen_tags:
+                    continue
+                seen_tags.add(key)
+                available_tag_buckets.append(tag_label)
+        available_tag_buckets = sorted(available_tag_buckets, key=str.casefold)
+
+    view_col1, view_col2 = st.columns([1.2, 1], gap="medium")
+    with view_col1:
+        review_mode = st.selectbox(
+            "Spot check view",
+            [
+                "Flagged for human review",
+                "Disagreements only",
+                "All unresolved stories",
+                "All Tagged Coverage",
+                "All Coverage",
+                "Specific Tag Bucket",
+            ],
+            key="tagging_review_mode",
+        )
+    selected_tag_bucket = None
+    with view_col2:
+        if review_mode == "Specific Tag Bucket":
+            selected_tag_bucket = st.selectbox(
+                "Tag bucket",
+                available_tag_buckets or ["No labeled buckets available"],
+                key="tagging_selected_bucket",
+                disabled=not available_tag_buckets,
+            )
+
+    if review_mode == "All Tagged Coverage":
+        review_source_df = all_tagged_candidates
+    elif review_mode == "All Coverage":
+        review_source_df = all_coverage_candidates
+    elif review_mode == "Specific Tag Bucket":
+        review_source_df = all_coverage_candidates
+    else:
+        review_source_df = review_base_candidates
+    def _build_candidates_for_current_view(unique_df: pd.DataFrame) -> pd.DataFrame:
+        base_review_df = compute_tag_review_candidates(unique_df, exclude_reviewed=False)
+        tagged_df = compute_all_tagged_candidates(unique_df)
+        coverage_df = build_all_tagging_candidates(unique_df)
+        if review_mode == "All Tagged Coverage":
+            source_df = tagged_df
+        elif review_mode == "All Coverage":
+            source_df = coverage_df
+        elif review_mode == "Specific Tag Bucket":
+            source_df = coverage_df
+        else:
+            source_df = base_review_df
+        filtered = filter_tag_candidates_for_review_mode(source_df, review_mode)
+        if review_mode == "Specific Tag Bucket":
+            if selected_tag_bucket and selected_tag_bucket != "No labeled buckets available":
+                selected_key = str(selected_tag_bucket).strip().casefold()
+                filtered = filtered[
+                    filtered.get("__effective_tag__", pd.Series(index=filtered.index, dtype="object"))
+                    .fillna("")
+                    .astype(str)
+                    .map(lambda value: selected_key in {tag.casefold() for tag in normalize_tag_list(value)})
+                ].copy()
+            else:
+                filtered = pd.DataFrame()
+        return filtered
+
+    candidates = _build_candidates_for_current_view(st.session_state.df_tagging_unique)
 
     summary1, summary2, summary3, summary4 = st.columns(4)
     with summary1:
@@ -265,6 +361,11 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         st.metric("Disagreements", f"{disagreement_count:,}")
     with summary4:
         st.metric("In review queue", f"{len(candidates):,}")
+
+    st.caption(
+        "Flagged, Disagreements, and All unresolved keep the queue focused on review priority. "
+        "All Coverage and bucket views broaden the browse set, but still sort unresolved and higher-visibility stories toward the top."
+    )
 
     if candidates.empty:
         st.info("No grouped stories match the current view.")
@@ -469,12 +570,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         )
         sync_tagging_state(unique2, rows2)
 
-        new_base = compute_tag_review_candidates(st.session_state.df_tagging_unique)
-        new_all_tagged = compute_all_tagged_candidates(st.session_state.df_tagging_unique)
-        new_filtered = filter_tag_candidates_for_review_mode(
-            new_all_tagged if review_mode == "All Tagged Coverage" else new_base,
-            review_mode,
-        )
+        new_filtered = _build_candidates_for_current_view(st.session_state.df_tagging_unique)
         if new_filtered.empty:
             st.rerun()
         else:

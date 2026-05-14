@@ -675,15 +675,45 @@ if st.session_state.sentiment_section == "Run":
     st.stop()
 
 if st.session_state.sentiment_section == "AI Pre-Review":
+    if not st.session_state.get("sentiment_config_step", False):
+        st.info("Complete Step 1: Setup before using AI Second Opinion.")
+        st.stop()
+    sentiment_unique_df = st.session_state.get("df_sentiment_unique")
+    if not isinstance(sentiment_unique_df, pd.DataFrame) or sentiment_unique_df.empty:
+        st.info("Prepare the sentiment dataset in Step 1 before using AI Second Opinion.")
+        st.stop()
+    if sentiment_unique_df.get("AI Sentiment", pd.Series(index=sentiment_unique_df.index, dtype="object")).fillna("").astype(str).str.strip().eq("").all():
+        st.info("Run Step 2: AI First Pass before using AI Second Opinion.")
+        st.stop()
     render_spot_checks_page(embedded_review=True, spot_checks_mode="pre_review")
     st.stop()
 
 if st.session_state.sentiment_section == "Spot Checks":
+    if not st.session_state.get("sentiment_config_step", False):
+        st.info("Complete Step 1: Setup before using Spot Checks.")
+        st.stop()
+    sentiment_unique_df = st.session_state.get("df_sentiment_unique")
+    if not isinstance(sentiment_unique_df, pd.DataFrame) or sentiment_unique_df.empty:
+        st.info("Prepare the sentiment dataset in Step 1 before using Spot Checks.")
+        st.stop()
+    if sentiment_unique_df.get("AI Sentiment", pd.Series(index=sentiment_unique_df.index, dtype="object")).fillna("").astype(str).str.strip().eq("").all():
+        st.info("Run Step 2: AI First Pass before using Spot Checks.")
+        st.stop()
     render_spot_checks_page(embedded_review=True, spot_checks_mode="spot_checks")
     st.stop()
 
 st.session_state.sentiment_review_embedded = False
 st.session_state.spot_checks_mode = "distribution"
+if not st.session_state.get("sentiment_config_step", False):
+    st.info("Complete Step 1: Setup before using Insights.")
+    st.stop()
+sentiment_unique_df = st.session_state.get("df_sentiment_unique")
+if not isinstance(sentiment_unique_df, pd.DataFrame) or sentiment_unique_df.empty:
+    st.info("Prepare the sentiment dataset in Step 1 before using Insights.")
+    st.stop()
+if sentiment_unique_df.get("AI Sentiment", pd.Series(index=sentiment_unique_df.index, dtype="object")).fillna("").astype(str).str.strip().eq("").all():
+    st.info("Run Step 2: AI First Pass before using Insights.")
+    st.stop()
 st.subheader("Step 5: Sentiment Insights")
 st.caption("Review the current final sentiment mix and generated narrative insights after AI sentiment and spot-check assignments.")
 
