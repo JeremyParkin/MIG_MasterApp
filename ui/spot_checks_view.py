@@ -433,7 +433,9 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
     sentiment_type = "5-way" if _s.startswith("5") or "5-way" in _s else "3-way"
     
     display_keywords: list[str] = []
-    display_keywords.extend(analysis_payload.get("primary_names", []))
+    primary_name = str(analysis_payload.get("primary_name", "") or "").strip()
+    if primary_name:
+        display_keywords.append(primary_name)
     display_keywords.extend(analysis_payload.get("alternate_names", []))
     display_keywords.extend(analysis_payload.get("spokespeople", []))
     display_keywords.extend(analysis_payload.get("products", []))

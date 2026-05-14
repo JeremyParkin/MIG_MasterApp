@@ -410,7 +410,9 @@ def render_tagging_review_page(*, review_stage: str) -> None:
 
     analysis_payload = get_analysis_context_payload(st.session_state)
     display_keywords = []
-    display_keywords.extend(analysis_payload.get("primary_names", []))
+    primary_name = _safe_text(analysis_payload.get("primary_name", ""))
+    if primary_name:
+        display_keywords.append(primary_name)
     display_keywords.extend(analysis_payload.get("alternate_names", []))
     display_keywords.extend(analysis_payload.get("spokespeople", []))
     display_keywords.extend(analysis_payload.get("products", []))
