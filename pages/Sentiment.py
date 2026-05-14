@@ -129,6 +129,11 @@ def _build_distribution_view(sentiment_dist: pd.DataFrame, sentiment_type: str, 
     order = _get_sentiment_order(sentiment_type)
     working = sentiment_dist.copy()
 
+    if "Count" not in working.columns:
+        working["Count"] = 0
+    if "Grouped Stories" not in working.columns:
+        working["Grouped Stories"] = 0
+
     if not include_not_relevant:
         working = working[working["Sentiment"] != "NOT RELEVANT"].copy()
         order = [item for item in order if item != "NOT RELEVANT"]
@@ -189,6 +194,26 @@ def _build_distribution_view(sentiment_dist: pd.DataFrame, sentiment_type: str, 
     )
 
     return working, chart
+
+
+def _build_sentiment_display_table(sentiment_table: pd.DataFrame) -> pd.DataFrame:
+    working = sentiment_table.copy()
+    if "Count" not in working.columns:
+        working["Count"] = 0
+    if "Grouped Stories" not in working.columns:
+        working["Grouped Stories"] = 0
+    if "Share Label" not in working.columns:
+        share_series = pd.to_numeric(working.get("Share", pd.Series(index=working.index, dtype="float")), errors="coerce").fillna(0.0)
+        working["Share Label"] = (share_series * 100).map(lambda x: f"{x:.1f}%")
+
+    display_table = working.reindex(columns=["Sentiment", "Count", "Grouped Stories", "Share Label"]).rename(
+        columns={
+            "Count": "Underlying stories",
+            "Grouped Stories": "Grouped stories",
+            "Share Label": "Share",
+        }
+    )
+    return display_table
 
 
 def _format_sample_mode(mode: str) -> str:
@@ -644,13 +669,7 @@ if st.session_state.sentiment_section == "Run":
         with preview_col1:
             st.altair_chart(sentiment_chart, use_container_width=True)
         with preview_col2:
-            display_table = sentiment_table[["Sentiment", "Count", "Grouped Stories", "Share Label"]].rename(
-                columns={
-                    "Count": "Underlying stories",
-                    "Grouped Stories": "Grouped stories",
-                    "Share Label": "Share",
-                }
-            )
+            display_table = _build_sentiment_display_table(sentiment_table)
             st.dataframe(display_table, hide_index=True, use_container_width=True)
 
     st.stop()
@@ -704,13 +723,7 @@ dist_view1, dist_view2 = st.columns([1.35, 1], gap="large")
 with dist_view1:
     st.altair_chart(sentiment_chart, use_container_width=True)
 with dist_view2:
-    display_table = sentiment_table[["Sentiment", "Count", "Grouped Stories", "Share Label"]].rename(
-        columns={
-            "Count": "Underlying stories",
-            "Grouped Stories": "Grouped stories",
-            "Share Label": "Share",
-        }
-    )
+    display_table = _build_sentiment_display_table(sentiment_table)
     st.dataframe(display_table, hide_index=True, use_container_width=True)
 
 st.divider()
