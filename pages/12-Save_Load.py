@@ -12,6 +12,10 @@ from utils.time_display import (
     current_timestamp_storage_string,
     format_local_timestamp,
 )
+from utils.session_timing import (
+    build_session_timing_snapshot_fields,
+    restore_session_timing_after_load,
+)
 
 SNAPSHOT_VERSION = 2
 EXCLUDED_SESSION_KEYS = {
@@ -62,6 +66,8 @@ def _build_serializable_session_payload() -> tuple[dict, list[str]]:
             continue
 
         payload[key] = value
+
+    payload.update(build_session_timing_snapshot_fields(st.session_state))
 
     return payload, skipped
 
@@ -117,6 +123,7 @@ def load_session_state(uploaded_file) -> None:
         st.session_state.loaded_session_saved_at = loaded_saved_at
     if loaded_snapshot_version is not None:
         st.session_state.loaded_session_snapshot_version = loaded_snapshot_version
+    restore_session_timing_after_load(st.session_state)
 
 
 st.header("Save")

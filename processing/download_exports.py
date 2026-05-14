@@ -26,6 +26,11 @@ from processing.regions import (
     filter_regions_df,
 )
 from processing.top_story_summaries import normalize_summary_df
+from utils.session_timing import (
+    format_session_duration,
+    format_session_started,
+    get_current_session_duration_seconds,
+)
 from utils.time_display import format_local_timestamp
 
 
@@ -943,9 +948,13 @@ def build_export_metadata_sheet(
     shared_sample_rows = len(build_shared_sample_ai_export(session_state)) if shared_sample_sheet else 0
     tagging_sample_rows = shared_sample_rows if tagging_sample_sheet == "SAMPLED AI RESULTS" else len(build_tagging_sample_export(session_state))
     sentiment_sample_rows = shared_sample_rows if sentiment_sample_sheet == "SAMPLED AI RESULTS" else len(build_sentiment_sample_export(session_state))
+    session_started = format_session_started(session_state)
+    session_duration = format_session_duration(get_current_session_duration_seconds(session_state))
 
     rows = [
         ("Export Timestamp", format_local_timestamp()),
+        ("Session Started", session_started),
+        ("Session Duration", session_duration),
         ("Export Name", session_state.get("export_name", "")),
         ("Client Name", session_state.get("client_name", "")),
         ("Original Rows", original_rows),

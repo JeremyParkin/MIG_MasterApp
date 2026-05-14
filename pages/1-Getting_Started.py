@@ -14,6 +14,7 @@ from utils.io import (
 )
 from utils.dataframe_helpers import top_x_by_mentions
 from utils.session import init_getting_started_state, clear_all_session_state
+from utils.session_timing import ensure_session_timing_started
 from ui.charts import build_time_series_area_chart
 
 warnings.filterwarnings("ignore")
@@ -61,6 +62,7 @@ if not st.session_state.upload_step:
 
     elif submitted:
         with st.spinner("Converting file format."):
+            ensure_session_timing_started(st.session_state)
             st.session_state.original_ave_col = detect_original_ave_col(
                 st.session_state.df_untouched
             )

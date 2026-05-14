@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
+from utils.session_timing import init_session_timing_state
 
 
 DEFAULT_STRING_VARS = {
@@ -61,6 +62,8 @@ def init_getting_started_state() -> None:
 
     if "original_ave_col" not in st.session_state:
         st.session_state["original_ave_col"] = None
+
+    init_session_timing_state(st.session_state)
 
 
 def clear_all_session_state() -> None:
