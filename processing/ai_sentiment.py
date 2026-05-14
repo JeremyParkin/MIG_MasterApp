@@ -9,6 +9,7 @@ import pandas as pd
 from openai import OpenAI
 
 from processing.prominence import get_prominence_weight_series
+from processing.sentiment_config import build_tolerant_regex_str
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
@@ -31,6 +32,69 @@ def _extract_json_payload(text: str) -> dict[str, Any] | None:
     raw = str(text or "").strip()
     if not raw:
         return None
+
+
+def _clean_entity_terms(entity_terms: list[str] | None) -> list[str]:
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for value in entity_terms or []:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(text)
+    return cleaned
+
+
+def story_mentions_entity_umbrella(
+    headline: str,
+    snippet: str,
+    entity_terms: list[str] | None,
+) -> bool:
+    terms = _clean_entity_terms(entity_terms)
+    if not terms:
+        return False
+
+    text = f"{headline or ''}\n{snippet or ''}".strip()
+    if not text:
+        return False
+
+    tolerant_pattern = build_tolerant_regex_str(terms)
+    if not tolerant_pattern:
+        return False
+
+    try:
+        return bool(re.search(tolerant_pattern, text))
+    except re.error:
+        return False
+
+
+def enforce_not_relevant_direct_mention_rule(
+    result: dict[str, Any],
+    *,
+    headline: str,
+    snippet: str,
+    entity_terms: list[str] | None,
+) -> dict[str, Any]:
+    sentiment = str(result.get("sentiment", "")).strip().upper()
+    if sentiment != "NOT RELEVANT":
+        return result
+
+    if not story_mentions_entity_umbrella(headline, snippet, entity_terms):
+        return result
+
+    adjusted = dict(result)
+    adjusted["sentiment"] = "NEUTRAL"
+    existing_conf = pd.to_numeric(pd.Series([adjusted.get("confidence")]), errors="coerce").iloc[0]
+    adjusted["confidence"] = int(min(60, existing_conf)) if pd.notna(existing_conf) else 60
+    adjusted["explanation"] = (
+        "The collective entity is directly mentioned in the story text, so NOT RELEVANT is not allowed here. "
+        "Defaulting to NEUTRAL because the coverage mentions the entity without clear positive or negative judgment."
+    )
+    return adjusted
 
     try:
         parsed = json.loads(raw)
@@ -218,6 +282,7 @@ def analyze_sentiment_worker(
     model_id: str,
     sentiment_type: str,
     api_key: str,
+    entity_terms: list[str] | None = None,
 ) -> tuple[int, dict[str, Any], str, int, int]:
     idx, row_dict = row_tuple
     row = pd.Series(row_dict)
@@ -244,6 +309,12 @@ def analyze_sentiment_worker(
                 model_id=model_id,
                 functions=functions,
                 sentiment_type=sentiment_type,
+            )
+            result = enforce_not_relevant_direct_mention_rule(
+                result,
+                headline=headline,
+                snippet=snippet,
+                entity_terms=entity_terms,
             )
             return idx, result, "", in_tok, out_tok
         except Exception as e:

@@ -99,6 +99,29 @@ source_rows = get_sentiment_source_rows(st.session_state.df_traditional)
 population_size = len(source_rows)
 
 
+def _get_sentiment_entity_terms() -> list[str]:
+    payload = get_analysis_context_payload(st.session_state)
+    terms: list[str] = []
+    primary_name = str(payload.get("primary_name", "") or "").strip()
+    if primary_name:
+        terms.append(primary_name)
+    terms.extend(payload.get("alternate_names", []))
+    terms.extend(payload.get("spokespeople", []))
+    terms.extend(payload.get("products", []))
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for value in terms:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(text)
+    return cleaned
+
+
 def _get_sentiment_order(sentiment_type: str) -> list[str]:
     if str(sentiment_type).strip().lower().startswith("5"):
         return [
@@ -562,6 +585,7 @@ if st.session_state.sentiment_section == "Run":
 
     if run_clicked:
         st.session_state.pop("__last_sentiment_batch_summary__", None)
+        sentiment_entity_terms = _get_sentiment_entity_terms()
 
         progress_bar = st.progress(0.0)
         total_in = 0
@@ -585,6 +609,7 @@ if st.session_state.sentiment_section == "Run":
                     st.session_state.get("model_choice", DEFAULT_SENTIMENT_MODEL),
                     st.session_state.get("sentiment_type", "3-way"),
                     st.secrets["key"],
+                    sentiment_entity_terms,
                 ): row_tuple[0]
                 for row_tuple in rows_for_workers
             }

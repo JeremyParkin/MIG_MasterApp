@@ -664,6 +664,7 @@ def second_opinion_worker(
     review_model: str,
     sentiment_type: str,
     api_key: str,
+    entity_terms: list[str] | None = None,
 ) -> tuple[int, dict[str, Any], str, int, int]:
     idx, row_dict = row_tuple
     row = pd.Series(row_dict)
@@ -690,6 +691,15 @@ def second_opinion_worker(
     if result is None:
         return idx, {}, note or "Second opinion failed.", 0, 0
 
+    from processing.ai_sentiment import enforce_not_relevant_direct_mention_rule
+
+    result = enforce_not_relevant_direct_mention_rule(
+        result,
+        headline=headline,
+        snippet=snippet,
+        entity_terms=entity_terms,
+    )
+
     return idx, result, note or "", in_tok, out_tok
 
 
@@ -708,6 +718,7 @@ def run_batch_second_opinion(
     max_workers: int = 8,
     low_conf_threshold: int = 60,
     progress_callback=None,
+    entity_terms: list[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[str], int, int, int]:
     unique, grouped = ensure_review_columns(df_unique, df_grouped)
 
@@ -733,6 +744,7 @@ def run_batch_second_opinion(
                 review_model,
                 sentiment_type,
                 api_key,
+                entity_terms,
             ): row_tuple[0]
             for row_tuple in rows_for_workers
         }

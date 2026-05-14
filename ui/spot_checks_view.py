@@ -13,6 +13,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
     
     import pandas as pd
     import streamlit as st
+    from processing.analysis_context import get_analysis_context_payload
     from processing.ai_sentiment import (
         build_effective_ai_sentiment_confidence_series,
         build_effective_ai_sentiment_series,
@@ -403,6 +404,24 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         st.error("No sentiment-grouped stories found.")
         st.stop()
     
+    analysis_payload = get_analysis_context_payload(st.session_state)
+    sentiment_entity_terms: list[str] = []
+    primary_name = str(analysis_payload.get("primary_name", "") or "").strip()
+    if primary_name:
+        sentiment_entity_terms.append(primary_name)
+    sentiment_entity_terms.extend(analysis_payload.get("alternate_names", []))
+    sentiment_entity_terms.extend(analysis_payload.get("spokespeople", []))
+    sentiment_entity_terms.extend(analysis_payload.get("products", []))
+    seen_entity_terms: set[str] = set()
+    sentiment_entity_terms = [
+        text
+        for text in [
+            str(value or "").strip()
+            for value in sentiment_entity_terms
+        ]
+        if text and not (text.casefold() in seen_entity_terms or seen_entity_terms.add(text.casefold()))
+    ]
+
     pre_prompt = st.session_state.get("pre_prompt", "")
     post_prompt = st.session_state.get("post_prompt", "")
     sentiment_instruction = st.session_state.get("sentiment_instruction", "")
@@ -575,6 +594,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
                             limit=int(selected_batch_size),
                             max_workers=8,
                             low_conf_threshold=int(st.session_state.get("spotcheck_low_conf_threshold", DEFAULT_REVIEW_CONFIDENCE_THRESHOLD)),
+                            entity_terms=sentiment_entity_terms,
                             progress_callback=lambda completed, total: (
                                 progress_bar.progress(completed / max(1, total)),
                                 progress_text.caption(f"Running second opinions: {completed}/{total}"),
@@ -862,8 +882,16 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
                     sentiment_type=sentiment_type,
                     api_key=st.secrets["key"],
                 )
-    
+
             if ai_result:
+                from processing.ai_sentiment import enforce_not_relevant_direct_mention_rule
+
+                ai_result = enforce_not_relevant_direct_mention_rule(
+                    ai_result,
+                    headline=head_raw,
+                    snippet=body_raw,
+                    entity_terms=sentiment_entity_terms,
+                )
                 label = ai_result.get("sentiment")
                 conf = ai_result.get("confidence")
                 why = ai_result.get("explanation")

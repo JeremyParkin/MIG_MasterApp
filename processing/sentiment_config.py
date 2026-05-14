@@ -463,6 +463,9 @@ def build_sentiment_configuration(
         "- Straight factual coverage is Neutral.",
         "- Passing mentions without a strong stance are generally Neutral.",
         "- Brief/Passing Mentions: If the collective entity appears only briefly in a longer story without explicit praise/criticism or clear attribution of outcomes to the entity, default to NEUTRAL.",
+        "- IMPORTANT: If the collective entity is directly mentioned anywhere in the headline/body/transcript, do NOT use NOT RELEVANT.",
+        "- Direct mention of the primary entity, any alias, any listed spokesperson acting for the entity, or any listed product/sub-brand/program means the story is in scope for sentiment and must receive POSITIVE, NEUTRAL, or NEGATIVE rather than NOT RELEVANT.",
+        "- If the entity is mentioned but the coverage is only incidental or passing and does not express judgment, use NEUTRAL.",
         "- Judge sentiment toward the collective entity itself, not toward the broader topic, event, market condition, social problem, or historic issue being discussed.",
         "- Negative subject matter does not automatically mean negative sentiment toward the collective entity.",
         "- If the entity is acting in a normal, appropriate, or expected role - such as researching, forecasting, warning, hosting, teaching, commemorating, reporting, or responding - that is usually Neutral unless the coverage clearly criticizes or praises how the entity did it.",
@@ -471,7 +474,7 @@ def build_sentiment_configuration(
         f"1) When a spokesperson acts explicitly for {named_entity}, attribute their stance to the entity.",
         f"2) When a product or sub-brand is discussed, attribute sentiment to {named_entity} unless clearly unrelated.",
         "3) No sentiment transfer: Do not infer sentiment toward the entity from third parties or adjacent topics.",
-        f"4) If the collective entity (primary/aliases/spokespeople-as-entity/products) is not present, label NOT RELEVANT.",
+        f"4) Use NOT RELEVANT only when the collective entity (primary/aliases/spokespeople-as-entity/products) is not present at all.",
         "",
         "Tie-breakers & Gray Areas:",
         "- Use the audience takeaway as the deciding factor when positive and negative elements coexist.",
@@ -508,10 +511,13 @@ CRITERIA:
 - POSITIVE: Praise, favorable framing, or beneficial outcomes credited to the collective entity.
 - NEUTRAL: Factual/balanced coverage with no clear stance on the collective entity.
 - NEGATIVE: Criticism, unfavorable framing, or negative outcomes attributed to the collective entity.
-- NOT RELEVANT: The collective entity (as defined) is not present.
+- NOT RELEVANT: The collective entity (as defined) is not present at all in the story text.
 
 DECISION RULES:
 - Judge sentiment toward the collective entity itself, not toward the broader topic or issue.
+- If the collective entity is directly mentioned anywhere in the story, do NOT use NOT RELEVANT.
+- A direct mention of the primary entity, any alias, any listed spokesperson acting for the entity, or any listed product/sub-brand/program means the story must be labeled POSITIVE, NEUTRAL, or NEGATIVE.
+- If the entity is mentioned but the coverage is only incidental or passing and does not express judgment, label NEUTRAL.
 - If the story mainly reports the entity's statements, research, forecast, event, or public-service activity without judging the entity, label NEUTRAL.
 - Use NEGATIVE only when the coverage portrays the collective entity itself unfavorably through blame, criticism, failure, wrongdoing, poor judgment, harm, scandal, hypocrisy, incompetence, or reputational damage.
 - Do not justify NEGATIVE merely because the story discusses decline, crisis, violence, tragedy, conflict, or other bad outcomes affecting the broader topic.
@@ -551,10 +557,13 @@ CRITERIA:
 - NEUTRAL: Factual/balanced coverage with no clear stance on the collective entity.
 - SOMEWHAT NEGATIVE: Mild criticism or limited negative impact.
 - VERY NEGATIVE: Strong criticism or substantial negative impact attributed to the collective entity.
-- NOT RELEVANT: The collective entity (as defined) is not present.
+- NOT RELEVANT: The collective entity (as defined) is not present at all in the story text.
 
 DECISION RULES:
 - Judge sentiment toward the collective entity itself, not toward the broader topic or issue.
+- If the collective entity is directly mentioned anywhere in the story, do NOT use NOT RELEVANT.
+- A direct mention of the primary entity, any alias, any listed spokesperson acting for the entity, or any listed product/sub-brand/program means the story must be labeled VERY POSITIVE, SOMEWHAT POSITIVE, NEUTRAL, SOMEWHAT NEGATIVE, or VERY NEGATIVE.
+- If the entity is mentioned but the coverage is only incidental or passing and does not express judgment, label NEUTRAL.
 - If the story mainly reports the entity's statements, research, forecast, event, or public-service activity without judging the entity, label NEUTRAL.
 - Use SOMEWHAT NEGATIVE or VERY NEGATIVE only when the coverage portrays the collective entity itself unfavorably through blame, criticism, failure, wrongdoing, poor judgment, harm, scandal, hypocrisy, incompetence, or reputational damage.
 - Do not justify a negative label merely because the story discusses decline, crisis, violence, tragedy, conflict, or other bad outcomes affecting the broader topic.
