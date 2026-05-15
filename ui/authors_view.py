@@ -97,6 +97,7 @@ def render_authors_page() -> None:
     init_author_insights_state(st.session_state)
     init_analysis_context_state(st.session_state)
     st.session_state.setdefault("authors_section", "Missing")
+    st.session_state.setdefault("authors_missing_status_message", None)
     st.session_state.setdefault("author_selection_checked_authors", [])
     st.session_state.setdefault("author_selection_editor_version", 0)
     st.session_state.setdefault("author_outlet_state_dirty", True)
@@ -298,6 +299,10 @@ def render_authors_page() -> None:
             excluded_flags=excluded_flags,
         )
 
+        status_message = st.session_state.pop("authors_missing_status_message", None)
+        if status_message:
+            st.success(status_message)
+
         headline_table = build_fixable_headline_table(author_working_df)
         obvious_acceptance_table = build_obvious_author_acceptance_table(author_working_df)
         counter = st.session_state.auth_skip_counter
@@ -328,11 +333,11 @@ def render_authors_page() -> None:
             )
             with controls_left:
                 if st.button(
-                    f"Accept obvious ({obvious_count})",
+                    f"Apply obvious matches ({obvious_count})",
                     key="authors_missing_accept_obvious",
                     disabled=obvious_count == 0,
                     use_container_width=True,
-                    help="Accept missing-author fixes where the same quality author accounts for at least 80% of known suggestions for that headline.",
+                    help="Apply bulk missing-author fixes across all eligible headlines when one quality author clearly dominates the known matches for that headline.",
                 ):
                     st.session_state.last_author_fix = {
                         "mode": "bulk_obvious_author_accept",
@@ -348,6 +353,7 @@ def render_authors_page() -> None:
                     st.session_state.auth_reviewed_count = reviewed + obvious_count
                     st.session_state.author_outlet_state_dirty = True
                     st.session_state.auth_skip_counter = 0
+                    st.session_state.authors_missing_status_message = f"Applied {obvious_count} obvious missing-author match(es)."
                     st.rerun()
 
             with controls_center:
@@ -418,7 +424,9 @@ def render_authors_page() -> None:
                     st.rerun()
 
             if counter > 0:
-                st.caption(f"Current position: {counter}")
+                st.caption(f"Current headline queue position: {counter + 1} of {len(headline_table)}")
+            else:
+                st.caption(f"Current headline queue position: 1 of {len(headline_table)}")
 
             col1, col2, col3 = st.columns([12, 1, 9])
 
@@ -499,14 +507,29 @@ def render_authors_page() -> None:
                         headline_text,
                         previous_reviewed_count=st.session_state.auth_reviewed_count,
                     )
-                    st.session_state.df_traditional = apply_author_fix(
+                    updated_df = apply_author_fix(
                         st.session_state.df_traditional,
                         headline_text,
                         new_author,
                     )
+                    st.session_state.df_traditional = updated_df
                     invalidate_author_outlet_cache()
                     st.session_state.auth_reviewed_count = reviewed + 1
                     st.session_state.author_outlet_state_dirty = True
+                    refreshed_working_df = prepare_author_working_df(
+                        updated_df,
+                        excluded_flags=excluded_flags,
+                    )
+                    refreshed_headline_table = build_fixable_headline_table(refreshed_working_df)
+                    if refreshed_headline_table.empty:
+                        st.session_state.auth_skip_counter = 0
+                    else:
+                        refreshed_headlines = refreshed_headline_table["Headline"].tolist()
+                        if headline_text in refreshed_headlines:
+                            st.session_state.auth_skip_counter = refreshed_headlines.index(headline_text)
+                        else:
+                            st.session_state.auth_skip_counter = min(counter, len(refreshed_headline_table) - 1)
+                    st.session_state.authors_missing_status_message = f"Updated missing author rows for this headline to {new_author}."
                     st.rerun()
         else:
             st.info("You've reached the end of the list!")

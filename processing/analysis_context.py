@@ -34,7 +34,7 @@ DEFAULT_QUALITATIVE_COVERAGE_FLAGS = [
 ]
 DEFAULT_DATASET_COVERAGE_FLAGS: list[str] = []
 OUTLET_INSIGHT_AGGREGATOR_FLAG = "Aggregator"
-MEDIA_TYPE_COMMENTARY_OPTIONS = ["Auto", "Emphasize", "De-emphasize"]
+MEDIA_TYPE_COMMENTARY_OPTIONS = ["Auto", "De-emphasize"]
 DEFAULT_MEDIA_TYPE_COMMENTARY_MODE = "Auto"
 
 ORG_LIKE_MARKERS = {
@@ -69,6 +69,15 @@ ORG_LIKE_MARKERS = {
     "strategy",
     "tourism",
 }
+
+
+def normalize_media_type_commentary_mode(value: object) -> str:
+    normalized = str(value or DEFAULT_MEDIA_TYPE_COMMENTARY_MODE).strip()
+    if normalized == "Emphasize":
+        return DEFAULT_MEDIA_TYPE_COMMENTARY_MODE
+    if normalized not in MEDIA_TYPE_COMMENTARY_OPTIONS:
+        return DEFAULT_MEDIA_TYPE_COMMENTARY_MODE
+    return normalized
 
 
 def _match_key(value: str) -> str:
@@ -1171,9 +1180,7 @@ def save_analysis_context(
         selected_prominence_column,
         get_prominence_columns(session_state.get("df_traditional")),
     )
-    normalized_commentary_mode = str(media_type_commentary_mode or DEFAULT_MEDIA_TYPE_COMMENTARY_MODE).strip()
-    if normalized_commentary_mode not in MEDIA_TYPE_COMMENTARY_OPTIONS:
-        normalized_commentary_mode = DEFAULT_MEDIA_TYPE_COMMENTARY_MODE
+    normalized_commentary_mode = normalize_media_type_commentary_mode(media_type_commentary_mode)
     session_state.analysis_media_type_commentary_mode = normalized_commentary_mode
     session_state.analysis_qualitative_exclusion_keep_keys = _clean_list(qualitative_exclusion_keep_keys or [])
     session_state.analysis_dataset_exclusion_keep_keys = _clean_list(dataset_exclusion_keep_keys or [])
@@ -1246,10 +1253,8 @@ def get_analysis_context_payload(session_state) -> dict[str, Any]:
         "exclude_aggregators_from_outlet_insights": bool(
             session_state.get("analysis_exclude_aggregators_from_outlet_insights", True)
         ),
-        "media_type_commentary_mode": (
+        "media_type_commentary_mode": normalize_media_type_commentary_mode(
             session_state.get("analysis_media_type_commentary_mode", DEFAULT_MEDIA_TYPE_COMMENTARY_MODE)
-            if session_state.get("analysis_media_type_commentary_mode", DEFAULT_MEDIA_TYPE_COMMENTARY_MODE) in MEDIA_TYPE_COMMENTARY_OPTIONS
-            else DEFAULT_MEDIA_TYPE_COMMENTARY_MODE
         ),
         "selected_prominence_column": normalize_selected_prominence_column(
             session_state.get("analysis_selected_prominence_column", ""),
@@ -1313,9 +1318,7 @@ def build_analysis_context_text(session_state) -> str:
         )
     if payload["exclude_aggregators_from_outlet_insights"]:
         lines.append("Outlet insights rule: exclude Aggregator coverage from outlet charts and narrative")
-    if payload["media_type_commentary_mode"] == "Emphasize":
-        lines.append("Media-type commentary: emphasize media-type mix when explaining coverage patterns")
-    elif payload["media_type_commentary_mode"] == "De-emphasize":
+    if payload["media_type_commentary_mode"] == "De-emphasize":
         lines.append("Media-type commentary: de-emphasize media-type mix unless it is unusually important")
 
     return "\n".join(lines).strip()

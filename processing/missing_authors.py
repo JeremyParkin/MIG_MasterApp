@@ -490,7 +490,7 @@ def apply_bulk_author_fixes(
     df: pd.DataFrame,
     fixes_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Apply many headline -> author fixes in one pass to missing author rows only."""
+    """Apply many headline -> author fixes in one pass to all rows for each matched headline."""
     updated = df.copy()
     if (
         updated is None
@@ -510,9 +510,8 @@ def apply_bulk_author_fixes(
     if not fix_map:
         return updated
 
-    author_blank_mask = updated["Author"].isna() | updated["Author"].astype(str).str.strip().eq("")
     headline_map = updated["Headline"].fillna("").astype(str).str.strip().map(fix_map)
-    match_mask = author_blank_mask & headline_map.fillna("").astype(str).str.strip().ne("")
+    match_mask = headline_map.fillna("").astype(str).str.strip().ne("")
     updated.loc[match_mask, "Author"] = headline_map[match_mask]
     return updated
 
@@ -687,18 +686,13 @@ def apply_author_fix(
     headline_text: str,
     new_author: str,
 ) -> pd.DataFrame:
-    """Apply author update to rows with matching headline and missing/blank author."""
+    """Apply author update to all rows with the matching headline."""
     updated = df.copy()
 
     if "Headline" not in updated.columns or "Author" not in updated.columns:
         return updated
 
-    author_blank_mask = (
-        updated["Author"].isna()
-        | updated["Author"].astype(str).str.strip().eq("")
-    )
-
-    match_mask = (updated["Headline"] == headline_text) & author_blank_mask
+    match_mask = updated["Headline"] == headline_text
     updated.loc[match_mask, "Author"] = new_author
 
     return updated

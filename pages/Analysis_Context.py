@@ -337,21 +337,21 @@ with st.container(border=True):
 
     with st.container(border=True):
         st.markdown("**Analytical guidance**")
-        st.caption("Add optional framing for downstream AI outputs. Use shared guidance for broad interpretation, and sentiment-specific guidance for label-decision nuances that should stay inside Sentiment.")
+        st.caption("Add optional interpretation guidance for downstream AI outputs. Use shared guidance for broad framing across the app, and sentiment-specific guidance for label-decision nuances that should stay inside Sentiment.")
         guidance_col1, guidance_col2 = st.columns(2, gap="medium")
         with guidance_col1:
             general_guidance = st.text_area(
                 "Shared analysis guidance (optional)",
                 key="analysis_context_draft_general_guidance",
                 height=130,
-                help="Use this for analytical framing, nuances, or focus that should shape AI-generated summaries and observations across the app.",
+                help='Use this for the lens AI should apply when writing summaries and observations across the app. Example guidance for a Quebec tourism body: "Coverage of Quebec-based destinations, attractions, and activities should be interpreted in terms of what it reflects about Quebec overall as a tourist destination."',
             )
         with guidance_col2:
             sentiment_guidance = st.text_area(
                 "Sentiment-specific guidance (optional)",
                 key="analysis_context_draft_sentiment_guidance",
                 height=130,
-                help="Use this for sentiment interpretation or label-decision guidance that should apply only inside the Sentiment workflow.",
+                help='Use this for sentiment interpretation rules that should apply only inside the Sentiment workflow. Example: coverage of a university-hosted lecture series about a tragic topic is not negative toward the school unless the story is criticizing the school for hosting it.',
             )
 
     st.session_state.analysis_context_draft_alternate_names = alternate_names
@@ -402,14 +402,14 @@ with st.container(border=True):
     with focus_col2:
         with st.container(border=True):
             st.markdown("**Media type emphasis**")
-            st.caption("Control how much downstream AI outputs should talk about media-type mix when interpreting coverage patterns.")
+            st.caption("Control how much downstream AI outputs should comment on media-type mix.")
             media_type_commentary_mode = st.radio(
                 "Media type commentary",
                 options=analysis_context.MEDIA_TYPE_COMMENTARY_OPTIONS,
                 key="analysis_context_draft_media_type_commentary_mode",
                 horizontal=True,
                 label_visibility="collapsed",
-                help="Controls how much downstream qualitative outputs should talk about media-type mix when interpreting coverage patterns.",
+                help="Use Auto for the normal behavior. Use De-emphasize when themes and messages matter more than channel mix.",
             )
 
     if available_prominence_columns:

@@ -142,7 +142,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "heading": "What the app does automatically",
                     "bullets": [
                         "Gold highlighting is used only for stronger candidate names, not single one-off suggestions.",
-                        "Accept obvious applies one-click fixes only when a non-blank, name-like suggestion clears the consensus and minimum-count rules for obvious matches.",
+                        "Apply obvious matches runs a bulk fix across all eligible headlines only when a non-blank, name-like suggestion clears the consensus and minimum-count rules for an obvious match.",
                         "Undo can reverse the last author update, including a bulk obvious-match acceptance.",
                     ],
                 },
