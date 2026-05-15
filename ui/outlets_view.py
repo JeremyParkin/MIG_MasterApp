@@ -654,6 +654,7 @@ def render_outlets_page() -> None:
             st.metric("Mappings saved", f"{len(st.session_state.get('outlet_rollup_map', {})):,}")
 
         st.subheader("Suggested merge review")
+        st.caption("This does not overwrite original outlet names. It only sets the merged reporting name used for Top Outlets.")
         if not cleanup_clusters:
             st.success("No unresolved outlet merge clusters remain.")
         else:
