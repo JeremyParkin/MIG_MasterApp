@@ -4,11 +4,16 @@ import importlib
 
 import streamlit as st
 from ui.page_help import set_page_help_context
+from processing.analysis_context import build_analysis_context_required_message, has_saved_analysis_context
 
 st.title("Top Stories")
 
 if not st.session_state.get("standard_step", False):
     st.error("Please complete Basic Cleaning before trying this step.")
+    st.stop()
+
+if not has_saved_analysis_context(st.session_state):
+    st.warning(build_analysis_context_required_message("Top Stories"))
     st.stop()
 
 import ui.top_stories_selection_view as top_stories_selection_view

@@ -14,9 +14,11 @@ from ui.page_help import set_page_help_context
 
 from processing.analysis_context import (
     apply_session_coverage_flag_policy,
+    build_analysis_context_required_message,
     build_analysis_context_text,
     format_qualitative_exclusion_caption,
     get_analysis_context_payload,
+    has_saved_analysis_context,
     get_qualitative_coverage_flag_exclusions,
     init_analysis_context_state,
 )
@@ -89,6 +91,10 @@ def render_authors_page() -> None:
 
     if not st.session_state.get("standard_step", False):
         st.error("Please complete Basic Cleaning before trying this step.")
+        st.stop()
+
+    if not has_saved_analysis_context(st.session_state):
+        st.warning(build_analysis_context_required_message("Authors"))
         st.stop()
 
     init_missing_authors_state(st.session_state)

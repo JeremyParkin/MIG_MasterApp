@@ -6,6 +6,7 @@ import warnings
 
 import streamlit as st
 from ui.page_help import set_page_help_context
+from processing.analysis_context import build_analysis_context_required_message, has_saved_analysis_context
 
 from processing.translation import (
     init_translation_state,
@@ -37,6 +38,10 @@ def display_non_english_records(df, title: str) -> None:
 
 if not st.session_state.get("standard_step", False):
     st.error("Please complete Basic Cleaning before trying this step.")
+    st.stop()
+
+if not has_saved_analysis_context(st.session_state):
+    st.warning(build_analysis_context_required_message("Translation"))
     st.stop()
 
 init_translation_state(st.session_state)

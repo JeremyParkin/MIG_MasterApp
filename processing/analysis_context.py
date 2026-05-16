@@ -4,7 +4,7 @@ import json
 import re
 import unicodedata
 import hashlib
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from openai import OpenAI
@@ -78,6 +78,14 @@ def normalize_media_type_commentary_mode(value: object) -> str:
     if normalized not in MEDIA_TYPE_COMMENTARY_OPTIONS:
         return DEFAULT_MEDIA_TYPE_COMMENTARY_MODE
     return normalized
+
+
+def has_saved_analysis_context(session_state) -> bool:
+    return bool(str(session_state.get("analysis_context_saved_at", "") or "").strip())
+
+
+def build_analysis_context_required_message(workflow_name: str = "this workflow") -> str:
+    return f"Please complete and save Analysis Context before using {workflow_name}."
 
 
 def _match_key(value: str) -> str:
@@ -1099,6 +1107,7 @@ def init_analysis_context_state(session_state) -> None:
     session_state.setdefault("analysis_dataset_end_date", dataset_end.isoformat() if dataset_end else None)
     session_state.setdefault("analysis_dataset_media_types", present_media_types)
     session_state.setdefault("analysis_media_type_commentary_mode", DEFAULT_MEDIA_TYPE_COMMENTARY_MODE)
+    session_state.setdefault("analysis_context_saved_at", None)
     session_state.setdefault(
         "analysis_selected_prominence_column",
         normalize_selected_prominence_column(
@@ -1184,6 +1193,7 @@ def save_analysis_context(
     session_state.analysis_media_type_commentary_mode = normalized_commentary_mode
     session_state.analysis_qualitative_exclusion_keep_keys = _clean_list(qualitative_exclusion_keep_keys or [])
     session_state.analysis_dataset_exclusion_keep_keys = _clean_list(dataset_exclusion_keep_keys or [])
+    session_state.analysis_context_saved_at = datetime.now().isoformat()
 
     # Keep legacy workflow keys in sync so existing flows continue to work.
     session_state.ui_primary_names = list(primary_names)

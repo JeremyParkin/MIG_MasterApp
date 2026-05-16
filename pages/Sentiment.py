@@ -14,11 +14,13 @@ from ui.insight_blocks import build_linked_example_blocks_html
 
 from processing.analysis_context import (
     apply_session_coverage_flag_policy,
+    build_analysis_context_required_message,
     build_sentiment_analysis_context_text,
     build_analysis_context_caption,
     format_qualitative_exclusion_caption,
     get_qualitative_coverage_flag_exclusions,
     get_analysis_context_payload,
+    has_saved_analysis_context,
     init_analysis_context_state,
 )
 from processing.sentiment_config import (
@@ -76,6 +78,10 @@ if st.session_state.pop("sentiment_scroll_to_top", False):
 
 if not st.session_state.get("standard_step", False):
     st.error("Please complete Basic Cleaning before trying this step.")
+    st.stop()
+
+if not has_saved_analysis_context(st.session_state):
+    st.warning(build_analysis_context_required_message("Sentiment"))
     st.stop()
 
 from ui.spot_checks_view import render_spot_checks_page

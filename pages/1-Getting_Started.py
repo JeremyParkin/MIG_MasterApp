@@ -94,6 +94,7 @@ if not st.session_state.upload_step:
 
             st.session_state.export_name = f"{client} - {period}"
             st.session_state.client_name = client
+            st.session_state.analysis_context_saved_at = None
             st.session_state.upload_step = True
             st.rerun()
 

@@ -229,13 +229,13 @@ with st.container(border=True):
             client_name = st.text_input(
                 "Client name",
                 key="analysis_context_draft_client_name",
-                help="Usually carried over from Getting Started, but you can adjust it here if needed.",
+                help="Usually carried over from Getting Started. This is the client/account name.",
             )
         with col2:
             primary_name = st.text_input(
-                "Primary topic or entity of interest",
+                "Primary topic / entity of interest (change if different than client name)",
                 key="analysis_context_draft_primary_name",
-                help="This can be the client itself, or a broader topic you want the AI to focus on instead.",
+                help="This usually matches the client name. Change it only when the analysis should focus on something else, like a destination set, product family, or broader topic.",
             )
 
         helper_col1, helper_col2, _ = st.columns([1, 0.95, 1.05], gap="small")
@@ -392,7 +392,7 @@ with st.container(border=True):
     with focus_col1:
         with st.container(border=True):
             st.markdown("**Aggregator handling**")
-            st.caption("Control whether aggregator coverage should count in Outlet metrics and narrative outputs.")
+            st.caption("Should aggregators be included in Top Outlets?")
             exclude_aggregators_from_outlet_insights = st.checkbox(
                 "Exclude aggregators from Outlet metrics / insights",
                 key="analysis_context_draft_exclude_aggregators",
@@ -402,7 +402,7 @@ with st.container(border=True):
     with focus_col2:
         with st.container(border=True):
             st.markdown("**Media type emphasis**")
-            st.caption("Control how much downstream AI outputs should comment on media-type mix.")
+            st.caption("Should AI outputs comment on media-type mix?")
             media_type_commentary_mode = st.radio(
                 "Media type commentary",
                 options=analysis_context.MEDIA_TYPE_COMMENTARY_OPTIONS,

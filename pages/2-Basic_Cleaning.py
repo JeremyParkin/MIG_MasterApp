@@ -337,6 +337,7 @@ def render_dataset_expander(
 def render_data_quality_checks(df: pd.DataFrame) -> None:
     warnings_list = build_data_quality_warnings(df)
     with st.expander(f"Data Quality Checks ({len(warnings_list)} warning{'s' if len(warnings_list) != 1 else ''})", expanded=bool(warnings_list)):
+        st.caption("Flags possible data concerns in columns like media type, headline, outlet, date, impressions, engagements, geography, and URL before cleaning continues.")
         if not warnings_list:
             st.info("No high-signal data-quality warnings were detected in the normalized upload.")
             return
