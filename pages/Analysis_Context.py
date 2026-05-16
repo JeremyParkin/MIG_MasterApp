@@ -504,7 +504,7 @@ with st.container(border=True):
 
 with st.container(border=True):
     st.subheader("Data Scope")
-    st.caption("Refine the working dataset used by downstream workflows. Anything scoped out here is removed from the app's working view unless you explicitly keep a row below.")
+    st.caption("Remove coverage from the app’s working dataset. Scoped-out rows are excluded downstream, but still included in the final Excel workbook under EXCLUDED ROWS.")
 
     scope_col1, scope_col2 = st.columns([1.05, 1.25], gap="medium")
     with scope_col1:
