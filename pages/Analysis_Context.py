@@ -601,7 +601,6 @@ with st.container(border=True):
                 st.caption(f"Keeping {len(dataset_exclusion_keep_keys)} row(s) even though they match the selected data-scope rules.")
     else:
         st.info("No rows are currently being removed by the selected data-scope rules.")
-
 save_col, save_status_col = st.columns([0.32, 0.68], gap="small")
 with save_col:
     if st.button("Save Analysis Context", type="primary", use_container_width=True):
