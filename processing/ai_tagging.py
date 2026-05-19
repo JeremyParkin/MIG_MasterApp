@@ -288,6 +288,60 @@ def get_effective_tag_series(df_tagging_unique: pd.DataFrame) -> pd.Series:
     return assigned.where(assigned != "", ai)
 
 
+def build_effective_tag_source_series(df_tagging_unique: pd.DataFrame) -> pd.Series:
+    if df_tagging_unique is None or df_tagging_unique.empty:
+        return pd.Series(dtype="object")
+
+    assigned = (
+        df_tagging_unique.get("Assigned Tag", pd.Series(index=df_tagging_unique.index, dtype="object"))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+    review_ai = (
+        df_tagging_unique.get("Review AI Tag", pd.Series(index=df_tagging_unique.index, dtype="object"))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+    base_ai = (
+        df_tagging_unique.get("AI Tag", pd.Series(index=df_tagging_unique.index, dtype="object"))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+
+    source = pd.Series("", index=df_tagging_unique.index, dtype="object")
+    source = source.where(base_ai == "", "AI first pass")
+    source = source.where(review_ai == "", "AI second opinion")
+    source = source.where(assigned == "", "Human input")
+    return source
+
+
+def summarize_effective_tag_sources(df_tagging_unique: pd.DataFrame) -> dict[str, int]:
+    if df_tagging_unique is None or df_tagging_unique.empty:
+        return {
+            "human_input": 0,
+            "ai_second_opinion": 0,
+            "ai_first_pass": 0,
+            "unlabeled": 0,
+            "labeled": 0,
+        }
+
+    source = build_effective_tag_source_series(df_tagging_unique).fillna("").astype(str).str.strip()
+    human_input = int(source.eq("Human input").sum())
+    ai_second_opinion = int(source.eq("AI second opinion").sum())
+    ai_first_pass = int(source.eq("AI first pass").sum())
+    unlabeled = int(source.eq("").sum())
+    return {
+        "human_input": human_input,
+        "ai_second_opinion": ai_second_opinion,
+        "ai_first_pass": ai_first_pass,
+        "unlabeled": unlabeled,
+        "labeled": human_input + ai_second_opinion + ai_first_pass,
+    }
+
+
 def normalize_tag_list(value: Any) -> list[str]:
     if isinstance(value, list):
         raw_items = value

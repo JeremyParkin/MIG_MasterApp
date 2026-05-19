@@ -41,6 +41,7 @@ from processing.ai_tagging import (
     cascade_tags_to_rows,
     reset_ai_tagging_results,
     generate_tag_observations,
+    summarize_effective_tag_sources,
     DEFAULT_TAGGING_BATCH_SIZE,
     DEFAULT_TAGGING_MAX_WORKERS,
 )
@@ -182,6 +183,16 @@ def build_tag_distribution_chart(tag_dist: pd.DataFrame) -> alt.Chart:
             labelColor="#E5E7EB",
             titleColor="#E5E7EB",
         )
+    )
+
+
+def _format_effective_tag_source_summary(source_summary: dict[str, int]) -> str:
+    return (
+        "Current labels in use: "
+        f"Human {source_summary.get('human_input', 0):,} | "
+        f"AI second opinion {source_summary.get('ai_second_opinion', 0):,} | "
+        f"AI first pass {source_summary.get('ai_first_pass', 0):,} | "
+        f"Unlabeled {source_summary.get('unlabeled', 0):,}"
     )
 
 
@@ -574,6 +585,34 @@ if st.session_state.tagging_section == "Run":
         st.session_state.tagging_section = "Run"
         st.rerun()
 
+    with st.expander("Current tag distribution", expanded=False):
+        source_summary = summarize_effective_tag_sources(st.session_state.df_tagging_unique)
+        st.caption(_format_effective_tag_source_summary(source_summary))
+        include_other_preview = st.toggle(
+            "Include Other in percentages",
+            value=False,
+            key="tagging_distribution_include_other_preview",
+        )
+        tag_dist = build_tag_distribution(st.session_state.df_tagging_unique)
+        if include_other_preview:
+            filtered_dist = tag_dist.copy()
+        else:
+            filtered_dist = tag_dist[
+                tag_dist["Tag"].fillna("").astype(str).str.strip().str.lower() != "other"
+            ].copy()
+
+        if tag_dist.empty:
+            st.info("No tags are currently available for distribution yet.")
+        else:
+            preview_col1, preview_col2 = st.columns([1.35, 1], gap="large")
+            with preview_col1:
+                st.altair_chart(build_tag_distribution_chart(filtered_dist), use_container_width=True)
+            with preview_col2:
+                tag_table = filtered_dist.copy()
+                tag_table["Share"] = (tag_table["Share"] * 100).map(lambda x: f"{x:.1f}%")
+                tag_table = tag_table.rename(columns={"Count": "Underlying stories", "Grouped Stories": "Grouped stories"})
+                st.dataframe(tag_table, use_container_width=True, hide_index=True)
+
     st.stop()
 
 # =========================
@@ -615,7 +654,7 @@ if tagging_unique_df.get("AI Tag", pd.Series(index=tagging_unique_df.index, dtyp
     st.info("Run Step 2: AI First Pass before using Insights.")
     st.stop()
 st.subheader("Step 5: Tagging Insights")
-st.caption("Review the current tag distribution, generate report-ready tag observations, and inspect the grouped dataset when needed.")
+st.caption("Review the current effective tag distribution, generate report-ready tag observations, and inspect the grouped dataset when needed.")
 
 include_other = st.toggle(
     "Include Other in percentages",
@@ -624,6 +663,7 @@ include_other = st.toggle(
 )
 
 tag_dist = build_tag_distribution(st.session_state.df_tagging_unique)
+source_summary = summarize_effective_tag_sources(st.session_state.df_tagging_unique)
 if include_other:
     filtered_dist = tag_dist.copy()
 else:
@@ -641,10 +681,9 @@ with review_col3:
     processed_count = len(st.session_state.df_tagging_unique) - len(tagged_df)
     st.metric("With 1st opinion", f"{processed_count:,}")
 with review_col4:
-    finalized_count = int(
-        st.session_state.df_tagging_unique.get("Assigned Tag", pd.Series(dtype="object")).fillna("").astype(str).str.strip().ne("").sum()
-    )
-    st.metric("Finalized groups", f"{finalized_count:,}")
+    st.metric("Labeled groups", f"{source_summary.get('labeled', 0):,}")
+
+st.caption(_format_effective_tag_source_summary(source_summary))
 
 st.subheader("Distribution")
 if tag_dist.empty:
@@ -680,7 +719,7 @@ with obs_button_col:
         st.rerun()
 with obs_blurb_col:
     st.caption(
-        "Uses finalized AI tags plus higher-prominence grouped stories from each tag bucket, with only a slight preference for linkable online examples."
+        "Uses effective tags in priority order: human input, AI second opinion, then AI first pass, with a slight preference for linkable online examples."
     )
 
 field_options = ["Outlet", "Date", "Media type", "Mentions", "Impressions", "Effective reach", "Examples"]

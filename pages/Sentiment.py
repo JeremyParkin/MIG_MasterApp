@@ -45,6 +45,7 @@ from processing.ai_sentiment import (
     DEFAULT_SENTIMENT_MODEL,
     DEFAULT_SENTIMENT_OBSERVATION_MODEL,
     build_sentiment_distribution,
+    summarize_effective_sentiment_sources,
     generate_sentiment_observations,
 )
 from utils.api_meter import (
@@ -243,6 +244,16 @@ def _build_sentiment_display_table(sentiment_table: pd.DataFrame) -> pd.DataFram
         }
     )
     return display_table
+
+
+def _format_effective_source_summary(source_summary: dict[str, int]) -> str:
+    return (
+        "Current labels in use: "
+        f"Human {source_summary.get('human_input', 0):,} | "
+        f"AI second opinion {source_summary.get('ai_second_opinion', 0):,} | "
+        f"AI first pass {source_summary.get('ai_first_pass', 0):,} | "
+        f"Unlabeled {source_summary.get('unlabeled', 0):,}"
+    )
 
 
 def _format_sample_mode(mode: str) -> str:
@@ -686,6 +697,8 @@ if st.session_state.sentiment_section == "Run":
     with st.expander("Current sentiment distribution", expanded=False):
         sentiment_type = st.session_state.get("sentiment_type")
         sentiment_dist = build_sentiment_distribution(st.session_state.df_sentiment_unique, sentiment_type)
+        source_summary = summarize_effective_sentiment_sources(st.session_state.df_sentiment_unique)
+        st.caption(_format_effective_source_summary(source_summary))
         include_not_relevant_preview = st.toggle(
             "Include Not Relevant in percentages",
             value=False,
@@ -746,7 +759,7 @@ if sentiment_unique_df.get("AI Sentiment", pd.Series(index=sentiment_unique_df.i
     st.info("Run Step 2: AI First Pass before using Insights.")
     st.stop()
 st.subheader("Step 5: Sentiment Insights")
-st.caption("Review the current final sentiment mix and generated narrative insights after AI sentiment and spot-check assignments.")
+st.caption("Review the current effective sentiment mix and generated narrative insights after human review, AI second opinion, and AI first pass.")
 
 sentiment_type = st.session_state.get("sentiment_type")
 include_not_relevant_final = st.toggle(
@@ -756,6 +769,7 @@ include_not_relevant_final = st.toggle(
 )
 
 sentiment_dist = build_sentiment_distribution(st.session_state.df_sentiment_unique, sentiment_type)
+source_summary = summarize_effective_sentiment_sources(st.session_state.df_sentiment_unique)
 
 sentiment_table, sentiment_chart = _build_distribution_view(
     sentiment_dist=sentiment_dist,
@@ -775,10 +789,9 @@ with dist_col3:
     )
     st.metric("Remaining unlabeled", f"{len(remaining_now):,}")
 with dist_col4:
-    finalized_count = int(
-        st.session_state.df_sentiment_unique.get("Assigned Sentiment", pd.Series(dtype="object")).fillna("").astype(str).str.strip().ne("").sum()
-    )
-    st.metric("Finalized groups", f"{finalized_count:,}")
+    st.metric("Labeled groups", f"{source_summary.get('labeled', 0):,}")
+
+st.caption(_format_effective_source_summary(source_summary))
 
 dist_view1, dist_view2 = st.columns([1.35, 1], gap="large")
 with dist_view1:
@@ -812,7 +825,7 @@ with generate_obs_col1:
             except Exception as e:
                 st.error(f"Could not generate sentiment observations: {e}")
 with generate_obs_col2:
-    st.caption("Uses finalized sentiment labels plus higher-prominence grouped stories from each sentiment bucket, with only a slight preference for linkable online examples.")
+    st.caption("Uses effective sentiment labels in priority order: human input, AI second opinion, then AI first pass, with a slight preference for linkable online examples.")
 
 observation_output = st.session_state.get("sentiment_observation_output", {})
 if observation_output:

@@ -464,6 +464,42 @@ def build_effective_ai_sentiment_rationale_series(df_unique: pd.DataFrame) -> pd
     return review_rationale.where(review_ai != "", base_rationale)
 
 
+def build_effective_sentiment_source_series(df_unique: pd.DataFrame) -> pd.Series:
+    assigned = _get_text_series(df_unique, "Assigned Sentiment")
+    review_ai = _get_text_series(df_unique, "Review AI Sentiment")
+    base_ai = _get_text_series(df_unique, "AI Sentiment")
+
+    source = pd.Series("", index=df_unique.index, dtype="object")
+    source = source.where(base_ai == "", "AI first pass")
+    source = source.where(review_ai == "", "AI second opinion")
+    source = source.where(assigned == "", "Human input")
+    return source
+
+
+def summarize_effective_sentiment_sources(df_unique: pd.DataFrame) -> dict[str, int]:
+    if df_unique is None or df_unique.empty:
+        return {
+            "human_input": 0,
+            "ai_second_opinion": 0,
+            "ai_first_pass": 0,
+            "unlabeled": 0,
+            "labeled": 0,
+        }
+
+    source = build_effective_sentiment_source_series(df_unique).fillna("").astype(str).str.strip()
+    human_input = int(source.eq("Human input").sum())
+    ai_second_opinion = int(source.eq("AI second opinion").sum())
+    ai_first_pass = int(source.eq("AI first pass").sum())
+    unlabeled = int(source.eq("").sum())
+    return {
+        "human_input": human_input,
+        "ai_second_opinion": ai_second_opinion,
+        "ai_first_pass": ai_first_pass,
+        "unlabeled": unlabeled,
+        "labeled": human_input + ai_second_opinion + ai_first_pass,
+    }
+
+
 def build_final_sentiment_series(df_unique: pd.DataFrame) -> pd.Series:
     assigned = _get_text_series(df_unique, "Assigned Sentiment")
     ai = build_effective_ai_sentiment_series(df_unique)
