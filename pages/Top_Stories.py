@@ -48,6 +48,9 @@ st.markdown(
         align-items: center;
         justify-content: center;
     }
+    div[data-testid="stButton"] button p {
+        white-space: nowrap;
+    }
     </style>
     """,
     unsafe_allow_html=True,

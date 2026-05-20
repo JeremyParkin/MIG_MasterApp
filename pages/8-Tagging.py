@@ -211,6 +211,9 @@ st.markdown(
         align-items: center;
         justify-content: center;
     }
+    div[data-testid="stButton"] button p {
+        white-space: nowrap;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -417,6 +420,12 @@ if st.session_state.tagging_section == "Setup":
         st.session_state.tagging_mode = tagging_mode
         st.session_state.tagging_model = DEFAULT_TAGGING_MODEL
         st.session_state.tagging_observation_output = None
+        st.session_state.pop("tagging_review_idx", None)
+        st.session_state.pop("tagging_review_mode", None)
+        st.session_state.pop("tagging_pre_review_message", None)
+        st.session_state.pop("__last_tagging_pre_review_summary__", None)
+        st.session_state.pop("tagging_second_opinion_target_batch", None)
+        st.session_state.pop("tagging_second_opinion_target_source_count", None)
         st.session_state.tagging_section = "Run"
 
         st.rerun()
@@ -499,6 +508,10 @@ if st.session_state.tagging_section == "Run":
         st.session_state.df_tagging_unique = unique
         st.session_state.df_tagging_rows = rows
         st.session_state.tagging_observation_output = None
+        st.session_state.pop("tagging_review_idx", None)
+        st.session_state.pop("tagging_review_mode", None)
+        st.session_state.pop("tagging_pre_review_message", None)
+        st.session_state.pop("__last_tagging_pre_review_summary__", None)
         st.session_state.pop("tagging_second_opinion_target_batch", None)
         st.session_state.pop("tagging_second_opinion_target_source_count", None)
         st.success("Reset AI tagging results.")
@@ -567,6 +580,10 @@ if st.session_state.tagging_section == "Run":
             st.session_state.df_tagging_unique,
         )
         st.session_state.tagging_observation_output = None
+        st.session_state.pop("tagging_pre_review_message", None)
+        st.session_state.pop("__last_tagging_pre_review_summary__", None)
+        st.session_state.pop("tagging_second_opinion_target_batch", None)
+        st.session_state.pop("tagging_second_opinion_target_source_count", None)
 
         apply_usage_to_session(total_in, total_out, model)
 
@@ -699,10 +716,11 @@ else:
         st.dataframe(tag_table, use_container_width=True, hide_index=True)
 
 st.divider()
-st.subheader("Tag Observations")
-obs_button_col, obs_blurb_col = st.columns([1.2, 3], gap="medium")
+obs_header_col, obs_button_col = st.columns([2.6, 1.4], gap="medium")
+with obs_header_col:
+    st.subheader("Tag Observations")
 with obs_button_col:
-    if st.button("Generate tag observations", type="primary", key="generate_tag_observations"):
+    if st.button("Generate tag observations", type="primary", key="generate_tag_observations", use_container_width=True):
         try:
             observation_output, _, _ = generate_tag_observations(
                 df_tagging_unique=st.session_state.df_tagging_unique,
@@ -717,75 +735,71 @@ with obs_button_col:
         except Exception as e:
             st.session_state.tagging_observation_output = {"_error": str(e)}
         st.rerun()
-with obs_blurb_col:
-    st.caption(
-        "Uses effective tags in priority order: human input, AI second opinion, then AI first pass, with a slight preference for linkable online examples."
-    )
-
-field_options = ["Outlet", "Date", "Media type", "Mentions", "Impressions", "Effective reach", "Examples"]
-if "tagging_obs_selected_fields" not in st.session_state:
-    st.session_state.tagging_obs_selected_fields = field_options.copy()
-if "tagging_obs_previous_fields" not in st.session_state:
-    st.session_state.tagging_obs_previous_fields = field_options.copy()
-
-child_fields = {"Outlet", "Date", "Media type", "Mentions", "Impressions", "Effective reach"}
-
-def _normalize_tagging_obs_fields() -> None:
-    current_fields = st.session_state.get("tagging_obs_selected_fields", []) or []
-    previous_fields = st.session_state.get("tagging_obs_previous_fields", []) or []
-    current_set = set(current_fields)
-    previous_set = set(previous_fields)
-
-    if "Examples" not in current_set and current_set & child_fields:
-        if "Examples" in previous_set:
-            current_set -= child_fields
-        else:
-            current_set.add("Examples")
-
-    normalized_fields = [field for field in field_options if field in current_set]
-    st.session_state.tagging_obs_selected_fields = normalized_fields
-    st.session_state.tagging_obs_previous_fields = normalized_fields.copy()
-
-preset_col, fields_col = st.columns([0.18, 0.82], gap="small")
-with preset_col:
-    bulk_col1, bulk_col2 = st.columns(2, gap="small")
-    with bulk_col1:
-        if st.button("All", key="tagging_obs_select_all", use_container_width=True):
-            st.session_state.tagging_obs_selected_fields = field_options.copy()
-            st.session_state.tagging_obs_previous_fields = field_options.copy()
-            st.rerun()
-    with bulk_col2:
-        if st.button("None", key="tagging_obs_select_none", use_container_width=True):
-            st.session_state.tagging_obs_selected_fields = []
-            st.session_state.tagging_obs_previous_fields = []
-            st.rerun()
-
-with fields_col:
-    st.pills(
-        "Fields",
-        options=field_options,
-        selection_mode="multi",
-        default=st.session_state.get("tagging_obs_selected_fields", field_options),
-        key="tagging_obs_selected_fields",
-        on_change=_normalize_tagging_obs_fields,
-        label_visibility="collapsed",
-    )
-
-selected_fields = st.session_state.get("tagging_obs_selected_fields", []) or []
-st.session_state.tagging_obs_previous_fields = list(selected_fields)
-selected_field_set = set(selected_fields)
-show_example_outlet = "Outlet" in selected_field_set
-show_example_date = "Date" in selected_field_set
-show_example_type = "Media type" in selected_field_set
-show_example_mentions = "Mentions" in selected_field_set
-show_example_impressions = "Impressions" in selected_field_set
-show_example_effective_reach = "Effective reach" in selected_field_set
-show_examples = "Examples" in selected_field_set
 
 observation_output = st.session_state.get("tagging_observation_output")
 if observation_output and observation_output.get("_error"):
     st.error(f"Could not generate tag observations: {observation_output['_error']}")
 elif observation_output:
+    field_options = ["Outlet", "Date", "Media type", "Mentions", "Impressions", "Effective reach", "Examples"]
+    if "tagging_obs_selected_fields" not in st.session_state:
+        st.session_state.tagging_obs_selected_fields = field_options.copy()
+    if "tagging_obs_previous_fields" not in st.session_state:
+        st.session_state.tagging_obs_previous_fields = field_options.copy()
+
+    child_fields = {"Outlet", "Date", "Media type", "Mentions", "Impressions", "Effective reach"}
+
+    def _normalize_tagging_obs_fields() -> None:
+        current_fields = st.session_state.get("tagging_obs_selected_fields", []) or []
+        previous_fields = st.session_state.get("tagging_obs_previous_fields", []) or []
+        current_set = set(current_fields)
+        previous_set = set(previous_fields)
+
+        if "Examples" not in current_set and current_set & child_fields:
+            if "Examples" in previous_set:
+                current_set -= child_fields
+            else:
+                current_set.add("Examples")
+
+        normalized_fields = [field for field in field_options if field in current_set]
+        st.session_state.tagging_obs_selected_fields = normalized_fields
+        st.session_state.tagging_obs_previous_fields = normalized_fields.copy()
+
+    preset_col, fields_col = st.columns([0.18, 0.82], gap="small")
+    with preset_col:
+        bulk_col1, bulk_col2 = st.columns(2, gap="small")
+        with bulk_col1:
+            if st.button("All", key="tagging_obs_select_all", use_container_width=True):
+                st.session_state.tagging_obs_selected_fields = field_options.copy()
+                st.session_state.tagging_obs_previous_fields = field_options.copy()
+                st.rerun()
+        with bulk_col2:
+            if st.button("None", key="tagging_obs_select_none", use_container_width=True):
+                st.session_state.tagging_obs_selected_fields = []
+                st.session_state.tagging_obs_previous_fields = []
+                st.rerun()
+
+    with fields_col:
+        st.pills(
+            "Fields",
+            options=field_options,
+            selection_mode="multi",
+            default=st.session_state.get("tagging_obs_selected_fields", field_options),
+            key="tagging_obs_selected_fields",
+            on_change=_normalize_tagging_obs_fields,
+            label_visibility="collapsed",
+        )
+
+    selected_fields = st.session_state.get("tagging_obs_selected_fields", []) or []
+    st.session_state.tagging_obs_previous_fields = list(selected_fields)
+    selected_field_set = set(selected_fields)
+    show_example_outlet = "Outlet" in selected_field_set
+    show_example_date = "Date" in selected_field_set
+    show_example_type = "Media type" in selected_field_set
+    show_example_mentions = "Mentions" in selected_field_set
+    show_example_impressions = "Impressions" in selected_field_set
+    show_example_effective_reach = "Effective reach" in selected_field_set
+    show_examples = "Examples" in selected_field_set
+
     if st.session_state.get("tagging_observation_include_other", True) != include_other:
         st.info("The current observations were generated with a different Include Other setting. Regenerate if you want them aligned to the current distribution view.")
 
@@ -818,8 +832,6 @@ elif observation_output:
             )
             if example_blocks:
                 st.markdown(example_blocks, unsafe_allow_html=True)
-else:
-    st.info("Generate observations to add narrative context to the current tag distribution.")
 
 with st.expander("Grouped tagging dataset preview", expanded=False):
     st.dataframe(

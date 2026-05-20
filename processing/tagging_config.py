@@ -5,6 +5,7 @@ import math
 from typing import Literal
 
 import pandas as pd
+from processing.ai_tagging import initialize_tagging_workflow_columns
 from processing.coverage_flags import has_coverage_flag, split_coverage_flags
 
 
@@ -260,14 +261,10 @@ def prepare_tagging_datasets(
     if not sampled_rows.empty and "Group ID" not in sampled_rows.columns:
         raise ValueError("Sampled tagging rows do not contain Group ID. Standard Cleaning must run first.")
 
-    unique_rows = build_unique_story_table_from_existing_groups(sampled_rows)
-
-    if "Tag_Processed" not in unique_rows.columns:
-        unique_rows["Tag_Processed"] = False
-
-    for col in ["AI Tags", "AI Tag Rationale"]:
-        if col not in unique_rows.columns:
-            unique_rows[col] = ""
+    sampled_rows = initialize_tagging_workflow_columns(sampled_rows)
+    unique_rows = initialize_tagging_workflow_columns(
+        build_unique_story_table_from_existing_groups(sampled_rows)
+    )
 
     return {
         "df_tagging_rows": sampled_rows.reset_index(drop=True),

@@ -1574,12 +1574,11 @@ def render_authors_page() -> None:
                 )
 
             st.divider()
-            st.subheader("Report Copy")
-            generate_col1, generate_col2 = st.columns([1.05, 3.15], gap="medium")
-            with generate_col1:
+            report_header_col, report_button_col = st.columns([2.6, 1.4], gap="medium")
+            with report_header_col:
+                st.subheader("Report Copy")
+            with report_button_col:
                 render_generate_button("insights")
-            with generate_col2:
-                st.caption("Uses shortlisted authors plus representative grouped stories from each author footprint to generate concise, report-ready coverage themes.")
 
             field_options = ["Outlet", "Date", "Media type", "Mentions", "Impressions", "Effective reach", "Examples"]
             if "authors_report_selected_fields" not in st.session_state:
@@ -1670,6 +1669,9 @@ def render_authors_page() -> None:
             display: flex;
             align-items: center;
             justify-content: center;
+        }
+        div[data-testid="stButton"] button p {
+            white-space: nowrap;
         }
         </style>
         """,

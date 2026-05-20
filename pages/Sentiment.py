@@ -280,6 +280,9 @@ st.markdown(
         align-items: center;
         justify-content: center;
     }
+    div[data-testid="stButton"] button p {
+        white-space: nowrap;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -486,6 +489,8 @@ if st.session_state.sentiment_section == "Setup":
         st.session_state.sentiment_excluded_flags = excluded_flags if sample_mode != "reuse_other_sample" else []
         st.session_state.sentiment_config_step = True
         st.session_state.sentiment_elapsed_time = time.time() - start
+        st.session_state.sentiment_observation_output = {}
+        st.session_state.sentiment_observation_include_nr = True
 
         grouped, unique = ensure_ai_sentiment_columns(
             st.session_state.df_sentiment_grouped_rows,
@@ -595,6 +600,9 @@ if st.session_state.sentiment_section == "Run":
         )
         st.session_state.df_sentiment_unique = unique
         st.session_state.df_sentiment_grouped_rows = grouped
+        st.session_state.df_sentiment_rows = grouped.copy()
+        st.session_state.sentiment_observation_output = {}
+        st.session_state.sentiment_observation_include_nr = True
         st.session_state.pop("sentiment_second_opinion_target_batch", None)
         st.session_state.pop("sentiment_second_opinion_target_source_count", None)
         st.success("Reset AI sentiment results.")
@@ -602,6 +610,8 @@ if st.session_state.sentiment_section == "Run":
 
     if run_clicked:
         st.session_state.pop("__last_sentiment_batch_summary__", None)
+        st.session_state.sentiment_observation_output = {}
+        st.session_state.sentiment_observation_include_nr = True
         sentiment_entity_terms = _get_sentiment_entity_terms()
 
         progress_bar = st.progress(0.0)
@@ -801,12 +811,11 @@ with dist_view2:
     st.dataframe(display_table, hide_index=True, use_container_width=True)
 
 st.divider()
-st.subheader("Sentiment Observations")
-st.caption("Generate report-ready observations about what kinds of coverage are driving the final sentiment mix, with example headlines for each sentiment category.")
-
-generate_obs_col1, generate_obs_col2 = st.columns([1.2, 3], gap="medium")
-with generate_obs_col1:
-    if st.button("Generate sentiment observations", type="primary", key="generate_sentiment_observations"):
+obs_header_col, obs_button_col = st.columns([2.6, 1.4], gap="medium")
+with obs_header_col:
+    st.subheader("Sentiment Observations")
+with obs_button_col:
+    if st.button("Generate sentiment observations", type="primary", key="generate_sentiment_observations", use_container_width=True):
         with st.spinner("Generating sentiment observations..."):
             try:
                 obs_output, _, _ = generate_sentiment_observations(
@@ -824,8 +833,6 @@ with generate_obs_col1:
                 st.session_state.sentiment_observation_include_nr = include_not_relevant_final
             except Exception as e:
                 st.error(f"Could not generate sentiment observations: {e}")
-with generate_obs_col2:
-    st.caption("Uses effective sentiment labels in priority order: human input, AI second opinion, then AI first pass, with a slight preference for linkable online examples.")
 
 observation_output = st.session_state.get("sentiment_observation_output", {})
 if observation_output:
@@ -924,5 +931,3 @@ if observation_output:
                 )
                 if example_blocks:
                     st.markdown(example_blocks, unsafe_allow_html=True)
-else:
-    st.info("Generate observations to add narrative context to the final sentiment distribution.")

@@ -22,6 +22,29 @@ DEFAULT_EXCLUDED_COVERAGE_FLAGS = [
     "User-Generated",
 ]
 
+_SENTIMENT_WORKFLOW_RESET_COLUMNS = [
+    "Assigned Sentiment",
+    "Assigned Sentiment Source",
+    "AI Sentiment",
+    "AI Sentiment Confidence",
+    "AI Sentiment Rationale",
+    "Review AI Sentiment",
+    "Review AI Confidence",
+    "Review AI Rationale",
+    "AI Agreement",
+    "Needs Human Review",
+    "Hybrid Sentiment",
+    "Hybrid Sentiment Confidence",
+    "Final Sentiment Confidence",
+]
+
+
+def initialize_sentiment_workflow_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    for col in _SENTIMENT_WORKFLOW_RESET_COLUMNS:
+        out[col] = pd.NA
+    return out
+
 
 def init_sentiment_config_state(session_state) -> None:
     defaults = {
@@ -258,13 +281,10 @@ def prepare_sentiment_datasets(
     if not sampled_rows.empty and "Group ID" not in sampled_rows.columns:
         raise ValueError("Sampled sentiment rows do not contain Group ID. Standard Cleaning must run first.")
 
-    grouped_rows = sampled_rows.copy()
-    unique_rows = build_unique_story_table_from_existing_groups(grouped_rows)
-
-    for df_name in [grouped_rows, unique_rows]:
-        for col in ["Assigned Sentiment", "AI Sentiment", "AI Sentiment Confidence", "AI Sentiment Rationale"]:
-            if col not in df_name.columns:
-                df_name[col] = pd.NA
+    grouped_rows = initialize_sentiment_workflow_columns(sampled_rows.copy())
+    unique_rows = initialize_sentiment_workflow_columns(
+        build_unique_story_table_from_existing_groups(grouped_rows)
+    )
 
     return {
         "df_sentiment_rows": sampled_rows.reset_index(drop=True),
@@ -379,14 +399,8 @@ def build_tolerant_regex_str(keywords: list[str]) -> str | None:
 
 
 def ensure_sentiment_columns(df_grouped: pd.DataFrame, df_unique: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    grouped = df_grouped.copy()
-    unique = df_unique.copy()
-
-    for df in [grouped, unique]:
-        for col in ["Assigned Sentiment", "AI Sentiment", "AI Sentiment Confidence", "AI Sentiment Rationale"]:
-            if col not in df.columns:
-                df[col] = pd.NA
-
+    grouped = initialize_sentiment_workflow_columns(df_grouped)
+    unique = initialize_sentiment_workflow_columns(df_unique)
     return grouped, unique
 
 

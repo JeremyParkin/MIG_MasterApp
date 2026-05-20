@@ -21,6 +21,22 @@ DEFAULT_SENTIMENT_PRIMARY_EXAMPLE_LIMIT = 10
 DEFAULT_SENTIMENT_ALIGNED_EVIDENCE_LIMIT = 40
 MAX_RETRIES = 2
 
+_SENTIMENT_WORKFLOW_DEFAULTS: dict[str, Any] = {
+    "Assigned Sentiment": pd.NA,
+    "Assigned Sentiment Source": pd.NA,
+    "AI Sentiment": pd.NA,
+    "AI Sentiment Confidence": pd.NA,
+    "AI Sentiment Rationale": pd.NA,
+    "Review AI Sentiment": pd.NA,
+    "Review AI Confidence": pd.NA,
+    "Review AI Rationale": pd.NA,
+    "AI Agreement": pd.NA,
+    "Needs Human Review": pd.NA,
+    "Hybrid Sentiment": pd.NA,
+    "Hybrid Sentiment Confidence": pd.NA,
+    "Final Sentiment Confidence": pd.NA,
+}
+
 
 def _allowed_sentiment_labels(sentiment_type: str) -> list[str]:
     if sentiment_type == "3-way":
@@ -31,6 +47,22 @@ def _allowed_sentiment_labels(sentiment_type: str) -> list[str]:
 def _extract_json_payload(text: str) -> dict[str, Any] | None:
     raw = str(text or "").strip()
     if not raw:
+        return None
+
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        pass
+
+    m = re.search(r"\{.*\}", raw, flags=re.S)
+    if not m:
+        return None
+
+    try:
+        parsed = json.loads(m.group(0))
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
         return None
 
 
@@ -96,22 +128,6 @@ def enforce_not_relevant_direct_mention_rule(
     )
     return adjusted
 
-    try:
-        parsed = json.loads(raw)
-        return parsed if isinstance(parsed, dict) else None
-    except Exception:
-        pass
-
-    m = re.search(r"\{.*\}", raw, flags=re.S)
-    if not m:
-        return None
-
-    try:
-        parsed = json.loads(m.group(0))
-        return parsed if isinstance(parsed, dict) else None
-    except Exception:
-        return None
-
 
 def _validate_structured_result(result: dict[str, Any], sentiment_type: str) -> tuple[dict[str, Any], str | None]:
     labels = _allowed_sentiment_labels(sentiment_type)
@@ -146,14 +162,21 @@ def init_ai_sentiment_state(session_state) -> None:
     session_state.setdefault("functions", [])
 
 
+def initialize_sentiment_workflow_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    for col, default_value in _SENTIMENT_WORKFLOW_DEFAULTS.items():
+        out[col] = default_value
+    return out
+
+
 def ensure_ai_sentiment_columns(df_unique: pd.DataFrame, df_grouped: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     unique = df_unique.copy()
     grouped = df_grouped.copy()
 
     for df in [unique, grouped]:
-        for col in ["Assigned Sentiment", "AI Sentiment", "AI Sentiment Confidence", "AI Sentiment Rationale"]:
+        for col, default_value in _SENTIMENT_WORKFLOW_DEFAULTS.items():
             if col not in df.columns:
-                df[col] = pd.NA
+                df[col] = default_value
 
     return unique, grouped
 
@@ -357,14 +380,8 @@ def reset_ai_sentiment_results(
     df_sentiment_unique: pd.DataFrame,
     df_sentiment_grouped_rows: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    unique = df_sentiment_unique.copy()
-    grouped = df_sentiment_grouped_rows.copy()
-
-    for df in [unique, grouped]:
-        for col in ["AI Sentiment", "AI Sentiment Confidence", "AI Sentiment Rationale"]:
-            if col in df.columns:
-                df[col] = pd.NA
-
+    unique = initialize_sentiment_workflow_columns(df_sentiment_unique)
+    grouped = initialize_sentiment_workflow_columns(df_sentiment_grouped_rows)
     return unique, grouped
 
 def build_sentiment_distribution(
@@ -429,7 +446,7 @@ def build_sentiment_distribution(
 
 def _get_text_series(df: pd.DataFrame, column_name: str) -> pd.Series:
     if column_name not in df.columns:
-        return pd.Series(index=df.index, dtype="object")
+        return pd.Series("", index=df.index, dtype="object")
 
     values = df[column_name]
     if isinstance(values, pd.DataFrame):
