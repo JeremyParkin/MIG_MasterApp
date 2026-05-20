@@ -8,6 +8,7 @@ from typing import Literal
 
 import pandas as pd
 from processing.coverage_flags import has_coverage_flag, split_coverage_flags
+from processing.sentiment_schemes import get_sentiment_labels, normalize_sentiment_type
 from utils.time_display import format_local_timestamp
 
 
@@ -416,6 +417,7 @@ def build_sentiment_configuration(
     sentiment_type: str,
     model: str,
 ) -> None:
+    sentiment_type = normalize_sentiment_type(sentiment_type)
     session_state.ui_primary_names = _clean_list(primary_names)
     session_state.ui_alternate_names = _clean_list(alternate_names)
     session_state.ui_spokespeople = _clean_list(spokespeople)
@@ -478,7 +480,7 @@ def build_sentiment_configuration(
         "- Passing mentions without a strong stance are generally Neutral.",
         "- Brief/Passing Mentions: If the collective entity appears only briefly in a longer story without explicit praise/criticism or clear attribution of outcomes to the entity, default to NEUTRAL.",
         "- IMPORTANT: If the collective entity is directly mentioned anywhere in the headline/body/transcript, do NOT use NOT RELEVANT.",
-        "- Direct mention of the primary entity, any alias, any listed spokesperson acting for the entity, or any listed product/sub-brand/program means the story is in scope for sentiment and must receive POSITIVE, NEUTRAL, or NEGATIVE rather than NOT RELEVANT.",
+        "- Direct mention of the primary entity, any alias, any listed spokesperson acting for the entity, or any listed product/sub-brand/program means the story is in scope for sentiment and must receive one of the active sentiment labels rather than NOT RELEVANT.",
         "- If the entity is mentioned but the coverage is only incidental or passing and does not express judgment, use NEUTRAL.",
         "- Judge sentiment toward the collective entity itself, not toward the broader topic, event, market condition, social problem, or historic issue being discussed.",
         "- Negative subject matter does not automatically mean negative sentiment toward the collective entity.",
@@ -513,6 +515,8 @@ def build_sentiment_configuration(
         ]
 
     session_state.post_prompt = "\n".join(context_lines).strip()
+
+    label_enum = get_sentiment_labels(sentiment_type)
 
     if sentiment_type == "3-way":
         session_state.sentiment_instruction = f"""
@@ -550,7 +554,54 @@ OUTPUT:
                     "named_entity": {"type": "string"},
                     "sentiment": {
                         "type": "string",
-                        "enum": ["POSITIVE", "NEUTRAL", "NEGATIVE", "NOT RELEVANT"],
+                        "enum": label_enum,
+                    },
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 100},
+                    "explanation": {"type": "string"},
+                },
+                "required": ["named_entity", "sentiment", "confidence", "explanation"],
+            },
+        }]
+    elif sentiment_type == "4-way":
+        session_state.sentiment_instruction = f"""
+LABEL SET: POSITIVE, BALANCED, NEUTRAL, NEGATIVE, NOT RELEVANT
+
+WHAT TO JUDGE:
+- The *collective entity*: {named_entity} + aliases + spokespeople acting on its behalf + products/sub-brands.
+
+CRITERIA:
+- POSITIVE: Favorable framing, praise, or beneficial outcomes credited to the collective entity clearly dominate the story's likely reader takeaway.
+- BALANCED: Substantive positive/constructive material and substantive critical material are both present, and the positive/constructive material is at least comparable to, or slightly stronger than, the critical material.
+- NEUTRAL: Factual, procedural, or passing coverage with no meaningful positive or negative judgment toward the collective entity. Do not use NEUTRAL as a mixed-content bucket.
+- NEGATIVE: Criticism, unfavorable framing, reputational damage, or negative outcomes attributed to the collective entity dominate the story's likely reader takeaway.
+- NOT RELEVANT: The collective entity (as defined) is not present at all in the story text.
+
+DECISION RULES:
+- Judge sentiment toward the collective entity itself, not toward the broader topic or issue.
+- If the collective entity is directly mentioned anywhere in the story, do NOT use NOT RELEVANT.
+- A direct mention of the primary entity, any alias, any listed spokesperson acting for the entity, or any listed product/sub-brand/program means the story must be labeled POSITIVE, BALANCED, NEUTRAL, or NEGATIVE.
+- If the entity is mentioned but the coverage is only incidental or passing and does not express judgment, label NEUTRAL.
+- If the story mainly reports the entity's statements, research, forecast, event, or public-service activity without judging the entity, label NEUTRAL.
+- Use BALANCED only when both the positive/constructive and critical elements are meaningful to the story, not when a mostly negative story includes a small mitigating detail.
+- Because negative reputation effects carry extra weight, roughly equal positive and critical material should usually be labeled NEGATIVE unless the positive/constructive framing is clearly stronger.
+- Use NEGATIVE when the coverage portrays the collective entity itself unfavorably through blame, criticism, failure, wrongdoing, poor judgment, harm, scandal, hypocrisy, incompetence, or reputational damage.
+- Do not justify NEGATIVE merely because the story discusses decline, crisis, violence, tragedy, conflict, or other bad outcomes affecting the broader topic.
+
+OUTPUT:
+- Provide the UPPERCASE label, a confidence (0-100), and a 1-2 sentence explanation focused on the collective entity.
+- Always output results in English.
+""".strip()
+
+        session_state.functions = [{
+            "name": "analyze_sentiment",
+            "description": "Analyze 4-way sentiment toward the collective entity.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "named_entity": {"type": "string"},
+                    "sentiment": {
+                        "type": "string",
+                        "enum": label_enum,
                     },
                     "confidence": {"type": "number", "minimum": 0, "maximum": 100},
                     "explanation": {"type": "string"},
@@ -595,10 +646,7 @@ OUTPUT:
                     "named_entity": {"type": "string"},
                     "sentiment": {
                         "type": "string",
-                        "enum": [
-                            "VERY POSITIVE", "SOMEWHAT POSITIVE", "NEUTRAL",
-                            "SOMEWHAT NEGATIVE", "VERY NEGATIVE", "NOT RELEVANT",
-                        ],
+                        "enum": label_enum,
                     },
                     "confidence": {"type": "number", "minimum": 0, "maximum": 100},
                     "explanation": {"type": "string"},

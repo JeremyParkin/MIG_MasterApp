@@ -19,6 +19,11 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         build_effective_ai_sentiment_series,
         build_sentiment_distribution,
     )
+    from processing.sentiment_schemes import (
+        get_negative_priority_weights,
+        get_sentiment_labels,
+        normalize_sentiment_type,
+    )
     from processing.spot_checks import (
         DEFAULT_CONF_THRESH,
         DEFAULT_SECOND_OPINION_MODEL,
@@ -56,6 +61,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         [class*="spot_btn_positive"] button,
         [class*="spot_btn_very_positive"] button,
         [class*="spot_btn_somewhat_positive"] button,
+        [class*="spot_btn_balanced"] button,
         [class*="spot_btn_neutral"] button,
         [class*="spot_btn_somewhat_negative"] button,
         [class*="spot_btn_negative"] button,
@@ -74,6 +80,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         [class*="spot_btn_positive"],
         [class*="spot_btn_very_positive"],
         [class*="spot_btn_somewhat_positive"],
+        [class*="spot_btn_balanced"],
         [class*="spot_btn_neutral"],
         [class*="spot_btn_somewhat_negative"],
         [class*="spot_btn_negative"],
@@ -85,6 +92,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         [class*="spot_btn_positive"] div[data-testid="stButton"],
         [class*="spot_btn_very_positive"] div[data-testid="stButton"],
         [class*="spot_btn_somewhat_positive"] div[data-testid="stButton"],
+        [class*="spot_btn_balanced"] div[data-testid="stButton"],
         [class*="spot_btn_neutral"] div[data-testid="stButton"],
         [class*="spot_btn_somewhat_negative"] div[data-testid="stButton"],
         [class*="spot_btn_negative"] div[data-testid="stButton"],
@@ -95,6 +103,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         [class*="spot_btn_positive"] div[data-testid="stVerticalBlock"],
         [class*="spot_btn_very_positive"] div[data-testid="stVerticalBlock"],
         [class*="spot_btn_somewhat_positive"] div[data-testid="stVerticalBlock"],
+        [class*="spot_btn_balanced"] div[data-testid="stVerticalBlock"],
         [class*="spot_btn_neutral"] div[data-testid="stVerticalBlock"],
         [class*="spot_btn_somewhat_negative"] div[data-testid="stVerticalBlock"],
         [class*="spot_btn_negative"] div[data-testid="stVerticalBlock"],
@@ -105,6 +114,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         [class*="spot_btn_positive"] button { background-color: #2ecc71 !important; }
         [class*="spot_btn_very_positive"] button { background-color: #10ad82 !important; }
         [class*="spot_btn_somewhat_positive"] button { background-color: #72cc4a !important; }
+        [class*="spot_btn_balanced"] button { background-color: #38bdf8 !important; }
         [class*="spot_btn_neutral"] button { background-color: #f1c40f !important; }
         [class*="spot_btn_somewhat_negative"] button { background-color: #e67e22 !important; }
         [class*="spot_btn_negative"] button { background-color: #e74c3c !important; }
@@ -113,6 +123,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         [class*="spot_btn_positive"] button:hover,
         [class*="spot_btn_very_positive"] button:hover,
         [class*="spot_btn_somewhat_positive"] button:hover,
+        [class*="spot_btn_balanced"] button:hover,
         [class*="spot_btn_neutral"] button:hover,
         [class*="spot_btn_somewhat_negative"] button:hover,
         [class*="spot_btn_negative"] button:hover,
@@ -124,6 +135,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         [class*="spot_btn_positive"] div[data-testid="element-container"],
         [class*="spot_btn_very_positive"] div[data-testid="element-container"],
         [class*="spot_btn_somewhat_positive"] div[data-testid="element-container"],
+        [class*="spot_btn_balanced"] div[data-testid="element-container"],
         [class*="spot_btn_neutral"] div[data-testid="element-container"],
         [class*="spot_btn_somewhat_negative"] div[data-testid="element-container"],
         [class*="spot_btn_negative"] div[data-testid="element-container"],
@@ -305,43 +317,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
             )
             .reset_index(drop=True)
         )
-    
-    
-    # def build_sentiment_distribution(df_unique: pd.DataFrame, sentiment_type: str) -> pd.DataFrame:
-    #     if sentiment_type == "5-way":
-    #         order = [
-    #             "VERY POSITIVE",
-    #             "SOMEWHAT POSITIVE",
-    #             "NEUTRAL",
-    #             "SOMEWHAT NEGATIVE",
-    #             "VERY NEGATIVE",
-    #             "NOT RELEVANT",
-    #             # "UNASSIGNED",
-    #         ]
-    #     else:
-    #         order = [
-    #             "POSITIVE",
-    #             "NEUTRAL",
-    #             "NEGATIVE",
-    #             "NOT RELEVANT",
-    #             # "UNASSIGNED",
-    #         ]
-    #
-    #     assigned = df_unique.get("Assigned Sentiment", pd.Series(index=df_unique.index, dtype="object")).fillna("").astype(str).str.strip()
-    #     ai = df_unique.get("AI Sentiment", pd.Series(index=df_unique.index, dtype="object")).fillna("").astype(str).str.strip()
-    #
-    #     final = assigned.where(assigned != "", ai)
-    #     final = final.where(final != "", "UNASSIGNED").str.upper()
-    #
-    #     sentiment_counts = final.value_counts().rename_axis("Sentiment").reset_index(name="Count")
-    #     base = pd.DataFrame({"Sentiment": order})
-    #     out = base.merge(sentiment_counts, on="Sentiment", how="left")
-    #     out["Count"] = out["Count"].fillna(0).astype(int)
-    #     total = int(out["Count"].sum())
-    #     out["Share"] = out["Count"] / total if total > 0 else 0
-    #     return out
-    
-    
+
     def auto_accept_high_confidence_matches(
         unique_df: pd.DataFrame,
         grouped_df: pd.DataFrame,
@@ -428,9 +404,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
     functions = st.session_state.get("functions", [])
     model_id = st.session_state.get("model_choice", "gpt-5.4-nano")
     
-    _raw_st = st.session_state.get("sentiment_type", "3-way")
-    _s = str(_raw_st).strip().lower()
-    sentiment_type = "5-way" if _s.startswith("5") or "5-way" in _s else "3-way"
+    sentiment_type = normalize_sentiment_type(st.session_state.get("sentiment_type", "3-way"))
     
     display_keywords: list[str] = []
     primary_name = str(analysis_payload.get("primary_name", "") or "").strip()
@@ -482,10 +456,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
     auto_resolved_count = int((assigned_source_all == "AI_AUTO_RESOLVED").sum())
     needs_review_count = int(((review_label_all != "") & (assigned_all == "") & (needs_review_all == "Yes")).sum())
     disagreement_count = int(((review_label_all != "") & (agreement_all == "Disagree")).sum())
-    if sentiment_type == "3-way":
-        negative_labels = {"NEGATIVE"}
-    else:
-        negative_labels = {"SOMEWHAT NEGATIVE", "VERY NEGATIVE"}
+    negative_labels = set(get_negative_priority_weights(sentiment_type))
     sensitive_eligible_count = int(((assigned_all == "") & (review_label_all == "") & ai_label_all.isin(negative_labels)).sum())
 
     checked = len(st.session_state.spot_checked_groups)
@@ -681,23 +652,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
     all_coverage_candidates = build_all_sentiment_candidates(st.session_state.df_sentiment_unique)
     sentiment_bucket_options = [
         label
-        for label in (
-            [
-                "POSITIVE",
-                "NEUTRAL",
-                "NEGATIVE",
-                "NOT RELEVANT",
-            ]
-            if sentiment_type == "3-way"
-            else [
-                "VERY POSITIVE",
-                "SOMEWHAT POSITIVE",
-                "NEUTRAL",
-                "SOMEWHAT NEGATIVE",
-                "VERY NEGATIVE",
-                "NOT RELEVANT",
-            ]
-        )
+        for label in get_sentiment_labels(sentiment_type)
         if not all_coverage_candidates.empty
         and "__effective_sentiment__" in all_coverage_candidates.columns
         and all_coverage_candidates["__effective_sentiment__"].eq(label).any()
@@ -1028,17 +983,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
                 st.session_state.spot_idx = min(idx, len(new_filtered) - 1)
                 st.rerun()
     
-        if sentiment_type == "5-way":
-            manual_labels = [
-                "VERY POSITIVE",
-                "SOMEWHAT POSITIVE",
-                "NEUTRAL",
-                "SOMEWHAT NEGATIVE",
-                "VERY NEGATIVE",
-                "NOT RELEVANT",
-            ]
-        else:
-            manual_labels = ["POSITIVE", "NEUTRAL", "NEGATIVE", "NOT RELEVANT"]
+        manual_labels = get_sentiment_labels(sentiment_type)
     
         clicked_override = None
         for lbl in manual_labels:

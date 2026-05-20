@@ -10,6 +10,7 @@ from openai import OpenAI
 
 from processing.prominence import get_prominence_weight_series
 from processing.sentiment_config import build_tolerant_regex_str
+from processing.sentiment_schemes import get_sentiment_labels, normalize_sentiment_type
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
@@ -39,9 +40,7 @@ _SENTIMENT_WORKFLOW_DEFAULTS: dict[str, Any] = {
 
 
 def _allowed_sentiment_labels(sentiment_type: str) -> list[str]:
-    if sentiment_type == "3-way":
-        return ["POSITIVE", "NEUTRAL", "NEGATIVE", "NOT RELEVANT"]
-    return ["VERY POSITIVE", "SOMEWHAT POSITIVE", "NEUTRAL", "SOMEWHAT NEGATIVE", "VERY NEGATIVE", "NOT RELEVANT"]
+    return get_sentiment_labels(sentiment_type)
 
 
 def _extract_json_payload(text: str) -> dict[str, Any] | None:
@@ -202,9 +201,7 @@ def build_story_prompt(
 
 
 def parse_plain_text_response(txt: str, sentiment_type: str) -> tuple[str | None, int | None, str]:
-    cand3 = ["POSITIVE", "NEUTRAL", "NEGATIVE", "NOT RELEVANT"]
-    cand5 = ["VERY POSITIVE", "SOMEWHAT POSITIVE", "NEUTRAL", "SOMEWHAT NEGATIVE", "VERY NEGATIVE", "NOT RELEVANT"]
-    candidates = cand3 if sentiment_type == "3-way" else cand5
+    candidates = get_sentiment_labels(sentiment_type)
 
     sentiment = next((c for c in candidates if re.search(rf"\b{re.escape(c)}\b", txt)), None)
     m = re.search(r"confidence[^0-9]{0,10}(\d{1,3})", txt, flags=re.I)
@@ -390,22 +387,7 @@ def build_sentiment_distribution(
     *,
     final_series: pd.Series | None = None,
 ) -> pd.DataFrame:
-    if sentiment_type == "5-way":
-        order = [
-            "VERY POSITIVE",
-            "SOMEWHAT POSITIVE",
-            "NEUTRAL",
-            "SOMEWHAT NEGATIVE",
-            "VERY NEGATIVE",
-            "NOT RELEVANT",
-        ]
-    else:
-        order = [
-            "POSITIVE",
-            "NEUTRAL",
-            "NEGATIVE",
-            "NOT RELEVANT",
-        ]
+    order = get_sentiment_labels(normalize_sentiment_type(sentiment_type))
 
     if final_series is None:
         assigned = _get_text_series(df_unique, "Assigned Sentiment")
@@ -756,7 +738,8 @@ Requirements:
 - Do not overstate small buckets.
 - If negative or unfavorable coverage is isolated, say so.
 - Use only sentiment labels present in the provided data.
-- Support both 3-way and 5-way sentiment.
+- Support 3-way, 4-way, and 5-way sentiment.
+- For 4-way sentiment, preserve the distinction between BALANCED mixed coverage and truly NEUTRAL coverage.
 - Use the primary examples to anchor the clearest patterns, and use the aligned evidence to judge whether those patterns recur more broadly across the bucket.
 - {"Exclude NOT RELEVANT from the narrative unless it is present in the provided examples." if not include_not_relevant else "Include NOT RELEVANT only if it appears meaningfully in the provided examples."}
 

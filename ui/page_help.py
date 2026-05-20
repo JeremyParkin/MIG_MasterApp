@@ -657,7 +657,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "heading": "What this step does",
                     "bullets": [
                         "Builds the sentiment sample or full eligible set, then groups it into unique stories for AI analysis.",
-                        "Lets you choose 3-way or 5-way sentiment and carry Analysis Context guidance into the workflow.",
+                        "Lets you choose 3-way, 4-way, or 5-way sentiment and carry Analysis Context guidance into the workflow.",
                     ],
                 },
                 {
@@ -670,7 +670,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                 {
                     "heading": "What to review manually",
                     "bullets": [
-                        "Choose the 3-way or 5-way tone scheme that actually fits how you want to interpret this account.",
+                        "Choose the tone scheme that fits the account: 3-way for simple polarity, 4-way to split balanced mixed coverage from truly neutral coverage, or 5-way for intensity.",
                         "Use a full run only when the dataset is small enough to justify the extra cost and time.",
                         "If the account needs tighter relevance or interpretation guidance, adjust Analysis Context before running sentiment rather than correcting the same mistake repeatedly later.",
                     ],

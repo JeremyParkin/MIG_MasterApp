@@ -32,6 +32,11 @@ from processing.sentiment_config import (
     get_sentiment_source_rows,
     DEFAULT_MAX_FULL_ROWS,
 )
+from processing.sentiment_schemes import (
+    SENTIMENT_SCHEME_OPTIONS,
+    get_sentiment_labels,
+    normalize_sentiment_type,
+)
 from processing.ai_sentiment import (
     init_ai_sentiment_state,
     ensure_ai_sentiment_columns,
@@ -130,21 +135,13 @@ def _get_sentiment_entity_terms() -> list[str]:
 
 
 def _get_sentiment_order(sentiment_type: str) -> list[str]:
-    if str(sentiment_type).strip().lower().startswith("5"):
-        return [
-            "VERY POSITIVE",
-            "SOMEWHAT POSITIVE",
-            "NEUTRAL",
-            "SOMEWHAT NEGATIVE",
-            "VERY NEGATIVE",
-            "NOT RELEVANT",
-        ]
-    return ["POSITIVE", "NEUTRAL", "NEGATIVE", "NOT RELEVANT"]
+    return get_sentiment_labels(sentiment_type)
 
 
 def _get_sentiment_color_mapping() -> dict[str, str]:
     return {
         "POSITIVE": "#2ecc71",
+        "BALANCED": "#38bdf8",
         "NEUTRAL": "#f1c40f",
         "NEGATIVE": "#e74c3c",
         "VERY POSITIVE": "#0f9d58",
@@ -445,10 +442,11 @@ if st.session_state.sentiment_section == "Setup":
         else:
             st.caption("No shared analysis context saved yet. Add it on the Analysis Context page.")
     with col2:
+        current_sentiment_type = normalize_sentiment_type(st.session_state.ui_sentiment_type)
         sentiment_type = st.selectbox(
             "Sentiment Type",
-            ["3-way", "5-way"],
-            index=0 if st.session_state.ui_sentiment_type == "3-way" else 1,
+            SENTIMENT_SCHEME_OPTIONS,
+            index=SENTIMENT_SCHEME_OPTIONS.index(current_sentiment_type),
         )
 
     model = DEFAULT_SENTIMENT_MODEL

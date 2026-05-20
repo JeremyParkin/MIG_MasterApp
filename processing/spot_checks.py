@@ -10,6 +10,7 @@ import pandas as pd
 from deep_translator import GoogleTranslator
 from openai import OpenAI
 
+from processing.sentiment_schemes import get_negative_priority_weights, get_sentiment_labels
 from utils.api_meter import extract_usage_tokens
 
 
@@ -49,9 +50,7 @@ def recommend_second_opinion_batch_size(
 
 
 def _allowed_sentiment_labels(sentiment_type: str) -> list[str]:
-    if sentiment_type == "3-way":
-        return ["POSITIVE", "NEUTRAL", "NEGATIVE", "NOT RELEVANT"]
-    return ["VERY POSITIVE", "SOMEWHAT POSITIVE", "NEUTRAL", "SOMEWHAT NEGATIVE", "VERY NEGATIVE", "NOT RELEVANT"]
+    return get_sentiment_labels(sentiment_type)
 
 
 def _extract_json_payload(text: str) -> dict[str, Any] | None:
@@ -294,12 +293,7 @@ def compute_candidates(
     pool["IMP_NUM"] = pd.to_numeric(pool.get("Impressions", 0), errors="coerce").fillna(0)
     pool["ER_NUM"] = pd.to_numeric(pool.get("Effective Reach", 0), errors="coerce").fillna(0)
 
-    if sentiment_type == "3-way":
-        pool["NEG_SCORE"] = pool["AI_UPPER"].map({"NEGATIVE": 1.0}).fillna(0.0)
-    else:
-        pool["NEG_SCORE"] = pool["AI_UPPER"].map(
-            {"VERY NEGATIVE": 1.0, "SOMEWHAT NEGATIVE": 0.7}
-        ).fillna(0.0)
+    pool["NEG_SCORE"] = pool["AI_UPPER"].map(get_negative_priority_weights(sentiment_type)).fillna(0.0)
 
     conf_thresh = max(1, int(conf_thresh))
     pool["LOWCONF"] = ((conf_thresh - pool["AI_CONF"]) / conf_thresh).clip(lower=0, upper=1)
