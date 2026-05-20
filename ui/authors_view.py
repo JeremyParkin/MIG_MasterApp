@@ -11,6 +11,7 @@ import streamlit as st
 import processing.author_outlets as author_outlets_module
 from ui.insight_blocks import build_linked_example_blocks_html
 from ui.page_help import set_page_help_context
+from ui.charts import format_compact_number, get_adaptive_axis_expr
 
 from processing.analysis_context import (
     apply_session_coverage_flag_policy,
@@ -68,21 +69,6 @@ METRIC_FIELD_MAP = {
     "Impressions": "Impressions",
     "Effective Reach": "Effective_Reach",
 }
-
-
-def format_compact_integer(num: float | int) -> str:
-    try:
-        n = float(num)
-    except Exception:
-        return str(num)
-
-    if n >= 1_000_000_000:
-        return f"{n / 1_000_000_000:.0f}B"
-    if n >= 1_000_000:
-        return f"{n / 1_000_000:.0f}M"
-    if n >= 1_000:
-        return f"{n / 1_000:.0f}K"
-    return str(int(n)) if n.is_integer() else str(round(n))
 
 
 def render_authors_page() -> None:
@@ -1488,17 +1474,12 @@ def render_authors_page() -> None:
                     plot_df["Author Label"] = plot_df["Author"].astype(str).str.upper()
                     plot_df["Outlet Label"] = plot_df["Assigned Outlet"].astype(str).str.strip().replace("", "Unassigned")
                     plot_df["Author Axis Label"] = plot_df["Author Label"]
-                    plot_df["Metric Label"] = plot_df[metric_label].apply(format_compact_integer)
+                    plot_df["Metric Label"] = plot_df[metric_label].apply(format_compact_number)
                     chart_height = max(260, len(plot_df) * 48)
                     sort_order = plot_df["Author Axis Label"].tolist()
                     max_metric = float(plot_df[metric_label].max()) if not plot_df.empty else 0.0
                     padded_max = max_metric * 1.18 if max_metric > 0 else 1.0
-                    compact_axis_expr = """
-                        datum.value >= 1e9 ? format(datum.value / 1e9, '.0f') + 'B' :
-                        datum.value >= 1e6 ? format(datum.value / 1e6, '.0f') + 'M' :
-                        datum.value >= 1e3 ? format(datum.value / 1e3, '.0f') + 'K' :
-                        format(datum.value, ',')
-                    """
+                    compact_axis_expr = get_adaptive_axis_expr()
 
                     label_base = alt.Chart(plot_df).encode(
                         y=alt.Y(

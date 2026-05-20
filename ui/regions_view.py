@@ -5,6 +5,7 @@ import importlib
 import pandas as pd
 import streamlit as st
 
+from ui.charts import format_compact_number, get_adaptive_axis_expr
 from ui.page_help import set_page_help_context
 from processing.analysis_context import (
     apply_session_coverage_flag_policy,
@@ -75,16 +76,11 @@ def _render_region_chart(level_df: pd.DataFrame, metric_label: str, title: str, 
         return
 
     plot_df = level_df.head(10).copy()
-    plot_df["Metric Label"] = plot_df[metric_label].apply(_format_integer)
+    plot_df["Metric Label"] = plot_df[metric_label].apply(format_compact_number)
     chart_height = max(260, len(plot_df) * 42)
     max_metric = float(plot_df[metric_label].max()) if not plot_df.empty else 0.0
     padded_max = max_metric * 1.18 if max_metric > 0 else 1.0
-    compact_axis_expr = """
-        datum.value >= 1e9 ? format(datum.value / 1e9, '.0f') + 'B' :
-        datum.value >= 1e6 ? format(datum.value / 1e6, '.0f') + 'M' :
-        datum.value >= 1e3 ? format(datum.value / 1e3, '.0f') + 'K' :
-        format(datum.value, ',')
-    """
+    compact_axis_expr = get_adaptive_axis_expr()
 
     bars = alt.Chart(plot_df).mark_bar(color="#37415f", cornerRadiusEnd=2).encode(
         y=alt.Y("Region:N", sort=plot_df["Region"].tolist(), title=None, axis=alt.Axis(labelLimit=300)),

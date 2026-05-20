@@ -8,11 +8,42 @@ import pandas as pd
 
 
 _ADAPTIVE_AXIS_EXPR = """
-    datum.value >= 1e9 ? (datum.value >= 1e10 ? format(datum.value / 1e9, '.0f') : format(datum.value / 1e9, '.1f')) + ' B' :
-    datum.value >= 1e6 ? (datum.value >= 1e7 ? format(datum.value / 1e6, '.0f') : format(datum.value / 1e6, '.1f')) + ' M' :
-    datum.value >= 1e3 ? (datum.value >= 1e4 ? format(datum.value / 1e3, '.0f') : format(datum.value / 1e3, '.1f')) + ' K' :
+    datum.value >= 1e9 ? (((datum.value / 1e9) % 1) == 0 ? format(datum.value / 1e9, '.0f') : format(datum.value / 1e9, '.1f')) + ' B' :
+    datum.value >= 1e6 ? (((datum.value / 1e6) % 1) == 0 ? format(datum.value / 1e6, '.0f') : format(datum.value / 1e6, '.1f')) + ' M' :
+    datum.value >= 1e3 ? (((datum.value / 1e3) % 1) == 0 ? format(datum.value / 1e3, '.0f') : format(datum.value / 1e3, '.1f')) + ' K' :
     format(datum.value, ',')
 """
+
+
+def get_adaptive_axis_expr() -> str:
+    """Return a shared Altair/Vega labelExpr for compact numeric axis labels."""
+    return _ADAPTIVE_AXIS_EXPR
+
+
+def format_compact_number(value: float | int | object) -> str:
+    """Format a number compactly without creating duplicate rounded tick labels."""
+    try:
+        n = float(value)
+    except Exception:
+        return str(value)
+
+    abs_n = abs(n)
+    if abs_n >= 1_000_000_000:
+        scaled = n / 1_000_000_000
+        suffix = "B"
+    elif abs_n >= 1_000_000:
+        scaled = n / 1_000_000
+        suffix = "M"
+    elif abs_n >= 1_000:
+        scaled = n / 1_000
+        suffix = "K"
+    else:
+        return str(int(n)) if n.is_integer() else str(round(n, 1))
+
+    rounded = round(scaled)
+    if abs(scaled - rounded) < 1e-9:
+        return f"{rounded:.0f}{suffix}"
+    return f"{scaled:.1f}{suffix}"
 
 
 def build_time_series_area_chart(

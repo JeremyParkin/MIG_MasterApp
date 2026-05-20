@@ -21,6 +21,7 @@ from processing.analysis_context import (
     init_analysis_context_state,
 )
 import processing.outlet_insights as outlet_insights
+from ui.charts import format_compact_number, get_adaptive_axis_expr
 from ui.insight_blocks import build_linked_example_blocks_html
 from utils.formatting import NUMERIC_FORMAT_DICT
 
@@ -45,21 +46,6 @@ METRIC_FIELD_MAP = {
     "Impressions": "Impressions",
     "Effective Reach": "Effective_Reach",
 }
-
-
-def format_compact_integer(num: float | int) -> str:
-    try:
-        n = float(num)
-    except Exception:
-        return str(num)
-
-    if n >= 1_000_000_000:
-        return f"{n / 1_000_000_000:.0f}B"
-    if n >= 1_000_000:
-        return f"{n / 1_000_000:.0f}M"
-    if n >= 1_000:
-        return f"{n / 1_000:.0f}K"
-    return str(int(n)) if n.is_integer() else str(round(n))
 
 
 def extract_domain(value: object) -> str:
@@ -1223,16 +1209,11 @@ def render_outlets_page() -> None:
                 st.info("Outlet chart unavailable in this environment.")
             else:
                 plot_df = chart_table.copy()
-                plot_df["Metric Label"] = plot_df[metric_label].apply(format_compact_integer)
+                plot_df["Metric Label"] = plot_df[metric_label].apply(format_compact_number)
                 chart_height = max(280, len(plot_df) * 36)
                 max_metric = float(plot_df[metric_label].max()) if not plot_df.empty else 0.0
                 padded_max = max_metric * 1.18 if max_metric > 0 else 1.0
-                compact_axis_expr = """
-                    datum.value >= 1e9 ? format(datum.value / 1e9, '.0f') + 'B' :
-                    datum.value >= 1e6 ? format(datum.value / 1e6, '.0f') + 'M' :
-                    datum.value >= 1e3 ? format(datum.value / 1e3, '.0f') + 'K' :
-                    format(datum.value, ',')
-                """
+                compact_axis_expr = get_adaptive_axis_expr()
 
                 bars = alt.Chart(plot_df).mark_bar(color="#37415f", cornerRadiusEnd=2).encode(
                     y=alt.Y("Outlet:N", sort=plot_df["Outlet"].tolist(), axis=alt.Axis(title=None, labelLimit=300)),
