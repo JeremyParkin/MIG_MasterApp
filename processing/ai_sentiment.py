@@ -9,8 +9,7 @@ import pandas as pd
 from openai import OpenAI
 
 from processing.prominence import get_prominence_weight_series
-from processing.sentiment_config import build_tolerant_regex_str
-from processing.sentiment_schemes import get_sentiment_labels, normalize_sentiment_type
+from processing.sentiment_config import build_tolerant_regex_str, get_sentiment_labels, normalize_sentiment_type
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 

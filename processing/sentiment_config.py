@@ -8,11 +8,57 @@ from typing import Literal
 
 import pandas as pd
 from processing.coverage_flags import has_coverage_flag, split_coverage_flags
-from processing.sentiment_schemes import get_sentiment_labels, normalize_sentiment_type
 from utils.time_display import format_local_timestamp
 
 
 SampleMode = Literal["full", "representative", "custom", "reuse_other_sample"]
+
+SENTIMENT_SCHEME_OPTIONS = ["3-way", "4-way", "5-way"]
+
+_SENTIMENT_LABELS: dict[str, list[str]] = {
+    "3-way": ["POSITIVE", "NEUTRAL", "NEGATIVE", "NOT RELEVANT"],
+    "4-way": ["POSITIVE", "BALANCED", "NEUTRAL", "NEGATIVE", "NOT RELEVANT"],
+    "5-way": [
+        "VERY POSITIVE",
+        "SOMEWHAT POSITIVE",
+        "NEUTRAL",
+        "SOMEWHAT NEGATIVE",
+        "VERY NEGATIVE",
+        "NOT RELEVANT",
+    ],
+}
+
+_NEGATIVE_PRIORITY_WEIGHTS: dict[str, dict[str, float]] = {
+    "3-way": {"NEGATIVE": 1.0},
+    "4-way": {"NEGATIVE": 1.0},
+    "5-way": {"VERY NEGATIVE": 1.0, "SOMEWHAT NEGATIVE": 0.7},
+}
+
+
+def normalize_sentiment_type(sentiment_type: str | None) -> str:
+    raw = str(sentiment_type or "").strip().lower()
+    if raw.startswith("5") or "5-way" in raw:
+        return "5-way"
+    if raw.startswith("4") or "4-way" in raw:
+        return "4-way"
+    return "3-way"
+
+
+def get_sentiment_labels(
+    sentiment_type: str | None,
+    *,
+    include_not_relevant: bool = True,
+) -> list[str]:
+    normalized = normalize_sentiment_type(sentiment_type)
+    labels = list(_SENTIMENT_LABELS[normalized])
+    if not include_not_relevant:
+        labels = [label for label in labels if label != "NOT RELEVANT"]
+    return labels
+
+
+def get_negative_priority_weights(sentiment_type: str | None) -> dict[str, float]:
+    normalized = normalize_sentiment_type(sentiment_type)
+    return dict(_NEGATIVE_PRIORITY_WEIGHTS[normalized])
 
 DEFAULT_MAX_FULL_ROWS = 2000
 DEFAULT_EXCLUDED_COVERAGE_FLAGS = [

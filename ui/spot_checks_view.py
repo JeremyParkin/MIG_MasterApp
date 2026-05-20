@@ -19,7 +19,8 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         build_effective_ai_sentiment_series,
         build_sentiment_distribution,
     )
-    from processing.sentiment_schemes import (
+    from processing.sentiment_config import (
+        build_tolerant_regex_str,
         get_negative_priority_weights,
         get_sentiment_labels,
         normalize_sentiment_type,
@@ -425,7 +426,6 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
             continue
         seen_cf.add(cf)
         keywords.append(cleaned)
-    from processing.sentiment_config import build_tolerant_regex_str
     tolerant_pat_str = build_tolerant_regex_str(keywords)
     
     review_base_candidates = compute_candidates(

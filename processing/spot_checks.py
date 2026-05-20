@@ -10,7 +10,7 @@ import pandas as pd
 from deep_translator import GoogleTranslator
 from openai import OpenAI
 
-from processing.sentiment_schemes import get_negative_priority_weights, get_sentiment_labels
+from processing.sentiment_config import get_negative_priority_weights, get_sentiment_labels
 from utils.api_meter import extract_usage_tokens
 
 

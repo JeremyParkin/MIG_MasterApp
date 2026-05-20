@@ -31,8 +31,6 @@ from processing.sentiment_config import (
     reset_sentiment_config_state,
     get_sentiment_source_rows,
     DEFAULT_MAX_FULL_ROWS,
-)
-from processing.sentiment_schemes import (
     SENTIMENT_SCHEME_OPTIONS,
     get_sentiment_labels,
     normalize_sentiment_type,
