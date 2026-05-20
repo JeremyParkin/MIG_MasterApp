@@ -371,6 +371,9 @@ def render_outlets_page() -> None:
             align-items: center;
             justify-content: center;
         }
+        div[data-testid="stButton"] button p {
+            white-space: nowrap;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -1261,10 +1264,11 @@ def render_outlets_page() -> None:
             )
 
         st.divider()
-        st.subheader("Report Copy")
-        generate_col1, generate_col2 = st.columns([1.2, 3], gap="medium")
-        with generate_col1:
-            if st.button("Generate outlet coverage themes", type="primary", key="generate_outlet_summaries"):
+        report_header_col, report_button_col = st.columns([2.6, 1.4], gap="medium")
+        with report_header_col:
+            st.subheader("Report Copy")
+        with report_button_col:
+            if st.button("Generate outlet coverage themes", type="primary", key="generate_outlet_summaries", use_container_width=True):
                 summaries = dict(st.session_state.get("outlet_insights_summaries", {}))
                 client_name = str(st.session_state.get("client_name", "")).strip()
                 analysis_context = build_analysis_context_text(st.session_state)
@@ -1300,8 +1304,6 @@ def render_outlets_page() -> None:
                             summaries[outlet_name] = f"Could not generate summary: {e}"
                 st.session_state.outlet_insights_summaries = summaries
                 st.rerun()
-        with generate_col2:
-            st.caption("Uses shortlisted outlets plus representative grouped stories and top contributing authors to generate concise, report-ready coverage themes.")
 
         field_options = ["Author", "Date", "Media type", "Mentions", "Impressions", "Effective reach", "Examples"]
         if "outlets_report_selected_fields" not in st.session_state:
@@ -1375,8 +1377,6 @@ def render_outlets_page() -> None:
         )
         if report_html:
             st.markdown(report_html, unsafe_allow_html=True)
-        else:
-            st.info("Generate outlet coverage themes to build the narrative block.")
 
     section = st.session_state.get("outlets_section", "Cleanup")
     set_page_help_context(st.session_state, "Outlets", section)

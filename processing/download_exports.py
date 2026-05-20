@@ -1142,6 +1142,83 @@ def _docx_add_linked_story_title(
         run.bold = True
 
 
+def _format_human_friendly_date(value: Any) -> str:
+    if value is None or value == "":
+        return ""
+    try:
+        parsed = pd.to_datetime(value, errors="coerce")
+    except Exception:
+        return str(value).strip()
+    if pd.isna(parsed):
+        return str(value).strip()
+    return parsed.strftime("%B %d, %Y")
+
+
+def _docx_add_top_story_block(document, block: dict[str, Any]) -> None:
+    title = _safe_string(block.get("title", ""))
+    if not title:
+        return
+
+    _docx_add_linked_story_title(document, title, url=_safe_string(block.get("url", "")))
+
+    outlet = _safe_string(block.get("outlet", ""))
+    date_text = _safe_string(block.get("date", ""))
+    media_type = _safe_string(block.get("media_type", ""))
+    if outlet or date_text:
+        meta_line = document.add_paragraph()
+        meta_line.paragraph_format.space_before = 0
+        meta_line.paragraph_format.space_after = 0
+        if outlet:
+            outlet_run = meta_line.add_run(outlet)
+            outlet_run.italic = True
+        if outlet and date_text:
+            meta_line.add_run(" – ")
+        if date_text:
+            meta_line.add_run(date_text)
+
+    summary = _safe_string(block.get("summary", ""))
+    if summary:
+        summary_p = document.add_paragraph(summary)
+        summary_p.paragraph_format.space_before = 0
+        summary_p.paragraph_format.space_after = 0
+
+    callout = _safe_string(block.get("callout", ""))
+    if callout:
+        callout_p = document.add_paragraph()
+        callout_p.paragraph_format.space_before = 0
+        callout_p.paragraph_format.space_after = 0
+        callout_p.add_run("Trend Chart Callout: ").bold = True
+        callout_p.add_run(callout)
+
+    sentiment = _safe_string(block.get("sentiment", ""))
+    if sentiment:
+        sentiment_p = document.add_paragraph()
+        sentiment_p.paragraph_format.space_before = 0
+        sentiment_p.paragraph_format.space_after = 0
+        sentiment_p.add_run("Sentiment Opinion: ").bold = True
+        sentiment_run = sentiment_p.add_run(sentiment)
+        sentiment_run.italic = True
+
+    metric_parts: list[str] = []
+    if media_type:
+        metric_parts.append(media_type)
+    mentions = block.get("mentions")
+    if mentions not in (None, ""):
+        metric_parts.append(f"Mentions: {int(mentions):,}")
+    impressions = block.get("impressions")
+    if impressions not in (None, ""):
+        metric_parts.append(f"Impressions: {int(impressions):,}")
+    effective_reach = block.get("effective_reach")
+    if effective_reach not in (None, ""):
+        metric_parts.append(f"Effective Reach: {int(effective_reach):,}")
+    if metric_parts:
+        metrics_p = document.add_paragraph(" | ".join(metric_parts))
+        metrics_p.paragraph_format.space_before = 0
+        metrics_p.paragraph_format.space_after = 0
+
+    document.add_paragraph()
+
+
 def _format_metric_parts(parts: list[tuple[str, Any]]) -> str:
     formatted: list[str] = []
     for label, value in parts:
@@ -1411,11 +1488,13 @@ def _iter_top_story_blocks(session_state) -> tuple[str, list[dict[str, Any]]]:
         return "", []
 
     overall = _safe_string((session_state.get("top_story_observation_output", {}) or {}).get("overall_observation", ""))
-    top_stories = top_stories.sort_values(["Mentions", "Impressions"], ascending=False)
+    if "Date" in top_stories.columns:
+        top_stories = top_stories.sort_values(["Date", "Headline"], ascending=[True, True], na_position="last")
+    else:
+        top_stories = top_stories.sort_values(["Headline"], ascending=[True], na_position="last")
     blocks = []
     for _, row in top_stories.iterrows():
         headline = _safe_string(row.get("Headline", ""))
-        summary = _safe_string(row.get("Top Story Summary", "")) or _safe_string(row.get("Chart Callout", ""))
         if not headline:
             continue
         blocks.append(
@@ -1424,15 +1503,15 @@ def _iter_top_story_blocks(session_state) -> tuple[str, list[dict[str, Any]]]:
                 "url": _safe_string(row.get("Example URL", ""))
                 or _safe_string(row.get("URL", ""))
                 or _safe_string(row.get("Representative URL", "")),
-                "summary": summary,
-                "metrics": _format_metric_parts(
-                    [
-                        ("Outlet", _safe_string(row.get("Example Outlet", ""))),
-                        ("Media Type", _safe_string(row.get("Example Type", ""))),
-                        ("Mentions", int(row.get("Mentions", 0) or 0)),
-                        ("Impressions", int(row.get("Impressions", 0) or 0)),
-                    ]
-                ),
+                "outlet": _safe_string(row.get("Example Outlet", "")),
+                "date": _format_human_friendly_date(row.get("Date")),
+                "summary": _safe_string(row.get("Top Story Summary", "")),
+                "callout": _safe_string(row.get("Chart Callout", "")),
+                "sentiment": _safe_string(row.get("Entity Sentiment", "")),
+                "media_type": _safe_string(row.get("Example Type", "")),
+                "mentions": int(row.get("Mentions", 0) or 0),
+                "impressions": int(row.get("Impressions", 0) or 0),
+                "effective_reach": int(row.get("Effective Reach", 0) or 0),
             }
         )
     return overall, blocks
@@ -1496,15 +1575,7 @@ def build_report_copy_docx_bytes(session_state) -> bytes:
             document.add_heading("Overall Observations", level=2)
             document.add_paragraph(top_story_overall)
         for block in top_story_blocks:
-            _docx_add_linked_story_title(
-                document,
-                block["title"],
-                url=block.get("url", ""),
-            )
-            if block.get("summary"):
-                document.add_paragraph(block["summary"])
-            if block.get("metrics"):
-                document.add_paragraph(block["metrics"])
+            _docx_add_top_story_block(document, block)
 
     sentiment_overall, sentiment_sections = _iter_sentiment_report_sections(session_state)
     if sentiment_overall or sentiment_sections:

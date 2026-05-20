@@ -480,18 +480,18 @@ def render_regions_page() -> None:
         else:
             overall_observation = str(level_copy.get("overall_observation", "") or "").strip()
             if overall_observation:
-                st.write("**Overall observation**")
+                st.markdown("### Overall Observation")
                 st.markdown(f'<div class="regions-copy-blurb">{overall_observation}</div>', unsafe_allow_html=True)
 
             top_profiles = [item for item in level_copy.get("top_region_profiles", []) if str(item.get("blurb", "")).strip()]
             if top_profiles:
-                st.write("**Top region profiles**")
+                st.markdown("### Top Region Profiles")
                 for item in top_profiles:
                     region_name = str(item.get("region", "") or "").strip()
                     blurb = str(item.get("blurb", "") or "").strip()
                     if not region_name or not blurb:
                         continue
-                    st.markdown(f"**{region_name}**")
+                    st.markdown(f"#### {region_name}")
                     st.markdown(f'<div class="regions-copy-blurb">{blurb}</div>', unsafe_allow_html=True)
                     with st.expander(f"Supporting grouped stories for {region_name}", expanded=False):
                         st.dataframe(
@@ -511,5 +511,5 @@ def render_regions_page() -> None:
 
             tail_observation = str(level_copy.get("tail_observation", "") or "").strip()
             if tail_observation:
-                st.write(f"**{_tail_heading_for_level(label)}**")
+                st.markdown(f"### {_tail_heading_for_level(label)}")
                 st.markdown(f'<div class="regions-copy-blurb">{tail_observation}</div>', unsafe_allow_html=True)

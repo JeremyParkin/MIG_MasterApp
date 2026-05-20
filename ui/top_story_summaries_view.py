@@ -33,7 +33,6 @@ def render_top_story_summaries() -> None:
     top_stories_module = importlib.reload(top_stories_module)
 
     st.subheader("Step 3: Top Story Insights")
-    st.caption("Generate the saved top-story outputs and review the overall observations and report copy.")
     
     if len(st.session_state.get("added_df", [])) == 0:
         st.error("Please select your TOP STORIES before trying this step.")
@@ -59,24 +58,19 @@ def render_top_story_summaries() -> None:
     df = normalize_summary_df(st.session_state.added_df.copy())
     df = df.sort_values(by="Date", ascending=True).reset_index(drop=True)
     
-    st.subheader("Generate Analysis")
-    
     analysis_payload = get_analysis_context_payload(st.session_state)
     primary_name = analysis_payload["primary_name"]
     analysis_context_text = build_analysis_context_text(st.session_state)
 
-    st.write("**Shared analysis context**")
+    header_col, button_col = st.columns([2.6, 1.4], gap="medium")
+    with header_col:
+        st.subheader("Generate Analysis")
+    with button_col:
+        submitted = st.button("Generate All Outputs", type="primary", use_container_width=True)
+
     analysis_caption = build_analysis_context_caption(st.session_state)
     if analysis_caption:
         st.caption(analysis_caption)
-    else:
-        st.caption("No shared analysis context saved yet. Add it on the Analysis Context page.")
-    
-    generate_col1, generate_col2 = st.columns([1.5, 3], gap="medium")
-    with generate_col1:
-        submitted = st.button("Generate All Outputs", type="primary")
-    with generate_col2:
-        st.caption("Generates chart callout, top story summary, and entity sentiment together for each saved top story.")
     
     if submitted and not primary_name.strip():
         st.error("Primary entity is required to proceed.")
@@ -179,7 +173,6 @@ def render_top_story_summaries() -> None:
     
     st.divider()
     st.subheader("Top Story Observations")
-    st.caption("Uses the saved top stories plus generated summaries, callouts, and sentiment context to produce a concise overall observation.")
 
     observation_output = st.session_state.get("top_story_observation_output")
     if observation_output and observation_output.get("_error"):
@@ -189,8 +182,6 @@ def render_top_story_summaries() -> None:
         if overall:
             st.markdown("### Overall Observations")
             st.write(overall)
-    else:
-        st.info("Generate all outputs to build the overall observations block automatically.")
 
     st.divider()
     st.subheader("Report Copy")

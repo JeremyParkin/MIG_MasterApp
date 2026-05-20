@@ -24,6 +24,21 @@ DEFAULT_TAGGING_PRIMARY_EXAMPLE_LIMIT = 10
 DEFAULT_TAGGING_ALIGNED_EVIDENCE_LIMIT = 40
 MAX_RETRIES = 2
 
+_TAGGING_WORKFLOW_DEFAULTS: dict[str, Any] = {
+    "Tag_Processed": False,
+    "AI Tags": "",
+    "AI Tag": pd.NA,
+    "AI Tag Confidence": pd.NA,
+    "AI Tag Rationale": pd.NA,
+    "Review AI Tag": pd.NA,
+    "Review AI Confidence": pd.NA,
+    "Review AI Rationale": pd.NA,
+    "AI Tag Agreement": pd.NA,
+    "Needs Human Review": pd.NA,
+    "Assigned Tag": pd.NA,
+    "Assigned Tag Source": pd.NA,
+}
+
 
 def init_ai_tagging_state(session_state) -> None:
     session_state.setdefault("tag_definitions", {})
@@ -33,6 +48,13 @@ def init_ai_tagging_state(session_state) -> None:
     session_state.setdefault("tagging_review_idx", 0)
     session_state.setdefault("tagging_review_low_conf_threshold", DEFAULT_TAGGING_REVIEW_CONFIDENCE_THRESHOLD)
     session_state.setdefault("tagging_pre_review_n", DEFAULT_TAGGING_REVIEW_BATCH_SIZE)
+
+
+def initialize_tagging_workflow_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    for col, default_value in _TAGGING_WORKFLOW_DEFAULTS.items():
+        out[col] = default_value
+    return out
 
 
 def clean_text(text: str) -> str:
@@ -598,7 +620,8 @@ def build_tag_observation_payload(
     )
     if "Date" not in working.columns:
         working["Date"] = ""
-    tagged_rows = tags_expanded.merge(working, on="Group ID", how="left")
+    working_for_examples = working.drop(columns=["Group Count"], errors="ignore")
+    tagged_rows = tags_expanded.merge(working_for_examples, on="Group ID", how="left")
 
     examples_by_tag: dict[str, list[dict[str, Any]]] = {}
     aligned_evidence_by_tag: dict[str, list[dict[str, Any]]] = {}
@@ -761,22 +784,10 @@ def ensure_tag_review_columns(
     unique = df_unique.copy()
     grouped = df_grouped.copy()
 
-    review_cols = {
-        "Review AI Tag": pd.NA,
-        "Review AI Confidence": pd.NA,
-        "Review AI Rationale": pd.NA,
-        "AI Tag Agreement": pd.NA,
-        "Needs Human Review": pd.NA,
-        "Assigned Tag": pd.NA,
-        "Assigned Tag Source": pd.NA,
-    }
-
     for df in [unique, grouped]:
-        for col, default_val in review_cols.items():
+        for col, default_val in _TAGGING_WORKFLOW_DEFAULTS.items():
             if col not in df.columns:
                 df[col] = default_val
-        if "AI Tag Confidence" not in df.columns:
-            df["AI Tag Confidence"] = pd.NA
 
     return unique, grouped
 
@@ -1191,24 +1202,6 @@ def reset_ai_tagging_results(
     df_tagging_unique: pd.DataFrame,
     df_tagging_rows: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    unique = df_tagging_unique.copy()
-    grouped = df_tagging_rows.copy()
-
-    if "Tag_Processed" in unique.columns:
-        unique["Tag_Processed"] = False
-
-    tag_columns_unique = [
-        col
-        for col in unique.columns
-        if col.startswith("AI Tag") or col.startswith("Review AI") or col in {"Needs Human Review", "Assigned Tag", "Assigned Tag Source", "AI Tag Agreement"}
-    ]
-    unique.drop(columns=tag_columns_unique, inplace=True, errors="ignore")
-
-    tag_columns_grouped = [
-        col
-        for col in grouped.columns
-        if col.startswith("AI Tag") or col.startswith("Review AI") or col in {"Needs Human Review", "Assigned Tag", "Assigned Tag Source", "AI Tag Agreement"}
-    ]
-    grouped.drop(columns=tag_columns_grouped, inplace=True, errors="ignore")
-
+    unique = initialize_tagging_workflow_columns(df_tagging_unique)
+    grouped = initialize_tagging_workflow_columns(df_tagging_rows)
     return unique, grouped
