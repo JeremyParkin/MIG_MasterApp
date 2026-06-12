@@ -1,129 +1,23 @@
 # 12-Save_Load.py
 from __future__ import annotations
 
-import io
-
 import dill
-import pandas as pd
 import streamlit as st
 from ui.page_help import set_page_help_context
 from utils.time_display import (
     current_timestamp_filename_string,
-    current_timestamp_storage_string,
     format_local_timestamp,
 )
-from utils.session_timing import (
-    build_session_timing_snapshot_fields,
-    restore_session_timing_after_load,
+from utils.session_snapshot import (
+    build_serializable_session_payload,
+    load_session_state_from_file,
 )
-
-SNAPSHOT_VERSION = 2
-EXCLUDED_SESSION_KEYS = {
-    "clean_excel_bytes",
-    "clean_excel_built_at",
-    "report_copy_docx_bytes",
-    "report_copy_built_at",
-    "notebooklm_zip_bytes",
-    "notebooklm_info",
-    "notebooklm_built_at",
-}
 
 
 st.title("Save & Load")
 st.caption("Save the current session to resume later, or load a previous session snapshot back into the app.")
 set_page_help_context(st.session_state, "Save & Load")
 st.divider()
-
-
-def _discover_dataframe_keys() -> list[str]:
-    return sorted(
-        [
-            key
-            for key, value in st.session_state.items()
-            if isinstance(value, pd.DataFrame)
-        ]
-    )
-
-
-def _build_serializable_session_payload() -> tuple[dict, list[str]]:
-    payload: dict = {
-        "_snapshot_version": SNAPSHOT_VERSION,
-        "_saved_at": current_timestamp_storage_string(),
-    }
-    skipped: list[str] = []
-
-    dataframe_keys = _discover_dataframe_keys()
-    payload["df_names"] = dataframe_keys
-
-    for key, value in st.session_state.items():
-        if key.startswith("_") or key in EXCLUDED_SESSION_KEYS:
-            continue
-
-        try:
-            dill.dumps(value)
-        except Exception:
-            skipped.append(key)
-            continue
-
-        payload[key] = value
-
-    payload.update(build_session_timing_snapshot_fields(st.session_state))
-
-    return payload, skipped
-
-
-def _restore_dataframe_value(value) -> pd.DataFrame | None:
-    if isinstance(value, pd.DataFrame):
-        restored = value.copy()
-    elif isinstance(value, str):
-        try:
-            restored = pd.read_csv(io.StringIO(value))
-        except Exception:
-            return None
-    else:
-        return None
-
-    if "Date" in restored.columns:
-        restored["Date"] = pd.to_datetime(restored["Date"], errors="coerce")
-
-    return restored
-
-
-def load_session_state(uploaded_file) -> None:
-    uploaded_file.seek(0)
-    session_data = dill.loads(uploaded_file.read())
-    loaded_saved_at = session_data.get("_saved_at")
-    loaded_snapshot_version = session_data.get("_snapshot_version")
-
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-
-    saved_df_names = session_data.get("df_names", [])
-    restored_df_names: list[str] = []
-
-    for df_name in saved_df_names:
-        if df_name not in session_data:
-            continue
-
-        restored_df = _restore_dataframe_value(session_data[df_name])
-        if restored_df is None:
-            continue
-
-        st.session_state[df_name] = restored_df
-        restored_df_names.append(df_name)
-
-    for key, value in session_data.items():
-        if key in restored_df_names or key in {"df_names", "_snapshot_version", "_saved_at"}:
-            continue
-        st.session_state[key] = value
-
-    st.session_state.df_names = restored_df_names if restored_df_names else saved_df_names
-    st.session_state.pickle_load = True
-    if loaded_saved_at:
-        st.session_state.loaded_session_saved_at = loaded_saved_at
-    if loaded_snapshot_version is not None:
-        st.session_state.loaded_session_snapshot_version = loaded_snapshot_version
-    restore_session_timing_after_load(st.session_state)
 
 
 st.header("Save")
@@ -135,7 +29,7 @@ elif not st.session_state.get("standard_step", False):
 else:
     st.info("Save your current processing session as a .pkl file.")
 
-    payload, skipped_keys = _build_serializable_session_payload()
+    payload, skipped_keys = build_serializable_session_payload(st.session_state)
     dt_string = current_timestamp_filename_string()
     client_name = st.session_state.get("client_name", "session").strip() or "session"
     file_name = f"{client_name} - {dt_string}.pkl"
@@ -163,7 +57,7 @@ uploaded_file = st.file_uploader("Restore a Previous Session", type="pkl", label
 
 if uploaded_file is not None:
     try:
-        load_session_state(uploaded_file)
+        load_session_state_from_file(st.session_state, uploaded_file)
         loaded_saved_at = st.session_state.get("loaded_session_saved_at")
         if loaded_saved_at:
             st.success(f"Session state loaded successfully. Snapshot saved at {format_local_timestamp(loaded_saved_at)}.")

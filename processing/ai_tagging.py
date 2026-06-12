@@ -23,6 +23,8 @@ DEFAULT_TAGGING_REVIEW_CONFIDENCE_THRESHOLD = 90
 DEFAULT_TAGGING_PRIMARY_EXAMPLE_LIMIT = 10
 DEFAULT_TAGGING_ALIGNED_EVIDENCE_LIMIT = 40
 MAX_RETRIES = 2
+RESERVED_OTHER_TAG = "Other"
+RESERVED_OTHER_DEFINITION = "None of the other tags apply."
 
 _TAGGING_WORKFLOW_DEFAULTS: dict[str, Any] = {
     "Tag_Processed": False,
@@ -41,9 +43,9 @@ _TAGGING_WORKFLOW_DEFAULTS: dict[str, Any] = {
 
 
 def init_ai_tagging_state(session_state) -> None:
-    session_state.setdefault("tag_definitions", {})
+    session_state["tag_definitions"] = ensure_canonical_tag_definitions(session_state.get("tag_definitions", {}))
     session_state.setdefault("tagging_mode", "Single best tag")
-    session_state.setdefault("tags_text", "")
+    session_state["tags_text"] = remove_reserved_tag_from_text(session_state.get("tags_text", ""))
     session_state.setdefault("tagging_observation_output", None)
     session_state.setdefault("tagging_review_idx", 0)
     session_state.setdefault("tagging_review_low_conf_threshold", DEFAULT_TAGGING_REVIEW_CONFIDENCE_THRESHOLD)
@@ -128,7 +130,6 @@ def build_default_tags_text(client_name: str) -> str:
     client_name = str(client_name or "").strip() or "the brand"
     return f"""Sustainability: {client_name} is discussed in relation to environmental responsibility, green initiatives, or emissions reduction.
 Innovation: {client_name} is discussed in relation to new technology, unique approaches, or product breakthroughs.
-Other: {client_name} is not discussed in relation to any other tagging topics.
 """
 
 
@@ -140,8 +141,36 @@ def parse_tag_definitions(tags_text: str) -> dict[str, str]:
             cleaned_tag = clean_text(tag)
             cleaned_criteria = clean_text(criteria)
             if cleaned_tag and cleaned_criteria:
+                if cleaned_tag.casefold() == RESERVED_OTHER_TAG.casefold():
+                    raise ValueError(
+                        f"{RESERVED_OTHER_TAG} is a protected catch-all tag and is added automatically. "
+                        "Remove it from the editable tag list."
+                    )
                 tag_definitions[cleaned_tag] = cleaned_criteria
-    return tag_definitions
+    return ensure_canonical_tag_definitions(tag_definitions)
+
+
+def remove_reserved_tag_from_text(tags_text: Any) -> str:
+    kept_lines: list[str] = []
+    for line in str(tags_text or "").splitlines():
+        label = line.split(":", 1)[0].strip() if ":" in line else ""
+        if label.casefold() == RESERVED_OTHER_TAG.casefold():
+            continue
+        kept_lines.append(line)
+    return "\n".join(kept_lines).strip()
+
+
+def ensure_canonical_tag_definitions(tag_definitions: Any) -> dict[str, str]:
+    definitions = dict(tag_definitions) if isinstance(tag_definitions, dict) else {}
+    cleaned = {
+        str(tag).strip(): str(criteria).strip()
+        for tag, criteria in definitions.items()
+        if str(tag).strip()
+        and str(criteria).strip()
+        and str(tag).strip().casefold() != RESERVED_OTHER_TAG.casefold()
+    }
+    cleaned[RESERVED_OTHER_TAG] = RESERVED_OTHER_DEFINITION
+    return cleaned
 
 
 def build_function_schemas(tagging_mode: str) -> list[dict[str, Any]]:
@@ -384,14 +413,31 @@ def normalize_tag_list(value: Any) -> list[str]:
     return cleaned
 
 
+def normalize_tag_assignment(value: Any, tag_definitions: dict[str, str]) -> list[str]:
+    definitions = ensure_canonical_tag_definitions(tag_definitions)
+    canonical_by_key = {tag.casefold(): tag for tag in definitions}
+    valid: list[str] = []
+    seen: set[str] = set()
+    for raw_tag in normalize_tag_list(value):
+        key = raw_tag.casefold()
+        canonical = canonical_by_key.get(key)
+        if canonical is None or key in seen:
+            continue
+        seen.add(key)
+        valid.append(canonical)
+
+    substantive = [tag for tag in valid if tag.casefold() != RESERVED_OTHER_TAG.casefold()]
+    return substantive or [RESERVED_OTHER_TAG]
+
+
 def build_tagging_prompt(row: pd.Series, tag_definitions: dict[str, str], tagging_mode: str) -> str:
     snippet_column = "Example Snippet" if "Example Snippet" in row.index else "Snippet"
     tag_rules = json.dumps(tag_definitions, indent=2)
 
     instruction = (
-        "Only return ONE tag. Do not return multiple. Even if several might apply, choose the ONE most relevant tag based on the criteria below. Return it as a single string, not as a list. Also return an integer confidence from 0 to 100."
+        "Only return ONE defined tag. Do not return multiple. Even if several might apply, choose the ONE most relevant tag based on the criteria below. Use Other when no substantive tag applies. Return it as a single string, not as a list. Also return an integer confidence from 0 to 100."
         if tagging_mode == "Single best tag"
-        else "Apply all tags that are relevant to the article and also return an integer confidence from 0 to 100."
+        else "Apply all defined substantive tags that are relevant to the article and also return an integer confidence from 0 to 100. Use Other only when no substantive tag applies; never return Other alongside another tag."
     )
 
     return f"""
@@ -481,11 +527,12 @@ def apply_tagging_result_to_unique_df(
         df["AI Tag Rationale"] = ""
 
     if tagging_mode == "Single best tag":
-        tag = str(result.get("tag", "") or "").strip()
+        raw_tag = str(result.get("tag", "") or "").strip()
+        tag = normalize_tag_assignment(raw_tag, tag_definitions)[0]
         confidence = pd.to_numeric(pd.Series([result.get("confidence")]), errors="coerce").iloc[0]
         rationale = str(result.get("explanation", "") or "").strip()
 
-        if "," in tag:
+        if "," in raw_tag:
             rationale = "**NOTE: Multiple tags returned in single-tag mode.** " + rationale
 
         df.loc[original_index, "AI Tag"] = tag
@@ -508,7 +555,7 @@ def apply_tagging_result_to_unique_df(
         if not isinstance(explanations, list):
             explanations = [str(explanations)] if explanations else []
 
-        tags = [str(tag).strip() for tag in tags if str(tag).strip()]
+        tags = normalize_tag_assignment(tags, tag_definitions)
         explanations = [str(exp).strip() for exp in explanations if str(exp).strip()]
 
         df.loc[original_index, "AI Tag"] = ", ".join(tags)
@@ -971,9 +1018,13 @@ def set_assigned_tag(
     label: str,
     *,
     source: str = "HUMAN",
+    tag_definitions: dict[str, str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     unique = df_unique.copy()
     grouped = df_grouped.copy()
+
+    if tag_definitions is not None:
+        label = ", ".join(normalize_tag_assignment(label, tag_definitions))
 
     for df in [unique, grouped]:
         if "Assigned Tag Source" not in df.columns:
@@ -1153,14 +1204,14 @@ def run_batch_tag_second_opinion(
                     continue
 
                 if tagging_mode == "Multiple applicable tags":
-                    review_tags = normalize_tag_list(result.get("tags", []))
+                    review_tags = normalize_tag_assignment(result.get("tags", []), tag_definitions)
                     review_label = ", ".join(review_tags)
                     explanations = result.get("explanations", [])
                     if not isinstance(explanations, list):
                         explanations = [str(explanations)] if explanations else []
                     review_rsn = " | ".join(str(exp).strip() for exp in explanations if str(exp).strip())
                 else:
-                    review_label = str(result.get("tag", "") or "").strip()
+                    review_label = normalize_tag_assignment(result.get("tag", ""), tag_definitions)[0]
                     review_rsn = str(result.get("explanation", "") or "").strip()
                 review_conf = pd.to_numeric(pd.Series([result.get("confidence")]), errors="coerce").iloc[0]
 

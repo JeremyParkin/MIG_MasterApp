@@ -15,9 +15,11 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         DEFAULT_TAGGING_MAX_WORKERS,
         compute_tag_review_candidates,
         ensure_tag_review_columns,
+        ensure_canonical_tag_definitions,
         filter_tag_candidates_for_review_mode,
         get_effective_ai_tag_confidence_series,
         get_effective_tag_series,
+        normalize_tag_assignment,
         normalize_tag_list,
         recommend_tag_second_opinion_batch_size,
         run_batch_tag_second_opinion,
@@ -31,6 +33,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         apply_translation_to_group,
     )
     from utils.api_meter import apply_usage_to_session
+    from utils.ai_checkpoints import record_checkpoint_progress, render_checkpoint_save_reminder
     from utils.time_display import format_local_timestamp
 
     def sync_tagging_state(unique_df: pd.DataFrame, rows_df: pd.DataFrame) -> None:
@@ -43,6 +46,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
     )
     sync_tagging_state(df_unique, df_rows)
     tagging_mode = st.session_state.get("tagging_mode", "Single best tag")
+    st.session_state.tag_definitions = ensure_canonical_tag_definitions(st.session_state.get("tag_definitions", {}))
 
     review_base_candidates = compute_tag_review_candidates(st.session_state.df_tagging_unique, exclude_reviewed=False)
     base_candidates = compute_tag_review_candidates(st.session_state.df_tagging_unique, exclude_reviewed=True)
@@ -74,6 +78,13 @@ def render_tagging_review_page(*, review_stage: str) -> None:
     if review_stage == "pre_review":
         st.subheader("Step 3: AI Second Opinion")
         st.caption("Generate one second AI opinion per already-tagged story group so likely high-confidence matches can be auto-resolved before human spot checks.")
+        render_checkpoint_save_reminder(
+            st.session_state,
+            workflow="tagging",
+            stage="second",
+            dataset_group_count=len(st.session_state.df_tagging_unique),
+            interval=500,
+        )
 
         if base_candidates.empty:
             st.success("All set — no grouped stories remain eligible for a second AI opinion.")
@@ -216,6 +227,13 @@ def render_tagging_review_page(*, review_stage: str) -> None:
                     "processed": min(selected_batch_size, len(base_candidates)),
                     "auto_resolved": batch_auto_resolved,
                 }
+                record_checkpoint_progress(
+                    st.session_state,
+                    workflow="tagging",
+                    stage="second",
+                    successful_results=min(selected_batch_size, len(base_candidates)) - len(batch_errors),
+                    interval=500,
+                )
                 st.rerun()
         with action2:
             st.caption("High-confidence matching tag opinions can auto-resolve here before you move on to human spot checks.")
@@ -492,6 +510,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
 
         tag_names = list(st.session_state.get("tag_definitions", {}).keys())
         selected_label = None
+        multi_tag_selection: str | None = None
         if tag_names:
             st.write("**Choose final tag**")
             if tagging_mode == "Multiple applicable tags":
@@ -500,19 +519,40 @@ def render_tagging_review_page(*, review_stage: str) -> None:
                     or _safe_text(row.get("Review AI Tag"))
                     or _safe_text(row.get("AI Tag"))
                 )
+                def enforce_other_exclusivity(changed_label: str) -> None:
+                    changed_key = f"tag_review_multi_{current_group_id}_{changed_label}"
+                    if not st.session_state.get(changed_key, False):
+                        return
+                    if changed_label.casefold() == "other":
+                        for other_label in tag_names:
+                            if other_label.casefold() != "other":
+                                st.session_state[f"tag_review_multi_{current_group_id}_{other_label}"] = False
+                    else:
+                        for other_label in tag_names:
+                            if other_label.casefold() == "other":
+                                st.session_state[f"tag_review_multi_{current_group_id}_{other_label}"] = False
+
                 for label in tag_names:
                     default_checked = label in default_selected
                     checkbox_key = f"tag_review_multi_{current_group_id}_{label}"
                     if checkbox_key not in st.session_state:
                         st.session_state[checkbox_key] = default_checked
-                    st.checkbox(label, key=checkbox_key)
-                if st.button("Save selected tags", key=f"tag_review_save_multi_{current_group_id}", use_container_width=True):
-                    chosen = [
-                        label
-                        for label in tag_names
-                        if st.session_state.get(f"tag_review_multi_{current_group_id}_{label}", False)
-                    ]
-                    selected_label = ", ".join(chosen) if chosen else None
+                    st.checkbox(
+                        label,
+                        key=checkbox_key,
+                        on_change=enforce_other_exclusivity,
+                        args=(label,),
+                    )
+                chosen = [
+                    label
+                    for label in tag_names
+                    if st.session_state.get(f"tag_review_multi_{current_group_id}_{label}", False)
+                ]
+                multi_tag_selection = ", ".join(
+                    normalize_tag_assignment(chosen, st.session_state.get("tag_definitions", {}))
+                )
+                if st.button("Save & next", key=f"tag_review_save_multi_{current_group_id}", use_container_width=True):
+                    selected_label = multi_tag_selection
             else:
                 for label in tag_names:
                     if st.button(label, key=f"tag_review_assign_{current_group_id}_{label}", use_container_width=True):
@@ -521,7 +561,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         if st.button("Re-run review AI", use_container_width=True, disabled=not bool(ai_tag)):
             tag_definitions = st.session_state.get("tag_definitions", {})
             rerun_candidates = candidates[candidates["Group ID"] == current_group_id].copy()
-            unique2, rows2, _, total_in, total_out, _ = run_batch_tag_second_opinion(
+            unique2, rows2, rerun_errors, total_in, total_out, _ = run_batch_tag_second_opinion(
                 candidates_df=rerun_candidates,
                 df_unique=st.session_state.df_tagging_unique,
                 df_grouped=st.session_state.df_tagging_rows,
@@ -540,6 +580,13 @@ def render_tagging_review_page(*, review_stage: str) -> None:
             )
             sync_tagging_state(unique2, rows2)
             apply_usage_to_session(total_in, total_out, DEFAULT_TAGGING_REVIEW_MODEL)
+            record_checkpoint_progress(
+                st.session_state,
+                workflow="tagging",
+                stage="second",
+                successful_results=0 if rerun_errors else 1,
+                interval=500,
+            )
             st.rerun()
 
         if ai_rsn or review_rsn:
@@ -555,11 +602,43 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         nav1, nav2 = st.columns(2)
         with nav1:
             if st.button("", disabled=(idx <= 0), use_container_width=True, icon=":material/skip_previous:", help="Previous story"):
-                st.session_state.tagging_review_idx = max(0, idx - 1)
+                target_group_id = int(candidates.iloc[idx - 1]["Group ID"])
+                if tagging_mode == "Multiple applicable tags" and multi_tag_selection is not None:
+                    unique2, rows2 = set_assigned_tag(
+                        st.session_state.df_tagging_unique,
+                        st.session_state.df_tagging_rows,
+                        current_group_id,
+                        multi_tag_selection,
+                        tag_definitions=st.session_state.get("tag_definitions", {}),
+                    )
+                    sync_tagging_state(unique2, rows2)
+                updated_candidates = _build_candidates_for_current_view(st.session_state.df_tagging_unique)
+                updated_group_ids = updated_candidates["Group ID"].tolist()
+                st.session_state.tagging_review_idx = (
+                    updated_group_ids.index(target_group_id)
+                    if target_group_id in updated_group_ids
+                    else max(0, min(idx - 1, len(updated_candidates) - 1))
+                )
                 st.rerun()
         with nav2:
             if st.button("", disabled=(idx >= len(candidates) - 1), use_container_width=True, icon=":material/skip_next:", help="Next story"):
-                st.session_state.tagging_review_idx = min(len(candidates) - 1, idx + 1)
+                target_group_id = int(candidates.iloc[idx + 1]["Group ID"])
+                if tagging_mode == "Multiple applicable tags" and multi_tag_selection is not None:
+                    unique2, rows2 = set_assigned_tag(
+                        st.session_state.df_tagging_unique,
+                        st.session_state.df_tagging_rows,
+                        current_group_id,
+                        multi_tag_selection,
+                        tag_definitions=st.session_state.get("tag_definitions", {}),
+                    )
+                    sync_tagging_state(unique2, rows2)
+                updated_candidates = _build_candidates_for_current_view(st.session_state.df_tagging_unique)
+                updated_group_ids = updated_candidates["Group ID"].tolist()
+                st.session_state.tagging_review_idx = (
+                    updated_group_ids.index(target_group_id)
+                    if target_group_id in updated_group_ids
+                    else max(0, min(idx, len(updated_candidates) - 1))
+                )
                 st.rerun()
         st.caption(f"Story {idx + 1} of {len(candidates)} in current view")
 
@@ -569,6 +648,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
             st.session_state.df_tagging_rows,
             current_group_id,
             ", ".join(normalize_tag_list(selected_label)),
+            tag_definitions=st.session_state.get("tag_definitions", {}),
         )
         sync_tagging_state(unique2, rows2)
 
@@ -576,5 +656,10 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         if new_filtered.empty:
             st.rerun()
         else:
-            st.session_state.tagging_review_idx = min(idx, len(new_filtered) - 1)
+            remaining_group_ids = new_filtered["Group ID"].tolist()
+            if current_group_id in remaining_group_ids:
+                current_position = remaining_group_ids.index(current_group_id)
+                st.session_state.tagging_review_idx = min(current_position + 1, len(new_filtered) - 1)
+            else:
+                st.session_state.tagging_review_idx = min(idx, len(new_filtered) - 1)
             st.rerun()

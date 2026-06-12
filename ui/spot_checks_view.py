@@ -51,6 +51,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         estimate_cost_usd,
         get_api_cost_usd,
     )
+    from utils.ai_checkpoints import record_checkpoint_progress, render_checkpoint_save_reminder
     from utils.time_display import format_local_timestamp
     
     warnings.filterwarnings("ignore")
@@ -473,6 +474,15 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
     if auto_resolve_message and spot_checks_mode == "pre_review":
         st.success(auto_resolve_message)
         st.session_state.spotcheck_auto_resolve_message = None
+
+    if spot_checks_mode == "pre_review":
+        render_checkpoint_save_reminder(
+            st.session_state,
+            workflow="sentiment",
+            stage="second",
+            dataset_group_count=len(st.session_state.df_sentiment_unique),
+            interval=500,
+        )
     
     if base_candidates.empty:
         if spot_checks_mode == "pre_review":
@@ -607,6 +617,13 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
                         "processed": min(selected_batch_size, len(base_candidates)),
                         "auto_resolved": batch_auto_resolved,
                     }
+                    record_checkpoint_progress(
+                        st.session_state,
+                        workflow="sentiment",
+                        stage="second",
+                        successful_results=min(selected_batch_size, len(base_candidates)) - len(batch_errors),
+                        interval=500,
+                    )
                     completed_at = format_local_timestamp()
                     st.session_state.spotcheck_pre_review_message = (
                         f"AI second-opinion batch completed {completed_at}. Review counts updated below."
@@ -884,6 +901,13 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
                     in_tok,
                     out_tok,
                     st.session_state.spot_ai_model_override or model_id,
+                )
+                record_checkpoint_progress(
+                    st.session_state,
+                    workflow="sentiment",
+                    stage="second",
+                    successful_results=1,
+                    interval=500,
                 )
     
                 batch_cost = estimate_cost_usd(

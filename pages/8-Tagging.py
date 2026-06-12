@@ -33,6 +33,7 @@ from processing.ai_tagging import (
     init_ai_tagging_state,
     build_default_tags_text,
     parse_tag_definitions,
+    ensure_canonical_tag_definitions,
     get_remaining_tagging_rows,
     get_effective_tag_series,
     normalize_tag_list,
@@ -51,6 +52,7 @@ from utils.api_meter import (
     get_api_cost_usd,
     init_api_meter,
 )
+from utils.ai_checkpoints import record_checkpoint_progress, render_checkpoint_save_reminder, reset_workflow_checkpoints
 from ui.page_help import set_page_help_context
 from ui.tagging_review_view import render_tagging_review_page
 
@@ -386,8 +388,12 @@ if st.session_state.tagging_section == "Setup":
                 st.error(f"Custom sample size cannot exceed the eligible dataset size of {population_size:,}.")
                 st.stop()
 
-        tag_definitions = parse_tag_definitions(tags_text)
-        if len(tag_definitions) == 0:
+        try:
+            tag_definitions = parse_tag_definitions(tags_text)
+        except ValueError as exc:
+            st.error(str(exc))
+            st.stop()
+        if len(tag_definitions) <= 1:
             st.error("Please define at least one valid tag and its criteria before preparing the dataset.")
             st.stop()
 
@@ -427,6 +433,7 @@ if st.session_state.tagging_section == "Setup":
         st.session_state.pop("tagging_second_opinion_target_batch", None)
         st.session_state.pop("tagging_second_opinion_target_source_count", None)
         st.session_state.tagging_section = "Run"
+        reset_workflow_checkpoints(st.session_state, "tagging")
 
         st.rerun()
 
@@ -461,10 +468,19 @@ if st.session_state.tagging_section == "Run":
     with top_col5:
         st.metric("Remaining stories", f"{remaining_count:,}")
 
+    render_checkpoint_save_reminder(
+        st.session_state,
+        workflow="tagging",
+        stage="first",
+        dataset_group_count=len(st.session_state.df_tagging_unique),
+        interval=1000,
+    )
+
     reset_col1, reset_col2 = st.columns([4, 1])
     with reset_col2:
         if st.button("Reset Tagging Dataset"):
             reset_tagging_config_state(st.session_state)
+            reset_workflow_checkpoints(st.session_state, "tagging")
             st.session_state.tagging_section = "Setup"
             st.rerun()
 
@@ -514,15 +530,17 @@ if st.session_state.tagging_section == "Run":
         st.session_state.pop("__last_tagging_pre_review_summary__", None)
         st.session_state.pop("tagging_second_opinion_target_batch", None)
         st.session_state.pop("tagging_second_opinion_target_source_count", None)
+        reset_workflow_checkpoints(st.session_state, "tagging")
         st.success("Reset AI tagging results.")
         st.rerun()
 
     if apply_clicked:
-        tag_definitions = st.session_state.get("tag_definitions", [])
+        tag_definitions = ensure_canonical_tag_definitions(st.session_state.get("tag_definitions", {}))
+        st.session_state.tag_definitions = tag_definitions
         tagging_mode = st.session_state.get("tagging_mode", "Single best tag")
         model = st.session_state.get("tagging_model", DEFAULT_TAGGING_MODEL)
 
-        if len(tag_definitions) == 0:
+        if len(tag_definitions) <= 1:
             st.error("No tag definitions are saved. Please reset and prepare the tagging dataset again.")
             st.stop()
 
@@ -599,6 +617,13 @@ if st.session_state.tagging_section == "Run":
             "session_cost": session_cost,
             "errors": errors,
         }
+        record_checkpoint_progress(
+            st.session_state,
+            workflow="tagging",
+            stage="first",
+            successful_results=total - len(errors),
+            interval=1000,
+        )
         st.session_state.tagging_section = "Run"
         st.rerun()
 

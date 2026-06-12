@@ -57,6 +57,7 @@ from utils.api_meter import (
     estimate_cost_usd,
     get_api_cost_usd,
 )
+from utils.ai_checkpoints import record_checkpoint_progress, render_checkpoint_save_reminder, reset_workflow_checkpoints
 from ui.page_help import set_page_help_context
 
 warnings.filterwarnings("ignore")
@@ -509,6 +510,7 @@ if st.session_state.sentiment_section == "Setup":
         )
         st.session_state.sentiment_section = "Run"
         st.session_state.sentiment_scroll_to_top = True
+        reset_workflow_checkpoints(st.session_state, "sentiment")
         st.rerun()
 
     if st.session_state.sentiment_config_step:
@@ -545,10 +547,19 @@ if st.session_state.sentiment_section == "Run":
     with top_col5:
         st.metric("Remaining stories", f"{remaining_count:,}")
 
+    render_checkpoint_save_reminder(
+        st.session_state,
+        workflow="sentiment",
+        stage="first",
+        dataset_group_count=len(st.session_state.df_sentiment_unique),
+        interval=1000,
+    )
+
     reset_col1, reset_col2 = st.columns([4, 1])
     with reset_col2:
         if st.button("Reset Sentiment Dataset"):
             reset_sentiment_config_state(st.session_state)
+            reset_workflow_checkpoints(st.session_state, "sentiment")
             st.session_state.sentiment_section = "Setup"
             st.session_state.sentiment_scroll_to_top = True
             st.rerun()
@@ -601,6 +612,7 @@ if st.session_state.sentiment_section == "Run":
         st.session_state.sentiment_observation_include_nr = True
         st.session_state.pop("sentiment_second_opinion_target_batch", None)
         st.session_state.pop("sentiment_second_opinion_target_source_count", None)
+        reset_workflow_checkpoints(st.session_state, "sentiment")
         st.success("Reset AI sentiment results.")
         st.rerun()
 
@@ -677,6 +689,13 @@ if st.session_state.sentiment_section == "Run":
             "session_cost": session_cost,
             "errors": errors,
         }
+        record_checkpoint_progress(
+            st.session_state,
+            workflow="sentiment",
+            stage="first",
+            successful_results=total - len(errors),
+            interval=1000,
+        )
         st.session_state.sentiment_section = "Run"
         st.rerun()
 
