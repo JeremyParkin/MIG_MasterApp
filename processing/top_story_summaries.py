@@ -313,6 +313,7 @@ def generate_structured_story_outputs(
                 "content": prompt,
             },
         ],
+        reasoning={"effort": "low"},
         text={
             "verbosity": "low",
             "format": {
@@ -558,7 +559,21 @@ def generate_top_story_observation(
             {"role": "system", "content": "You write concise, neutral media-intelligence summaries."},
             {"role": "user", "content": prompt},
         ],
-        text={"verbosity": "low"},
+        reasoning={"effort": "low"},
+        text={
+            "verbosity": "low",
+            "format": {
+                "type": "json_schema",
+                "name": "top_story_observation",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {"overall_observation": {"type": "string"}},
+                    "required": ["overall_observation"],
+                },
+            },
+        },
     )
 
     add_api_usage(response, model)

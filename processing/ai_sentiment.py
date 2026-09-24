@@ -19,6 +19,10 @@ DEFAULT_SENTIMENT_BATCH_SIZE = 50
 DEFAULT_SENTIMENT_MAX_WORKERS = 8
 DEFAULT_SENTIMENT_PRIMARY_EXAMPLE_LIMIT = 10
 DEFAULT_SENTIMENT_ALIGNED_EVIDENCE_LIMIT = 40
+FIRST_PASS_REASONING_EFFORT = "low"
+SECOND_OPINION_REASONING_EFFORT = "medium"
+SECOND_OPINION_CONFIDENCE_THRESHOLD = 60
+SECOND_OPINION_CONFIDENCE_MARGIN = 10
 MAX_RETRIES = 2
 
 _SENTIMENT_WORKFLOW_DEFAULTS: dict[str, Any] = {
@@ -215,28 +219,41 @@ def call_ai_sentiment(
     model_id: str,
     functions: list[dict[str, Any]],
     sentiment_type: str,
+    reasoning_effort: str = FIRST_PASS_REASONING_EFFORT,
 ) -> tuple[dict[str, Any], int, int]:
+    total_in = 0
+    total_out = 0
     if functions:
         try:
+            tools = [{"type": "function", "function": function} for function in functions]
             resp = client.chat.completions.create(
                 model=model_id,
                 messages=[
                     {"role": "system", "content": "You are a highly knowledgeable media analysis AI."},
                     {"role": "user", "content": story_prompt},
                 ],
-                functions=functions,
-                function_call={"name": "analyze_sentiment"},
+                tools=tools,
+                tool_choice={
+                    "type": "function",
+                    "function": {"name": "analyze_sentiment"},
+                },
+                reasoning_effort=reasoning_effort,
             )
-            choice = resp.choices[0]
             in_tok, out_tok = extract_usage_tokens(resp)
+            total_in += in_tok
+            total_out += out_tok
+            message = resp.choices[0].message
+            tool_calls = getattr(message, "tool_calls", None) or []
+            args_text = tool_calls[0].function.arguments if tool_calls else None
+            if not args_text:
+                function_call = getattr(message, "function_call", None)
+                args_text = getattr(function_call, "arguments", None) if function_call else None
 
-            if getattr(choice.message, "function_call", None):
-                fc = choice.message.function_call
-                if fc and fc.name == "analyze_sentiment":
-                    args = json.loads(fc.arguments or "{}")
-                    parsed, err = _validate_structured_result(args, sentiment_type)
-                    if not err:
-                        return parsed, in_tok, out_tok
+            if args_text:
+                args = json.loads(args_text)
+                parsed, err = _validate_structured_result(args, sentiment_type)
+                if not err:
+                    return parsed, total_in, total_out
         except Exception:
             pass
 
@@ -256,6 +273,8 @@ def call_ai_sentiment(
     )
     txt = (resp.choices[0].message.content or "").strip()
     in_tok, out_tok = extract_usage_tokens(resp)
+    total_in += in_tok
+    total_out += out_tok
 
     payload = _extract_json_payload(txt)
     if payload is None:
@@ -265,7 +284,7 @@ def call_ai_sentiment(
     if err:
         raise ValueError(f"Structured output validation failed: {err}")
 
-    return parsed, in_tok, out_tok
+    return parsed, total_in, total_out
 
 
 def get_remaining_sentiment_rows(
@@ -436,10 +455,21 @@ def _get_text_series(df: pd.DataFrame, column_name: str) -> pd.Series:
     return values.fillna("").astype(str).str.strip()
 
 
+def _preferred_second_opinion_mask(df_unique: pd.DataFrame) -> pd.Series:
+    first = _get_text_series(df_unique, "AI Sentiment").str.upper()
+    second = _get_text_series(df_unique, "Review AI Sentiment").str.upper()
+    first_conf = pd.to_numeric(df_unique.get("AI Sentiment Confidence"), errors="coerce").fillna(-1)
+    second_conf = pd.to_numeric(df_unique.get("Review AI Confidence"), errors="coerce")
+    agreement = first.ne("") & first.eq(second)
+    confident = second_conf.ge(SECOND_OPINION_CONFIDENCE_THRESHOLD)
+    materially_stronger = second_conf.ge(first_conf + SECOND_OPINION_CONFIDENCE_MARGIN)
+    return second.ne("") & confident & (agreement | materially_stronger)
+
+
 def build_effective_ai_sentiment_series(df_unique: pd.DataFrame) -> pd.Series:
     base_ai = _get_text_series(df_unique, "AI Sentiment")
     review_ai = _get_text_series(df_unique, "Review AI Sentiment")
-    return review_ai.where(review_ai != "", base_ai)
+    return review_ai.where(_preferred_second_opinion_mask(df_unique), base_ai)
 
 
 def build_effective_ai_sentiment_confidence_series(df_unique: pd.DataFrame) -> pd.Series:
@@ -452,14 +482,14 @@ def build_effective_ai_sentiment_confidence_series(df_unique: pd.DataFrame) -> p
         df_unique.get("Review AI Confidence", pd.Series(index=df_unique.index, dtype="float")),
         errors="coerce",
     )
-    return review_conf.where(review_ai != "", base_conf)
+    return review_conf.where(_preferred_second_opinion_mask(df_unique), base_conf)
 
 
 def build_effective_ai_sentiment_rationale_series(df_unique: pd.DataFrame) -> pd.Series:
     base_rationale = _get_text_series(df_unique, "AI Sentiment Rationale")
     review_ai = _get_text_series(df_unique, "Review AI Sentiment")
     review_rationale = _get_text_series(df_unique, "Review AI Rationale")
-    return review_rationale.where(review_ai != "", base_rationale)
+    return review_rationale.where(_preferred_second_opinion_mask(df_unique), base_rationale)
 
 
 def build_effective_sentiment_source_series(df_unique: pd.DataFrame) -> pd.Series:
@@ -469,7 +499,7 @@ def build_effective_sentiment_source_series(df_unique: pd.DataFrame) -> pd.Serie
 
     source = pd.Series("", index=df_unique.index, dtype="object")
     source = source.where(base_ai == "", "AI first pass")
-    source = source.where(review_ai == "", "AI second opinion")
+    source = source.where(~_preferred_second_opinion_mask(df_unique), "AI second opinion")
     source = source.where(assigned == "", "Human input")
     return source
 
@@ -749,6 +779,35 @@ Input data:
 """.strip()
 
 
+def build_sentiment_observation_schema(payload: dict[str, Any]) -> dict[str, Any]:
+    labels = [
+        str(record.get("Sentiment", "")).strip()
+        for record in payload.get("distribution", [])
+        if str(record.get("Sentiment", "")).strip()
+    ]
+    labels = list(dict.fromkeys(labels)) or ["NEUTRAL"]
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "overall_observation": {"type": "string"},
+            "sentiment_sections": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "sentiment": {"type": "string", "enum": labels},
+                        "observation": {"type": "string"},
+                    },
+                    "required": ["sentiment", "observation"],
+                },
+            },
+        },
+        "required": ["overall_observation", "sentiment_sections"],
+    }
+
+
 def generate_sentiment_observations(
     df_unique: pd.DataFrame,
     df_grouped_rows: pd.DataFrame | None,
@@ -782,7 +841,16 @@ def generate_sentiment_observations(
             {"role": "system", "content": "You write concise, neutral media-intelligence summaries."},
             {"role": "user", "content": prompt},
         ],
-        text={"verbosity": "low"},
+        reasoning={"effort": FIRST_PASS_REASONING_EFFORT},
+        text={
+            "verbosity": "low",
+            "format": {
+                "type": "json_schema",
+                "name": "sentiment_observations",
+                "strict": True,
+                "schema": build_sentiment_observation_schema(payload),
+            },
+        },
     )
 
     add_api_usage(response, model)

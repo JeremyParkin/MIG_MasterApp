@@ -395,6 +395,7 @@ def generate_author_summary(
             {"role": "system", "content": "You write concise, neutral media-intelligence summaries."},
             {"role": "user", "content": prompt},
         ],
+        reasoning={"effort": "low"},
         text={"verbosity": "low"},
     )
 

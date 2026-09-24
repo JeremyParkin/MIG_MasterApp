@@ -16,6 +16,10 @@ from utils.api_meter import add_api_usage, extract_usage_tokens
 DEFAULT_TAGGING_MODEL = "gpt-5.6-luna"
 DEFAULT_TAGGING_OBSERVATION_MODEL = "gpt-5.6-luna"
 DEFAULT_TAGGING_REVIEW_MODEL = "gpt-5.6-luna"
+FIRST_PASS_REASONING_EFFORT = "low"
+SECOND_OPINION_REASONING_EFFORT = "medium"
+SECOND_OPINION_CONFIDENCE_THRESHOLD = 60
+SECOND_OPINION_CONFIDENCE_MARGIN = 10
 DEFAULT_TAGGING_MAX_WORKERS = 8
 DEFAULT_TAGGING_BATCH_SIZE = 50
 DEFAULT_TAGGING_REVIEW_BATCH_SIZE = 50
@@ -276,7 +280,36 @@ def get_effective_ai_tag_series(df_tagging_unique: pd.DataFrame) -> pd.Series:
         .astype(str)
         .str.strip()
     )
-    return review_ai.where(review_ai != "", base_ai)
+    return review_ai.where(_preferred_second_opinion_mask(df_tagging_unique), base_ai)
+
+
+def _preferred_second_opinion_mask(df_tagging_unique: pd.DataFrame) -> pd.Series:
+    base_ai = (
+        df_tagging_unique.get("AI Tag", pd.Series(index=df_tagging_unique.index, dtype="object"))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+    review_ai = (
+        df_tagging_unique.get("Review AI Tag", pd.Series(index=df_tagging_unique.index, dtype="object"))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+    base_conf = pd.to_numeric(
+        df_tagging_unique.get("AI Tag Confidence", pd.Series(index=df_tagging_unique.index, dtype="float")),
+        errors="coerce",
+    ).fillna(-1)
+    review_conf = pd.to_numeric(
+        df_tagging_unique.get("Review AI Confidence", pd.Series(index=df_tagging_unique.index, dtype="float")),
+        errors="coerce",
+    )
+    base_sets = base_ai.map(lambda value: {tag.casefold() for tag in normalize_tag_list(value)})
+    review_sets = review_ai.map(lambda value: {tag.casefold() for tag in normalize_tag_list(value)})
+    agreement = base_ai.ne("") & review_ai.ne("") & base_sets.eq(review_sets)
+    confident = review_conf.ge(DEFAULT_TAGGING_REVIEW_CONFIDENCE_THRESHOLD)
+    materially_stronger = review_conf.ge(base_conf + SECOND_OPINION_CONFIDENCE_MARGIN)
+    return review_ai.ne("") & confident & (agreement | materially_stronger)
 
 
 def get_effective_ai_tag_rationale_series(df_tagging_unique: pd.DataFrame) -> pd.Series:
@@ -301,7 +334,7 @@ def get_effective_ai_tag_rationale_series(df_tagging_unique: pd.DataFrame) -> pd
         .astype(str)
         .str.strip()
     )
-    return review_rationale.where(review_tag != "", base_rationale)
+    return review_rationale.where(_preferred_second_opinion_mask(df_tagging_unique), base_rationale)
 
 
 def get_effective_ai_tag_confidence_series(df_tagging_unique: pd.DataFrame) -> pd.Series:
@@ -322,7 +355,7 @@ def get_effective_ai_tag_confidence_series(df_tagging_unique: pd.DataFrame) -> p
         df_tagging_unique.get("Review AI Confidence", pd.Series(index=df_tagging_unique.index, dtype="float")),
         errors="coerce",
     )
-    return review_conf.where(review_tag != "", base_conf)
+    return review_conf.where(_preferred_second_opinion_mask(df_tagging_unique), base_conf)
 
 
 def get_effective_tag_series(df_tagging_unique: pd.DataFrame) -> pd.Series:
@@ -364,7 +397,7 @@ def build_effective_tag_source_series(df_tagging_unique: pd.DataFrame) -> pd.Ser
 
     source = pd.Series("", index=df_tagging_unique.index, dtype="object")
     source = source.where(base_ai == "", "AI first pass")
-    source = source.where(review_ai == "", "AI second opinion")
+    source = source.where(~_preferred_second_opinion_mask(df_tagging_unique), "AI second opinion")
     source = source.where(assigned == "", "Human input")
     return source
 
@@ -461,6 +494,7 @@ def call_ai_tagging(
     tag_definitions: dict[str, str],
     tagging_mode: str,
     model: str,
+    reasoning_effort: str = FIRST_PASS_REASONING_EFFORT,
 ) -> tuple[dict[str, Any], int, int]:
     functions = build_function_schemas(tagging_mode)
     prompt = build_tagging_prompt(row, tag_definitions, tagging_mode)
@@ -477,7 +511,7 @@ def call_ai_tagging(
             "type": "function",
             "function": {"name": functions[0]["name"]},
         },
-        reasoning_effort="none",
+        reasoning_effort=reasoning_effort,
     )
 
     message = response.choices[0].message
@@ -799,6 +833,35 @@ Input data:
 """.strip()
 
 
+def build_tag_observation_schema(payload: dict[str, Any]) -> dict[str, Any]:
+    labels = [
+        str(record.get("Tag", "")).strip()
+        for record in payload.get("distribution", [])
+        if str(record.get("Tag", "")).strip()
+    ]
+    labels = list(dict.fromkeys(labels)) or [RESERVED_OTHER_TAG]
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "overall_observation": {"type": "string"},
+            "tag_sections": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "tag": {"type": "string", "enum": labels},
+                        "observation": {"type": "string"},
+                    },
+                    "required": ["tag", "observation"],
+                },
+            },
+        },
+        "required": ["overall_observation", "tag_sections"],
+    }
+
+
 def generate_tag_observations(
     df_tagging_unique: pd.DataFrame,
     client_name: str,
@@ -827,7 +890,16 @@ def generate_tag_observations(
             {"role": "system", "content": "You write concise, neutral media-intelligence summaries."},
             {"role": "user", "content": prompt},
         ],
-        text={"verbosity": "low"},
+        reasoning={"effort": FIRST_PASS_REASONING_EFFORT},
+        text={
+            "verbosity": "low",
+            "format": {
+                "type": "json_schema",
+                "name": "tag_observations",
+                "strict": True,
+                "schema": build_tag_observation_schema(payload),
+            },
+        },
     )
 
     add_api_usage(response, model)
@@ -1159,6 +1231,7 @@ def second_opinion_tag_worker(
                 tag_definitions=tag_definitions,
                 tagging_mode=tagging_mode,
                 model=review_model,
+                reasoning_effort=SECOND_OPINION_REASONING_EFFORT,
             )
             return idx, args, "", in_tok, out_tok
         except Exception as e:

@@ -10,6 +10,7 @@ import pandas as pd
 from deep_translator import GoogleTranslator
 from openai import OpenAI
 
+from processing.ai_sentiment import SECOND_OPINION_REASONING_EFFORT
 from processing.sentiment_config import get_negative_priority_weights, get_sentiment_labels
 from utils.api_meter import extract_usage_tokens
 
@@ -355,37 +356,48 @@ def call_ai_sentiment(
     functions: list[dict[str, Any]],
     sentiment_type: str,
     api_key: str,
+    reasoning_effort: str = SECOND_OPINION_REASONING_EFFORT,
 ) -> tuple[dict[str, Any] | None, int, int, str]:
     client = OpenAI(api_key=api_key)
+    total_in = 0
+    total_out = 0
 
     try:
         if functions:
+            tools = [{"type": "function", "function": function} for function in functions]
             resp = client.chat.completions.create(
                 model=model_to_use,
                 messages=[
                     {"role": "system", "content": "You are a highly knowledgeable media analysis AI."},
                     {"role": "user", "content": story_prompt},
                 ],
-                functions=functions,
-                function_call={"name": "analyze_sentiment"},
+                tools=tools,
+                tool_choice={
+                    "type": "function",
+                    "function": {"name": "analyze_sentiment"},
+                },
+                reasoning_effort=reasoning_effort,
             )
             in_tok, out_tok = extract_usage_tokens(resp)
-            choice = resp.choices[0]
+            total_in += in_tok
+            total_out += out_tok
+            message = resp.choices[0].message
+            tool_calls = getattr(message, "tool_calls", None) or []
+            args_text = tool_calls[0].function.arguments if tool_calls else None
+            if not args_text:
+                function_call = getattr(message, "function_call", None)
+                args_text = getattr(function_call, "arguments", None) if function_call else None
 
-            if getattr(choice.message, "function_call", None):
-                fc = choice.message.function_call
-                if fc and fc.name == "analyze_sentiment":
-                    args = json.loads(fc.arguments or "{}")
-                    parsed, err = _validate_structured_result(args, sentiment_type)
-                    if not err:
-                        return parsed, in_tok, out_tok, ""
-                    fallback_note = f"Function output invalid: {err}"
-                else:
-                    fallback_note = "Function output missing expected tool call."
+            if args_text:
+                args = json.loads(args_text)
+                parsed, err = _validate_structured_result(args, sentiment_type)
+                if not err:
+                    return parsed, total_in, total_out, ""
+                fallback_note = f"Tool output invalid: {err}"
             else:
-                fallback_note = "Function output missing tool payload."
+                fallback_note = "Tool output missing expected tool call."
     except Exception as e:
-        fallback_note = f"Function-calling fallback used due to: {e}"
+        fallback_note = f"Tool-calling fallback used due to: {e}"
 
     try:
         resp = client.chat.completions.create(
@@ -403,19 +415,21 @@ def call_ai_sentiment(
             ],
         )
         in_tok, out_tok = extract_usage_tokens(resp)
+        total_in += in_tok
+        total_out += out_tok
         txt = (resp.choices[0].message.content or "").strip()
 
         payload = _extract_json_payload(txt)
         if payload is None:
-            return None, in_tok, out_tok, "Structured output missing JSON payload."
+            return None, total_in, total_out, "Structured output missing JSON payload."
 
         parsed, err = _validate_structured_result(payload, sentiment_type)
         if err:
-            return None, in_tok, out_tok, f"Structured output validation failed: {err}"
+            return None, total_in, total_out, f"Structured output validation failed: {err}"
 
-        return parsed, in_tok, out_tok, fallback_note
+        return parsed, total_in, total_out, fallback_note
     except Exception as e:
-        return None, 0, 0, f"AI sentiment failed: {e}"
+        return None, total_in, total_out, f"AI sentiment failed: {e}"
 
 
 # ====================

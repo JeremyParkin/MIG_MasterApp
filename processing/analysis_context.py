@@ -971,6 +971,7 @@ def generate_analysis_context_suggestions(
             {"role": "user", "content": prompt},
         ],
         include=["web_search_call.action.sources"],
+        reasoning={"effort": "medium"},
         text={
             "verbosity": "low",
             "format": {

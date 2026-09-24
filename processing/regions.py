@@ -782,6 +782,7 @@ def generate_region_level_overview(
             },
             {"role": "user", "content": prompt},
         ],
+        reasoning={"effort": "low"},
         text={
             "verbosity": "low",
             "format": {
@@ -875,6 +876,7 @@ def generate_region_profile_observation(
             },
             {"role": "user", "content": prompt},
         ],
+        reasoning={"effort": "low"},
         text={
             "verbosity": "low",
             "format": {
