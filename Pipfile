@@ -24,6 +24,7 @@ altair = "==6.0.*"
 python-docx = "*"
 
 [dev-packages]
+pytest = "*"
 
 [requires]
 python_version = "3.13"

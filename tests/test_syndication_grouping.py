@@ -51,7 +51,7 @@ class SyndicationGroupingTests(unittest.TestCase):
         self.assertEqual(result["tag"], "Innovation")
         self.assertEqual((input_tokens, output_tokens), (12, 8))
         self.assertEqual(completions.kwargs["tool_choice"]["function"]["name"], "apply_multiple_tags")
-        self.assertEqual(completions.kwargs["reasoning_effort"], "none")
+        self.assertEqual(completions.kwargs["reasoning_effort"], "low")
 
     def test_upload_normalizes_spaced_syndication_id_header(self) -> None:
         raw = pd.DataFrame(
