@@ -83,11 +83,18 @@ if not st.session_state.tags_text.strip():
 
 _last = st.session_state.get("__last_tagging_batch_summary__")
 if _last and st.session_state.get("tagging_section") == "Run":
-    st.success(f"Completed AI tagging for {_last['done']} grouped storie(s) in {_last['elapsed']:.1f}s.")
+    successful = int(_last.get("successful", _last["done"] - len(_last["errors"])))
     if _last["errors"]:
-        with st.expander(f"Completed with {len(_last['errors'])} error(s)", expanded=False):
+        st.warning(
+            f"AI tagging batch finished with {successful:,} successful result(s) and "
+            f"{len(_last['errors']):,} error(s) out of {_last['done']:,} stories."
+        )
+    if _last["errors"]:
+        with st.expander(f"View {len(_last['errors'])} tagging error(s)", expanded=True):
             for err in _last["errors"]:
                 st.write(err)
+    else:
+        st.success(f"Completed AI tagging for {_last['done']} grouped storie(s) in {_last['elapsed']:.1f}s.")
 
 source_rows = get_tagging_source_rows(st.session_state.df_traditional)
 population_size = len(source_rows)
@@ -367,7 +374,7 @@ if st.session_state.tagging_section == "Setup":
     tags_text = st.text_area(
         "Define tags and criteria",
         height=200,
-        value=st.session_state.tags_text,
+        key="tags_text",
         help="One per line, in the format: TagName: Criteria",
     )
 
@@ -375,6 +382,7 @@ if st.session_state.tagging_section == "Setup":
         "Tagging mode",
         ["Single best tag", "Multiple applicable tags"],
         index=0 if st.session_state.get("tagging_mode", "Single best tag") == "Single best tag" else 1,
+        key="tagging_mode",
     )
 
     prep_clicked = st.button("Prepare Tagging Dataset", type="primary")
@@ -545,12 +553,14 @@ if st.session_state.tagging_section == "Run":
             st.stop()
 
         progress_bar = st.progress(0)
+        progress_text = st.empty()
         total_in = 0
         total_out = 0
         errors = []
         completed = 0
         total = len(batch_df)
         start_time = time.time()
+        progress_text.caption(f"Running tagging: 0/{total} | Model: {model}")
 
         rows_for_workers = [(idx, row.to_dict()) for idx, row in batch_df.iterrows()]
 
@@ -592,6 +602,7 @@ if st.session_state.tagging_section == "Run":
                     errors.append(str(e))
 
                 progress_bar.progress(completed / max(1, total))
+                progress_text.caption(f"Running tagging: {completed}/{total} | Model: {model}")
 
         st.session_state.df_tagging_rows = cascade_tags_to_rows(
             st.session_state.df_tagging_rows,
@@ -610,6 +621,7 @@ if st.session_state.tagging_section == "Run":
 
         st.session_state["__last_tagging_batch_summary__"] = {
             "done": total,
+            "successful": total - len(errors),
             "elapsed": time.time() - start_time,
             "in_tok": total_in,
             "out_tok": total_out,

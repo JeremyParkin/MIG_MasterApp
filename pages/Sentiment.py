@@ -621,14 +621,17 @@ if st.session_state.sentiment_section == "Run":
         st.session_state.sentiment_observation_output = {}
         st.session_state.sentiment_observation_include_nr = True
         sentiment_entity_terms = _get_sentiment_entity_terms()
+        model_choice = st.session_state.get("model_choice", DEFAULT_SENTIMENT_MODEL)
 
         progress_bar = st.progress(0.0)
+        progress_text = st.empty()
         total_in = 0
         total_out = 0
         errors = []
         completed = 0
         total = len(batch_df)
         start_time = time.time()
+        progress_text.caption(f"Running sentiment: 0/{total} | Model: {model_choice}")
 
         rows_for_workers = [(idx, row.to_dict()) for idx, row in batch_df.iterrows()]
 
@@ -641,7 +644,7 @@ if st.session_state.sentiment_section == "Run":
                     st.session_state.get("sentiment_instruction", ""),
                     st.session_state.get("post_prompt", ""),
                     st.session_state.get("functions", []),
-                    st.session_state.get("model_choice", DEFAULT_SENTIMENT_MODEL),
+                    model_choice,
                     st.session_state.get("sentiment_type", "3-way"),
                     st.secrets["key"],
                     sentiment_entity_terms,
@@ -668,6 +671,7 @@ if st.session_state.sentiment_section == "Run":
                     errors.append(str(e))
 
                 progress_bar.progress(completed / max(1, total))
+                progress_text.caption(f"Running sentiment: {completed}/{total} | Model: {model_choice}")
 
         st.session_state.df_sentiment_grouped_rows = cascade_sentiment_to_grouped_rows(
             st.session_state.df_sentiment_grouped_rows,
@@ -675,7 +679,6 @@ if st.session_state.sentiment_section == "Run":
         )
         st.session_state.df_sentiment_rows = st.session_state.df_sentiment_grouped_rows.copy()
 
-        model_choice = st.session_state.get("model_choice", DEFAULT_SENTIMENT_MODEL)
         apply_usage_to_session(total_in, total_out, model_choice)
         batch_cost = estimate_cost_usd(total_in, total_out, model_choice)
         session_cost = get_api_cost_usd()

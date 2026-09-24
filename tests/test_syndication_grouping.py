@@ -1,18 +1,58 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 import pandas as pd
 
 from processing.data_quality import build_data_quality_warnings
 from processing.effective_reach import apply_effective_reach_traditional
 from processing.story_grouping import build_unique_story_table, cluster_by_media_type, mark_prime_examples
+from processing.ai_tagging import call_ai_tagging
 from processing.sentiment_config import prepare_sentiment_datasets
 from processing.tagging_config import prepare_tagging_datasets
 from utils.io import build_upload_quality_report, normalize_uploaded_dataframe
 
 
 class SyndicationGroupingTests(unittest.TestCase):
+    def test_tagging_accepts_modern_tool_call_response(self) -> None:
+        response = SimpleNamespace(
+            usage=SimpleNamespace(prompt_tokens=12, completion_tokens=8),
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        tool_calls=[
+                            SimpleNamespace(
+                                function=SimpleNamespace(
+                                    arguments='{"tag":"Innovation","confidence":90,"explanation":"Relevant."}'
+                                )
+                            )
+                        ]
+                    )
+                )
+            ],
+        )
+
+        class FakeCompletions:
+            def create(self, **kwargs):
+                self.kwargs = kwargs
+                return response
+
+        completions = FakeCompletions()
+        client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+        result, input_tokens, output_tokens = call_ai_tagging(
+            client,
+            pd.Series({"Headline": "A story", "Snippet": "Story text"}),
+            {"Innovation": "New technology", "Other": "No substantive tag applies."},
+            "Multiple applicable tags",
+            "gpt-5.6-luna",
+        )
+
+        self.assertEqual(result["tag"], "Innovation")
+        self.assertEqual((input_tokens, output_tokens), (12, 8))
+        self.assertEqual(completions.kwargs["tool_choice"]["function"]["name"], "apply_multiple_tags")
+        self.assertEqual(completions.kwargs["reasoning_effort"], "none")
+
     def test_upload_normalizes_spaced_syndication_id_header(self) -> None:
         raw = pd.DataFrame(
             {

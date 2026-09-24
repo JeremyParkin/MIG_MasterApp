@@ -464,6 +464,7 @@ def call_ai_tagging(
 ) -> tuple[dict[str, Any], int, int]:
     functions = build_function_schemas(tagging_mode)
     prompt = build_tagging_prompt(row, tag_definitions, tagging_mode)
+    tools = [{"type": "function", "function": function} for function in functions]
 
     response = client.chat.completions.create(
         model=model,
@@ -471,11 +472,26 @@ def call_ai_tagging(
             {"role": "system", "content": "You are an expert at tagging news stories based on defined criteria."},
             {"role": "user", "content": prompt},
         ],
-        functions=functions,
-        function_call={"name": functions[0]["name"]},
+        tools=tools,
+        tool_choice={
+            "type": "function",
+            "function": {"name": functions[0]["name"]},
+        },
+        reasoning_effort="none",
     )
 
-    args = json.loads(response.choices[0].message.function_call.arguments)
+    message = response.choices[0].message
+    tool_calls = getattr(message, "tool_calls", None) or []
+    if tool_calls:
+        args_text = tool_calls[0].function.arguments
+    else:
+        # Keep compatibility with older model responses while migrating.
+        function_call = getattr(message, "function_call", None)
+        args_text = getattr(function_call, "arguments", None) if function_call else None
+    if not args_text:
+        raise ValueError("Tagging model returned no function-call result.")
+
+    args = json.loads(args_text)
     in_tok, out_tok = extract_usage_tokens(response)
     return args, in_tok, out_tok
 

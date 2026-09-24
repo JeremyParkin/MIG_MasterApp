@@ -191,7 +191,8 @@ def render_tagging_review_page(*, review_stage: str) -> None:
                 selected_batch_size = int(st.session_state.get("tagging_pre_review_n", default_batch_size))
                 progress_text = st.empty()
                 progress_bar = st.progress(0.0)
-                progress_text.caption(f"Running second opinions: 0/{selected_batch_size}")
+                review_model = DEFAULT_TAGGING_REVIEW_MODEL
+                progress_text.caption(f"Running second opinions: 0/{selected_batch_size} | Model: {review_model}")
                 with st.spinner("Running AI second opinions on top tagging candidates..."):
                     unique2, rows2, batch_errors, total_in, total_out, batch_auto_resolved = run_batch_tag_second_opinion(
                         candidates_df=base_candidates,
@@ -200,7 +201,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
                         tag_definitions=tag_definitions,
                         tagging_mode=tagging_mode,
                         api_key=st.secrets["key"],
-                        review_model=DEFAULT_TAGGING_REVIEW_MODEL,
+                        review_model=review_model,
                         limit=selected_batch_size,
                         max_workers=DEFAULT_TAGGING_MAX_WORKERS,
                         low_conf_threshold=int(
@@ -211,13 +212,15 @@ def render_tagging_review_page(*, review_stage: str) -> None:
                         ),
                         progress_callback=lambda completed, total: (
                             progress_bar.progress(completed / max(1, total)),
-                            progress_text.caption(f"Running second opinions: {completed}/{total}"),
+                            progress_text.caption(f"Running second opinions: {completed}/{total} | Model: {review_model}"),
                         ),
                     )
                 progress_bar.progress(1.0)
-                progress_text.caption(f"Completed second opinions: {min(selected_batch_size, len(base_candidates))}/{min(selected_batch_size, len(base_candidates))}")
+                progress_text.caption(
+                    f"Completed second opinions: {min(selected_batch_size, len(base_candidates))}/{min(selected_batch_size, len(base_candidates))} | Model: {review_model}"
+                )
                 sync_tagging_state(unique2, rows2)
-                apply_usage_to_session(total_in, total_out, DEFAULT_TAGGING_REVIEW_MODEL)
+                apply_usage_to_session(total_in, total_out, review_model)
                 completed_at = format_local_timestamp()
                 st.session_state.tagging_pre_review_message = (
                     f"AI second-opinion batch completed {completed_at}. Review counts updated below."

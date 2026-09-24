@@ -574,7 +574,8 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
                     st.session_state.pop("__last_spot_check_ai_summary__", None)
                     progress_text = st.empty()
                     progress_bar = st.progress(0.0)
-                    progress_text.caption(f"Running second opinions: 0/{selected_batch_size}")
+                    review_model = DEFAULT_SECOND_OPINION_MODEL
+                    progress_text.caption(f"Running second opinions: 0/{selected_batch_size} | Model: {review_model}")
 
                     with st.spinner("Running AI second opinions on top candidates..."):
                         unique2, grouped2, batch_errors, total_in, total_out, batch_auto_resolved = run_batch_second_opinion(
@@ -587,24 +588,26 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
                             functions=functions,
                             sentiment_type=sentiment_type,
                             api_key=st.secrets["key"],
-                            review_model=DEFAULT_SECOND_OPINION_MODEL,
+                            review_model=review_model,
                             limit=int(selected_batch_size),
                             max_workers=8,
                             low_conf_threshold=int(st.session_state.get("spotcheck_low_conf_threshold", DEFAULT_REVIEW_CONFIDENCE_THRESHOLD)),
                             entity_terms=sentiment_entity_terms,
                             progress_callback=lambda completed, total: (
                                 progress_bar.progress(completed / max(1, total)),
-                                progress_text.caption(f"Running second opinions: {completed}/{total}"),
+                                progress_text.caption(f"Running second opinions: {completed}/{total} | Model: {review_model}"),
                             ),
                         )
                     progress_bar.progress(1.0)
-                    progress_text.caption(f"Completed second opinions: {min(selected_batch_size, len(base_candidates))}/{min(selected_batch_size, len(base_candidates))}")
+                    progress_text.caption(
+                        f"Completed second opinions: {min(selected_batch_size, len(base_candidates))}/{min(selected_batch_size, len(base_candidates))} | Model: {review_model}"
+                    )
     
                     sync_sentiment_state(unique2, grouped2)
     
-                    apply_usage_to_session(total_in, total_out, DEFAULT_SECOND_OPINION_MODEL)
+                    apply_usage_to_session(total_in, total_out, review_model)
     
-                    batch_cost = estimate_cost_usd(total_in, total_out, DEFAULT_SECOND_OPINION_MODEL)
+                    batch_cost = estimate_cost_usd(total_in, total_out, review_model)
                     session_cost = get_api_cost_usd()
     
                     st.session_state["__last_spot_check_ai_summary__"] = {
