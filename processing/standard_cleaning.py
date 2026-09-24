@@ -22,6 +22,7 @@ CANONICAL_MEDIA_TYPES = {
     "NEWSPAPER",
     "TV",
     "RADIO",
+    "PODCAST",
     *SOCIAL_TYPES,
 }
 

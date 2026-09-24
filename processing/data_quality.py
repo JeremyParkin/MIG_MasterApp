@@ -114,6 +114,11 @@ def build_data_quality_warnings(df: pd.DataFrame) -> list[str]:
     if "Type" in df.columns:
         normalized_types = df["Type"].fillna("").astype(str).str.strip().str.upper()
         social_mask = normalized_types.isin(SOCIAL_TYPES)
+        podcast_count = int(normalized_types.eq("PODCAST").sum())
+        if podcast_count:
+            warnings_list.append(
+                f"Podcast coverage is present on {podcast_count:,} row(s). Podcasts remain available for grouping, AI workflows, and exports; Effective Reach is not currently calculated for them."
+            )
     social_count = int(social_mask.sum())
     if social_count > 0:
         add_numeric_warning(

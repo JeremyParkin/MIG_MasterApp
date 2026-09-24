@@ -154,6 +154,8 @@ if st.session_state.upload_step:
                             f"{'' if len(media_type_issue_indices) == 1 else 's'} with missing media type values."
                         )
                         st.rerun()
+            elif warning.get("title") == "Podcast coverage has no Effective Reach model":
+                st.info(warning.get("message", "Podcast coverage is included, but Effective Reach is not currently calculated for podcasts."))
             else:
                 st.warning(warning.get("message", "Some uploaded values could not be normalized cleanly."))
 

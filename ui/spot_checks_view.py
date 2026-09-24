@@ -404,7 +404,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
     post_prompt = st.session_state.get("post_prompt", "")
     sentiment_instruction = st.session_state.get("sentiment_instruction", "")
     functions = st.session_state.get("functions", [])
-    model_id = st.session_state.get("model_choice", "gpt-5.4-nano")
+    model_id = st.session_state.get("model_choice", "gpt-5.6-luna")
     
     sentiment_type = normalize_sentiment_type(st.session_state.get("sentiment_type", "3-way"))
     

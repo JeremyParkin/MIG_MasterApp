@@ -13,9 +13,9 @@ from processing.prominence import get_prominence_weight_series
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
-DEFAULT_TAGGING_MODEL = "gpt-5.4-nano"
-DEFAULT_TAGGING_OBSERVATION_MODEL = "gpt-5.4-mini"
-DEFAULT_TAGGING_REVIEW_MODEL = "gpt-5.4-mini"
+DEFAULT_TAGGING_MODEL = "gpt-5.6-luna"
+DEFAULT_TAGGING_OBSERVATION_MODEL = "gpt-5.6-luna"
+DEFAULT_TAGGING_REVIEW_MODEL = "gpt-5.6-luna"
 DEFAULT_TAGGING_MAX_WORKERS = 8
 DEFAULT_TAGGING_BATCH_SIZE = 50
 DEFAULT_TAGGING_REVIEW_BATCH_SIZE = 50

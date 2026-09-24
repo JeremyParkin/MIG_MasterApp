@@ -58,7 +58,7 @@ from ui.tagging_review_view import render_tagging_review_page
 
 warnings.filterwarnings("ignore")
 
-DEFAULT_TAGGING_MODEL = "gpt-5.4-nano"
+DEFAULT_TAGGING_MODEL = "gpt-5.6-luna"
 
 st.title("AI Tagging")
 st.session_state.setdefault("tagging_section", "Setup")

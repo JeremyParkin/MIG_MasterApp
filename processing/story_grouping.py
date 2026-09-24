@@ -18,6 +18,40 @@ from processing.coverage_flags import has_coverage_flag
 
 PUNCT_TRANSLATOR = str.maketrans("", "", string.punctuation)
 CLUSTER_SOURCE_ID_COL = "__cluster_source_row__"
+GROUPING_SOURCE_COL = "Grouping Source"
+GROUPING_WARNING_COL = "Grouping Warning"
+SYNDICATION_ID_COL = "SyndicationId"
+
+
+def _normalized_column_key(column: object) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(column).lower())
+
+
+def find_syndication_id_column(df: pd.DataFrame) -> str | None:
+    for column in df.columns:
+        if _normalized_column_key(column) == "syndicationid":
+            return str(column)
+    return None
+
+
+def normalize_syndication_ids(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    syndication_col = find_syndication_id_column(out)
+    if syndication_col is None:
+        return out
+
+    if syndication_col != SYNDICATION_ID_COL:
+        if SYNDICATION_ID_COL in out.columns:
+            out[SYNDICATION_ID_COL] = out[SYNDICATION_ID_COL].where(
+                out[SYNDICATION_ID_COL].fillna("").astype(str).str.strip().ne(""),
+                out[syndication_col],
+            )
+            out = out.drop(columns=[syndication_col], errors="ignore")
+        else:
+            out = out.rename(columns={syndication_col: SYNDICATION_ID_COL})
+
+    out[SYNDICATION_ID_COL] = out[SYNDICATION_ID_COL].fillna("").astype(str).str.strip()
+    return out
 
 def normalize_text(text: str) -> str:
     text = str(text).lower().strip()
@@ -159,6 +193,156 @@ def cluster_similar_stories(df: pd.DataFrame, similarity_threshold: float) -> pd
     return df
 
 
+def _assign_group_ids_from_components(
+    df: pd.DataFrame,
+    edge_columns: list[str],
+) -> pd.DataFrame:
+    out = df.copy()
+    if out.empty:
+        out["Group ID"] = []
+        return out
+
+    n_rows = len(out)
+    source_to_position = {
+        int(source_id): position
+        for position, source_id in enumerate(out[CLUSTER_SOURCE_ID_COL].tolist())
+    }
+    rows: list[int] = list(range(n_rows))
+    cols: list[int] = list(range(n_rows))
+
+    for edge_col in edge_columns:
+        if edge_col not in out.columns:
+            continue
+        for _, group in out.groupby(edge_col, dropna=False):
+            if len(group) <= 1:
+                continue
+            positions = [
+                source_to_position[int(source_id)]
+                for source_id in group[CLUSTER_SOURCE_ID_COL].tolist()
+                if int(source_id) in source_to_position
+            ]
+            if len(positions) <= 1:
+                continue
+            first = positions[0]
+            for position in positions[1:]:
+                rows.extend([first, position])
+                cols.extend([position, first])
+
+    graph = sparse.csr_matrix(([1] * len(rows), (rows, cols)), shape=(n_rows, n_rows))
+    _, labels = csgraph.connected_components(graph, directed=False)
+    out["Group ID"] = labels
+    return out
+
+
+def _text_for_representative_sort(df: pd.DataFrame) -> pd.Series:
+    headline = df["Headline"].fillna("").astype(str) if "Headline" in df.columns else ""
+    snippet = df["Snippet"].fillna("").astype(str) if "Snippet" in df.columns else ""
+    return (headline + " " + snippet).astype(str).str.len()
+
+
+def _snippet_length_for_prime(df: pd.DataFrame) -> pd.Series:
+    if "Snippet" not in df.columns:
+        return pd.Series(0, index=df.index, dtype="int64")
+    return (
+        df["Snippet"]
+        .fillna("")
+        .astype(str)
+        .str.replace(r"\s+", " ", regex=True)
+        .str.strip()
+        .str.len()
+    )
+
+
+def _build_syndication_unit_key(df: pd.DataFrame) -> pd.Series:
+    syndication = df[SYNDICATION_ID_COL].fillna("").astype(str).str.strip()
+    row_keys = df[CLUSTER_SOURCE_ID_COL].astype(str).map(lambda value: f"row:{value}")
+    return ("synd:" + syndication).where(syndication.ne(""), row_keys)
+
+
+def _representative_rows_for_text_clustering(media_df: pd.DataFrame) -> pd.DataFrame:
+    if SYNDICATION_ID_COL not in media_df.columns:
+        return media_df
+
+    working = media_df.copy()
+    working["_syndication_unit_key"] = _build_syndication_unit_key(working)
+    working["_representative_text_len"] = _text_for_representative_sort(working)
+    representatives = (
+        working.sort_values(
+            ["_syndication_unit_key", "_representative_text_len", CLUSTER_SOURCE_ID_COL],
+            ascending=[True, False, True],
+            kind="mergesort",
+        )
+        .drop_duplicates("_syndication_unit_key", keep="first")
+        .drop(columns=["_representative_text_len"], errors="ignore")
+    )
+    return representatives
+
+
+def _expand_representative_text_groups(media_df: pd.DataFrame, representatives: pd.DataFrame) -> pd.DataFrame:
+    type_column = "Media Type" if "Media Type" in media_df.columns else "Type"
+    media_key = (
+        str(media_df[type_column].iloc[0])
+        if type_column in media_df.columns and not media_df.empty
+        else "unknown"
+    )
+
+    if representatives.empty or "_syndication_unit_key" not in representatives.columns:
+        media_df["__text_group_key__"] = media_df[CLUSTER_SOURCE_ID_COL].map(lambda value: f"text:{media_key}:{value}")
+        return media_df
+
+    mapping = representatives.set_index("_syndication_unit_key")["Group ID"].to_dict()
+    out = media_df.copy()
+    out["_syndication_unit_key"] = _build_syndication_unit_key(out)
+    out["__text_group_key__"] = out["_syndication_unit_key"].map(mapping)
+    out["__text_group_key__"] = out["__text_group_key__"].where(
+        out["__text_group_key__"].notna(),
+        out[CLUSTER_SOURCE_ID_COL].map(lambda value: f"row:{value}"),
+    )
+    out["__text_group_key__"] = out["__text_group_key__"].map(lambda value: f"text:{media_key}:{value}")
+    return out
+
+
+def _apply_hybrid_group_metadata(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if out.empty or "Group ID" not in out.columns:
+        return out
+
+    if GROUPING_SOURCE_COL not in out.columns:
+        out[GROUPING_SOURCE_COL] = "Text Similarity"
+    if GROUPING_WARNING_COL not in out.columns:
+        out[GROUPING_WARNING_COL] = ""
+
+    has_syndication = (
+        out[SYNDICATION_ID_COL].fillna("").astype(str).str.strip().ne("")
+        if SYNDICATION_ID_COL in out.columns
+        else pd.Series(False, index=out.index)
+    )
+    syndication_count = (
+        out.groupby("Group ID")[SYNDICATION_ID_COL].transform(lambda values: values.fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+        if SYNDICATION_ID_COL in out.columns
+        else pd.Series(0, index=out.index)
+    )
+    group_has_syndication = has_syndication.groupby(out["Group ID"]).transform("any")
+    group_has_blank_syndication = (~has_syndication).groupby(out["Group ID"]).transform("any")
+
+    out[GROUPING_SOURCE_COL] = "Text Similarity"
+    out.loc[group_has_syndication & syndication_count.eq(1) & ~group_has_blank_syndication, GROUPING_SOURCE_COL] = "SyndicationId"
+    out.loc[
+        group_has_syndication & (syndication_count.gt(1) | group_has_blank_syndication),
+        GROUPING_SOURCE_COL,
+    ] = "SyndicationId + Text Similarity"
+
+    warning_parts = pd.Series("", index=out.index, dtype="object")
+    warning_parts = warning_parts.mask(syndication_count.gt(1), "Multiple SyndicationIds in group")
+    group_sizes = out.groupby("Group ID")["Group ID"].transform("size")
+    warning_parts = warning_parts.mask(
+        group_sizes.gt(50),
+        warning_parts.where(warning_parts.eq(""), warning_parts + "; ") + "Large group",
+    )
+    out[GROUPING_WARNING_COL] = warning_parts.fillna("")
+    return out
+
+
 def cluster_by_media_type_legacy(
     df: pd.DataFrame,
     similarity_threshold: float = 0.935,
@@ -220,9 +404,10 @@ def cluster_by_media_type(
     df: pd.DataFrame,
     similarity_threshold: float = 0.935,
     max_batch_size: int = 1800,
+    use_syndication_id: bool = True,
 ) -> pd.DataFrame:
     type_column = "Media Type" if "Media Type" in df.columns else "Type"
-    working_df = df.copy()
+    working_df = normalize_syndication_ids(df) if use_syndication_id else df.copy()
     if CLUSTER_SOURCE_ID_COL not in working_df.columns:
         working_df[CLUSTER_SOURCE_ID_COL] = range(len(working_df))
 
@@ -239,8 +424,14 @@ def cluster_by_media_type(
         if media_df[["Headline", "Snippet"]].apply(lambda x: x.str.strip()).eq("").all(axis=None):
             continue
 
-        batches = split_batches_by_date(media_df, max_batch_size=max_batch_size)
+        text_source_df = (
+            _representative_rows_for_text_clustering(media_df)
+            if use_syndication_id and SYNDICATION_ID_COL in media_df.columns
+            else media_df
+        )
+        batches = split_batches_by_date(text_source_df, max_batch_size=max_batch_size)
 
+        representative_frames: List[pd.DataFrame] = []
         for batch in batches:
             if len(batch) == 1:
                 batch["Group ID"] = group_id_offset
@@ -253,7 +444,19 @@ def cluster_by_media_type(
                 batch = clustered_batch
 
             batch = batch.drop(columns=["Normalized Headline", "Normalized Snippet"], errors="ignore")
-            clustered_frames.append(batch)
+            representative_frames.append(batch)
+
+        if use_syndication_id and SYNDICATION_ID_COL in media_df.columns:
+            representatives = (
+                pd.concat(representative_frames, ignore_index=True)
+                if representative_frames
+                else pd.DataFrame(columns=media_df.columns)
+            )
+            expanded = _expand_representative_text_groups(media_df, representatives)
+            expanded = expanded.drop(columns=["Normalized Headline", "Normalized Snippet"], errors="ignore")
+            clustered_frames.append(expanded)
+        else:
+            clustered_frames.extend(representative_frames)
 
     if not clustered_frames:
         out = working_df.copy()
@@ -261,7 +464,24 @@ def cluster_by_media_type(
         return out.drop(columns=[CLUSTER_SOURCE_ID_COL], errors="ignore")
 
     out = pd.concat(clustered_frames, ignore_index=True)
-    return out.drop(columns=[CLUSTER_SOURCE_ID_COL], errors="ignore")
+    if use_syndication_id and SYNDICATION_ID_COL in out.columns:
+        syndication_for_edges = out[SYNDICATION_ID_COL].fillna("").astype(str).str.strip()
+        out["__syndication_group_key__"] = ("synd:" + syndication_for_edges).where(
+            syndication_for_edges.ne(""),
+            out[CLUSTER_SOURCE_ID_COL].map(lambda value: f"row:{value}"),
+        )
+        out = _assign_group_ids_from_components(out, ["__text_group_key__", "__syndication_group_key__"])
+        out = _apply_hybrid_group_metadata(out)
+
+    return out.drop(
+        columns=[
+            CLUSTER_SOURCE_ID_COL,
+            "_syndication_unit_key",
+            "__text_group_key__",
+            "__syndication_group_key__",
+        ],
+        errors="ignore",
+    )
 
 
 def cluster_by_media_type_with_timings(
@@ -269,6 +489,7 @@ def cluster_by_media_type_with_timings(
     similarity_threshold: float = 0.935,
     max_batch_size: int = 1800,
     validate: bool = False,
+    use_syndication_id: bool = True,
 ) -> tuple[pd.DataFrame, list[dict[str, float | str]], dict[str, object]]:
     timings: list[dict[str, float | str]] = []
     validation: dict[str, object] = {"Enabled": validate}
@@ -290,6 +511,7 @@ def cluster_by_media_type_with_timings(
         working,
         similarity_threshold=similarity_threshold,
         max_batch_size=max_batch_size,
+        use_syndication_id=use_syndication_id,
     )
     record_timing("Cluster optimized path", start_time)
 
@@ -310,6 +532,9 @@ def cluster_by_media_type_with_timings(
             legacy_with_ids[CLUSTER_SOURCE_ID_COL] = working[CLUSTER_SOURCE_ID_COL].values
 
         validation["Matches Legacy"] = _canonical_cluster_signature(optimized_with_ids) == _canonical_cluster_signature(legacy_with_ids)
+        if use_syndication_id and find_syndication_id_column(working) is not None:
+            validation["Matches Legacy"] = None
+            validation["Validation Note"] = "SyndicationId hybrid grouping is expected to differ from legacy text-only grouping."
         if not validation["Matches Legacy"]:
             validation["Optimized Groups"] = int(optimized_with_ids["Group ID"].nunique(dropna=False))
             validation["Legacy Groups"] = int(legacy_with_ids["Group ID"].nunique(dropna=False))
@@ -365,12 +590,13 @@ def mark_prime_examples_legacy(grouped_df: pd.DataFrame) -> pd.DataFrame:
         working["_date_dt"] = pd.to_datetime(working["Date"], errors="coerce")
     else:
         working["_date_dt"] = pd.NaT
+    working["_snippet_len"] = _snippet_length_for_prime(working)
 
     for group_id, group in working.groupby("Group ID", dropna=False):
         best_index = (
             group.sort_values(
-                by=["_quality_rank", "Impressions", "_date_dt"],
-                ascending=[True, False, True],
+                by=["_quality_rank", "_snippet_len", "Impressions", "_date_dt"],
+                ascending=[True, False, False, True],
                 na_position="last",
             )
             .index[0]
@@ -420,16 +646,17 @@ def mark_prime_examples(grouped_df: pd.DataFrame) -> pd.DataFrame:
         working["_date_dt"] = pd.NaT
 
     working["_impressions_sort"] = -working["Impressions"]
+    working["_snippet_len_sort"] = -_snippet_length_for_prime(working)
     ordered = working.sort_values(
-        by=["Group ID", "_quality_rank", "_impressions_sort", "_date_dt"],
-        ascending=[True, True, True, True],
+        by=["Group ID", "_quality_rank", "_snippet_len_sort", "_impressions_sort", "_date_dt"],
+        ascending=[True, True, True, True, True],
         na_position="last",
         kind="mergesort",
     )
     best_indices = ordered.groupby("Group ID", sort=False).head(1).index
     working.loc[best_indices, "Prime Example"] = 1
 
-    return working.drop(columns=["_quality_rank", "_date_dt", "_impressions_sort"], errors="ignore")
+    return working.drop(columns=["_quality_rank", "_date_dt", "_impressions_sort", "_snippet_len_sort"], errors="ignore")
 
 
 def mark_prime_examples_with_timings(

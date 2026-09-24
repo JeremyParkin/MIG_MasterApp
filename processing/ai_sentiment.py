@@ -13,8 +13,8 @@ from processing.sentiment_config import build_tolerant_regex_str, get_sentiment_
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
-DEFAULT_SENTIMENT_MODEL = "gpt-5.4-nano"
-DEFAULT_SENTIMENT_OBSERVATION_MODEL = "gpt-5.4-mini"
+DEFAULT_SENTIMENT_MODEL = "gpt-5.6-luna"
+DEFAULT_SENTIMENT_OBSERVATION_MODEL = "gpt-5.6-luna"
 DEFAULT_SENTIMENT_BATCH_SIZE = 50
 DEFAULT_SENTIMENT_MAX_WORKERS = 8
 DEFAULT_SENTIMENT_PRIMARY_EXAMPLE_LIMIT = 10

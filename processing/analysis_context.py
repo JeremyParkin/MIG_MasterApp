@@ -18,7 +18,7 @@ from processing.prominence import (
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
-DEFAULT_ANALYSIS_CONTEXT_MODEL = "gpt-5.4-mini"
+DEFAULT_ANALYSIS_CONTEXT_MODEL = "gpt-5.6-luna"
 AVAILABLE_JUNKY_COVERAGE_FLAGS = [
     "Press Release",
     "Advertorial",

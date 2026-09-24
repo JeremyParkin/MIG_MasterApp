@@ -109,7 +109,7 @@ def init_sentiment_config_state(session_state) -> None:
         "ui_products": [],
         "ui_toning_rationale": "",
         "ui_sentiment_type": "3-way",
-        "model_choice": "gpt-5.4-nano",
+        "model_choice": "gpt-5.6-luna",
         "toning_config_step": False,
         "last_saved": None,
         "sentiment_excluded_flags": [],

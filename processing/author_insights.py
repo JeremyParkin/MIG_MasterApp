@@ -12,7 +12,7 @@ from processing.prominence import get_prominence_weight_series
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
-DEFAULT_AUTHOR_SUMMARY_MODEL = "gpt-5.4-mini"
+DEFAULT_AUTHOR_SUMMARY_MODEL = "gpt-5.6-luna"
 DEFAULT_AUTHOR_PRIMARY_EXAMPLE_LIMIT = 10
 DEFAULT_AUTHOR_SUPPORTING_EVIDENCE_LIMIT = 40
 

@@ -61,6 +61,10 @@ def normalize_uploaded_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         "Coverage Snippet": "Snippet",
         "Province/State": "Prov/State",
     }
+    for col in df.columns:
+        normalized_col = re.sub(r"[^a-z0-9]", "", str(col).lower())
+        if normalized_col == "syndicationid" and col != "SyndicationId":
+            rename_map[col] = "SyndicationId"
     df.rename(columns=rename_map, inplace=True)
 
     # Add Mentions if missing
@@ -107,7 +111,7 @@ def normalize_uploaded_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     # Normalize text-like columns safely
     text_columns = [
         "Headline", "Snippet", "Outlet", "Author", "URL", "Type",
-        "Sentiment", "Continent", "Country", "Prov/State", "City", "Language"
+        "Sentiment", "Continent", "Country", "Prov/State", "City", "Language", "SyndicationId"
     ]
     for col in text_columns:
         if col in df.columns:
@@ -122,7 +126,6 @@ def normalize_uploaded_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             "Timezone",
             "Word Count",
             "Duration",
-            "Image URLs",
             "Folders",
             "Notes",
             "County",
@@ -157,6 +160,7 @@ def build_upload_quality_report(df_raw: pd.DataFrame, df_normalized: pd.DataFram
         "media_type_issue_row_numbers": [],
         "unrecognized_media_type_examples": pd.DataFrame(),
         "unrecognized_media_type_values": [],
+        "podcast_row_count": 0,
     }
 
     if df_raw is None or df_raw.empty:
@@ -262,6 +266,20 @@ def build_upload_quality_report(df_raw: pd.DataFrame, df_normalized: pd.DataFram
                 }
             ).head(5)
             report["media_type_issue_examples"] = examples.reset_index(drop=True)
+
+        podcast_mask = normalized_media_type.str.upper().eq("PODCAST")
+        podcast_count = int(podcast_mask.sum())
+        report["podcast_row_count"] = podcast_count
+        if podcast_count:
+            report["warnings"].append(
+                {
+                    "title": "Podcast coverage has no Effective Reach model",
+                    "message": (
+                        f"{podcast_count} podcast row(s) will be included in cleaning, grouping, and analysis. "
+                        "Effective Reach is not currently calculated for podcast coverage."
+                    ),
+                }
+            )
 
         recognized_media_types = CANONICAL_MEDIA_TYPES
         unrecognized_media_types = get_unrecognized_media_types(normalized["Type"], merge_online=False)

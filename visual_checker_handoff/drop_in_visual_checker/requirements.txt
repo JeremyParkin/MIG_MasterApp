@@ -1,0 +1,6 @@
+beautifulsoup4
+openai
+openpyxl
+pytest
+requests
+streamlit

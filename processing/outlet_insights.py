@@ -13,7 +13,7 @@ from processing.prominence import get_prominence_weight_series
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
-DEFAULT_OUTLET_SUMMARY_MODEL = "gpt-5.4-mini"
+DEFAULT_OUTLET_SUMMARY_MODEL = "gpt-5.6-luna"
 DEFAULT_OUTLET_PRIMARY_EXAMPLE_LIMIT = 10
 DEFAULT_OUTLET_SUPPORTING_EVIDENCE_LIMIT = 40
 
