@@ -18,12 +18,12 @@ DEFAULT_TAGGING_OBSERVATION_MODEL = "gpt-5.6-luna"
 DEFAULT_TAGGING_REVIEW_MODEL = "gpt-5.6-luna"
 FIRST_PASS_REASONING_EFFORT = "low"
 SECOND_OPINION_REASONING_EFFORT = "medium"
-SECOND_OPINION_CONFIDENCE_THRESHOLD = 60
+SECOND_OPINION_CONFIDENCE_THRESHOLD = 65
 SECOND_OPINION_CONFIDENCE_MARGIN = 10
 DEFAULT_TAGGING_MAX_WORKERS = 8
 DEFAULT_TAGGING_BATCH_SIZE = 50
 DEFAULT_TAGGING_REVIEW_BATCH_SIZE = 50
-DEFAULT_TAGGING_REVIEW_CONFIDENCE_THRESHOLD = 90
+DEFAULT_TAGGING_REVIEW_CONFIDENCE_THRESHOLD = 65
 DEFAULT_TAGGING_PRIMARY_EXAMPLE_LIMIT = 10
 DEFAULT_TAGGING_ALIGNED_EVIDENCE_LIMIT = 40
 MAX_RETRIES = 2
@@ -53,6 +53,8 @@ def init_ai_tagging_state(session_state) -> None:
     session_state.setdefault("tagging_observation_output", None)
     session_state.setdefault("tagging_review_idx", 0)
     session_state.setdefault("tagging_review_low_conf_threshold", DEFAULT_TAGGING_REVIEW_CONFIDENCE_THRESHOLD)
+    if session_state.get("tagging_review_low_conf_threshold") == 90:
+        session_state["tagging_review_low_conf_threshold"] = DEFAULT_TAGGING_REVIEW_CONFIDENCE_THRESHOLD
     session_state.setdefault("tagging_pre_review_n", DEFAULT_TAGGING_REVIEW_BATCH_SIZE)
 
 

@@ -28,7 +28,7 @@ DEFAULT_CONF_THRESH = 75
 
 DEFAULT_SECOND_OPINION_MODEL = "gpt-5.6-luna"
 MAX_RETRIES = 2
-DEFAULT_REVIEW_CONFIDENCE_THRESHOLD = 90
+DEFAULT_REVIEW_CONFIDENCE_THRESHOLD = 65
 
 
 def recommend_second_opinion_batch_size(
@@ -118,6 +118,8 @@ def init_spot_check_state(session_state) -> None:
     for key, value in defaults.items():
         if key not in session_state:
             session_state[key] = value
+        elif key == "spotcheck_low_conf_threshold" and session_state[key] == 90:
+            session_state[key] = DEFAULT_REVIEW_CONFIDENCE_THRESHOLD
 
 
 # ====================
