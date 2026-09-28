@@ -771,7 +771,6 @@ def generate_region_level_overview(
     client = OpenAI(api_key=api_key)
     response = client.responses.create(
         model=model,
-        temperature=0,
         input=[
             {
                 "role": "system",
@@ -865,7 +864,6 @@ def generate_region_profile_observation(
     client = OpenAI(api_key=api_key)
     response = client.responses.create(
         model=model,
-        temperature=0,
         input=[
             {
                 "role": "system",

@@ -953,7 +953,6 @@ def generate_analysis_context_suggestions(
     )
     response = client.responses.create(
         model=model,
-        temperature=0,
         tools=[
             {
                 "type": "web_search",
