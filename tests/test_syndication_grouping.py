@@ -8,6 +8,7 @@ import pandas as pd
 from processing.data_quality import build_data_quality_warnings
 from processing.effective_reach import apply_effective_reach_traditional
 from processing.story_grouping import build_unique_story_table, cluster_by_media_type, mark_prime_examples
+from processing.ai_sentiment import call_ai_sentiment as call_ai_sentiment_first_pass
 from processing.ai_tagging import call_ai_tagging
 from processing.sentiment_config import prepare_sentiment_datasets
 from processing.tagging_config import prepare_tagging_datasets
@@ -51,7 +52,51 @@ class SyndicationGroupingTests(unittest.TestCase):
         self.assertEqual(result["tag"], "Innovation")
         self.assertEqual((input_tokens, output_tokens), (12, 8))
         self.assertEqual(completions.kwargs["tool_choice"]["function"]["name"], "apply_multiple_tags")
-        self.assertEqual(completions.kwargs["reasoning_effort"], "low")
+        self.assertEqual(completions.kwargs["reasoning_effort"], "none")
+
+    def test_sentiment_tool_call_uses_chat_completions_compatible_reasoning_effort(self) -> None:
+        response = SimpleNamespace(
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5),
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        tool_calls=[
+                            SimpleNamespace(
+                                function=SimpleNamespace(
+                                    arguments='{"sentiment":"NEUTRAL","confidence":88,"explanation":"Factual mention."}'
+                                )
+                            )
+                        ]
+                    )
+                )
+            ],
+        )
+
+        class FakeCompletions:
+            def create(self, **kwargs):
+                self.kwargs = kwargs
+                return response
+
+        completions = FakeCompletions()
+        client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+        result, input_tokens, output_tokens = call_ai_sentiment_first_pass(
+            client,
+            "Headline: College Board announces dates",
+            "gpt-5.6-luna",
+            [
+                {
+                    "name": "analyze_sentiment",
+                    "description": "Analyze sentiment.",
+                    "parameters": {"type": "object", "properties": {}},
+                }
+            ],
+            "3-way",
+        )
+
+        self.assertEqual(result["sentiment"], "NEUTRAL")
+        self.assertEqual((input_tokens, output_tokens), (10, 5))
+        self.assertEqual(completions.kwargs["tool_choice"]["function"]["name"], "analyze_sentiment")
+        self.assertEqual(completions.kwargs["reasoning_effort"], "none")
 
     def test_upload_normalizes_spaced_syndication_id_header(self) -> None:
         raw = pd.DataFrame(

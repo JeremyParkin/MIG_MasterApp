@@ -18,6 +18,7 @@ DEFAULT_TAGGING_OBSERVATION_MODEL = "gpt-5.6-luna"
 DEFAULT_TAGGING_REVIEW_MODEL = "gpt-5.6-luna"
 FIRST_PASS_REASONING_EFFORT = "low"
 SECOND_OPINION_REASONING_EFFORT = "medium"
+CHAT_COMPLETIONS_TOOL_REASONING_EFFORT = "none"
 SECOND_OPINION_CONFIDENCE_THRESHOLD = 65
 SECOND_OPINION_CONFIDENCE_MARGIN = 10
 DEFAULT_TAGGING_MAX_WORKERS = 8
@@ -513,7 +514,7 @@ def call_ai_tagging(
             "type": "function",
             "function": {"name": functions[0]["name"]},
         },
-        reasoning_effort=reasoning_effort,
+        reasoning_effort=CHAT_COMPLETIONS_TOOL_REASONING_EFFORT,
     )
 
     message = response.choices[0].message

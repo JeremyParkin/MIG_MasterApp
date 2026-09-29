@@ -10,7 +10,10 @@ import pandas as pd
 from deep_translator import GoogleTranslator
 from openai import OpenAI
 
-from processing.ai_sentiment import SECOND_OPINION_REASONING_EFFORT
+from processing.ai_sentiment import (
+    CHAT_COMPLETIONS_TOOL_REASONING_EFFORT,
+    SECOND_OPINION_REASONING_EFFORT,
+)
 from processing.sentiment_config import get_negative_priority_weights, get_sentiment_labels
 from utils.api_meter import extract_usage_tokens
 
@@ -378,7 +381,7 @@ def call_ai_sentiment(
                     "type": "function",
                     "function": {"name": "analyze_sentiment"},
                 },
-                reasoning_effort=reasoning_effort,
+                reasoning_effort=CHAT_COMPLETIONS_TOOL_REASONING_EFFORT,
             )
             in_tok, out_tok = extract_usage_tokens(resp)
             total_in += in_tok

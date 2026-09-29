@@ -21,6 +21,7 @@ DEFAULT_SENTIMENT_PRIMARY_EXAMPLE_LIMIT = 10
 DEFAULT_SENTIMENT_ALIGNED_EVIDENCE_LIMIT = 40
 FIRST_PASS_REASONING_EFFORT = "low"
 SECOND_OPINION_REASONING_EFFORT = "medium"
+CHAT_COMPLETIONS_TOOL_REASONING_EFFORT = "none"
 SECOND_OPINION_CONFIDENCE_THRESHOLD = 60
 SECOND_OPINION_CONFIDENCE_MARGIN = 10
 MAX_RETRIES = 2
@@ -237,7 +238,7 @@ def call_ai_sentiment(
                     "type": "function",
                     "function": {"name": "analyze_sentiment"},
                 },
-                reasoning_effort=reasoning_effort,
+                reasoning_effort=CHAT_COMPLETIONS_TOOL_REASONING_EFFORT,
             )
             in_tok, out_tok = extract_usage_tokens(resp)
             total_in += in_tok
