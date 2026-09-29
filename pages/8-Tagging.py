@@ -429,9 +429,7 @@ if st.session_state.tagging_section == "Setup":
         st.session_state.tagging_elapsed_time = time.time() - start
 
         # Lock config here
-        st.session_state.tags_text = tags_text
         st.session_state.tag_definitions = tag_definitions
-        st.session_state.tagging_mode = tagging_mode
         st.session_state.tagging_model = DEFAULT_TAGGING_MODEL
         st.session_state.tagging_observation_output = None
         st.session_state.pop("tagging_review_idx", None)
