@@ -75,9 +75,13 @@ _SENTIMENT_WORKFLOW_RESET_COLUMNS = [
     "AI Sentiment",
     "AI Sentiment Confidence",
     "AI Sentiment Rationale",
+    "AI Entity Match Conflict",
+    "AI Entity Match Conflict Reason",
     "Review AI Sentiment",
     "Review AI Confidence",
     "Review AI Rationale",
+    "Review Entity Match Conflict",
+    "Review Entity Match Conflict Reason",
     "AI Agreement",
     "Needs Human Review",
     "Hybrid Sentiment",
@@ -527,6 +531,8 @@ def build_sentiment_configuration(
         "- Brief/Passing Mentions: If the collective entity appears only briefly in a longer story without explicit praise/criticism or clear attribution of outcomes to the entity, default to NEUTRAL.",
         "- IMPORTANT: If the collective entity is directly mentioned anywhere in the headline/body/transcript, do NOT use NOT RELEVANT.",
         "- Direct mention of the primary entity, any alias, any listed spokesperson acting for the entity, or any listed product/sub-brand/program means the story is in scope for sentiment and must receive one of the active sentiment labels rather than NOT RELEVANT.",
+        "- The parent organization does not need to be explicitly named for the story to be relevant; substantive coverage of any configured alias, spokesperson acting for the entity, product, sub-brand, or program is in scope.",
+        "- Do not treat a configured entity term as a true entity mention when it appears only as part of a different organization, product, or proper name, unless the story clearly refers to the monitored collective entity.",
         "- If the entity is mentioned but the coverage is only incidental or passing and does not express judgment, use NEUTRAL.",
         "- Judge sentiment toward the collective entity itself, not toward the broader topic, event, market condition, social problem, or historic issue being discussed.",
         "- Negative subject matter does not automatically mean negative sentiment toward the collective entity.",
@@ -581,6 +587,8 @@ DECISION RULES:
 - Judge sentiment toward the collective entity itself, not toward the broader topic or issue.
 - If the collective entity is directly mentioned anywhere in the story, do NOT use NOT RELEVANT.
 - A direct mention of the primary entity, any alias, any listed spokesperson acting for the entity, or any listed product/sub-brand/program means the story must be labeled POSITIVE, NEUTRAL, or NEGATIVE.
+- The parent organization does not need to be explicitly named; substantive coverage of any configured alias, spokesperson acting for the entity, product, sub-brand, or program is in scope.
+- Do not treat a configured entity term as a true entity mention when it appears only as part of a different organization, product, or proper name, unless the story clearly refers to the monitored collective entity.
 - If the entity is mentioned but the coverage is only incidental or passing and does not express judgment, label NEUTRAL.
 - If the story mainly reports the entity's statements, research, forecast, event, or public-service activity without judging the entity, label NEUTRAL.
 - Use NEGATIVE only when the coverage portrays the collective entity itself unfavorably through blame, criticism, failure, wrongdoing, poor judgment, harm, scandal, hypocrisy, incompetence, or reputational damage.
@@ -626,6 +634,8 @@ DECISION RULES:
 - Judge sentiment toward the collective entity itself, not toward the broader topic or issue.
 - If the collective entity is directly mentioned anywhere in the story, do NOT use NOT RELEVANT.
 - A direct mention of the primary entity, any alias, any listed spokesperson acting for the entity, or any listed product/sub-brand/program means the story must be labeled POSITIVE, BALANCED, NEUTRAL, or NEGATIVE.
+- The parent organization does not need to be explicitly named; substantive coverage of any configured alias, spokesperson acting for the entity, product, sub-brand, or program is in scope.
+- Do not treat a configured entity term as a true entity mention when it appears only as part of a different organization, product, or proper name, unless the story clearly refers to the monitored collective entity.
 - If the entity is mentioned but the coverage is only incidental or passing and does not express judgment, label NEUTRAL.
 - If the story mainly reports the entity's statements, research, forecast, event, or public-service activity without judging the entity, label NEUTRAL.
 - Use BALANCED only when both the positive/constructive and critical elements are meaningful to the story, not when a mostly negative story includes a small mitigating detail.
@@ -674,6 +684,8 @@ DECISION RULES:
 - Judge sentiment toward the collective entity itself, not toward the broader topic or issue.
 - If the collective entity is directly mentioned anywhere in the story, do NOT use NOT RELEVANT.
 - A direct mention of the primary entity, any alias, any listed spokesperson acting for the entity, or any listed product/sub-brand/program means the story must be labeled VERY POSITIVE, SOMEWHAT POSITIVE, NEUTRAL, SOMEWHAT NEGATIVE, or VERY NEGATIVE.
+- The parent organization does not need to be explicitly named; substantive coverage of any configured alias, spokesperson acting for the entity, product, sub-brand, or program is in scope.
+- Do not treat a configured entity term as a true entity mention when it appears only as part of a different organization, product, or proper name, unless the story clearly refers to the monitored collective entity.
 - If the entity is mentioned but the coverage is only incidental or passing and does not express judgment, label NEUTRAL.
 - If the story mainly reports the entity's statements, research, forecast, event, or public-service activity without judging the entity, label NEUTRAL.
 - Use SOMEWHAT NEGATIVE or VERY NEGATIVE only when the coverage portrays the collective entity itself unfavorably through blame, criticism, failure, wrongdoing, poor judgment, harm, scandal, hypocrisy, incompetence, or reputational damage.
@@ -728,6 +740,7 @@ def reset_sentiment_config_state(session_state) -> None:
         "pre_prompt", "post_prompt", "sentiment_instruction", "functions",
         "highlight_keyword", "highlight_regex_str",
         "sentiment_second_opinion_target_batch", "sentiment_second_opinion_target_source_count",
+        "spotcheck_auto_review_n",
     ]:
         session_state.pop(k, None)
 

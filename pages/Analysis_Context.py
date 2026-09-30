@@ -178,13 +178,13 @@ def _apply_suggestions_to_draft(suggestions: dict) -> None:
         if analysis_context._match_key(item["name"]) not in {client_key, primary_key}
     ]
 
-    st.session_state.analysis_context_draft_alternate_names = analysis_context._clean_list(
+    st.session_state.analysis_context_draft_alternate_names = analysis_context.normalize_analysis_context_terms(
         st.session_state.analysis_context_draft_alternate_names + alias_names
     )
-    st.session_state.analysis_context_draft_spokespeople = analysis_context._clean_list(
+    st.session_state.analysis_context_draft_spokespeople = analysis_context.normalize_analysis_context_terms(
         st.session_state.analysis_context_draft_spokespeople + spokesperson_names
     )
-    st.session_state.analysis_context_draft_products = analysis_context._clean_list(
+    st.session_state.analysis_context_draft_products = analysis_context.normalize_analysis_context_terms(
         st.session_state.analysis_context_draft_products + product_names
     )
     st.session_state.analysis_context_tag_widget_version += 1

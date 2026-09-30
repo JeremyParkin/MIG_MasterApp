@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import unittest
+from pathlib import Path
 
 import dill
 import pandas as pd
@@ -11,10 +12,16 @@ from processing.ai_tagging import (
     apply_tagging_result_to_unique_df,
     apply_tag_review_flags_to_group,
     auto_assign_resolved_tag_matches,
+    commit_tagging_mode_from_widget,
     ensure_canonical_tag_definitions,
+    get_configured_tagging_mode,
+    init_ai_tagging_state,
     normalize_tag_assignment,
     parse_tag_definitions,
+    prepare_tagging_mode_widget_state,
+    reset_ai_tagging_results,
     set_assigned_tag,
+    uses_multi_tag_review_controls,
 )
 from utils.ai_checkpoints import acknowledge_checkpoint, record_checkpoint_progress, reset_workflow_checkpoints
 from utils.session_snapshot import build_serializable_session_payload, load_session_state_from_file
@@ -93,6 +100,56 @@ class ProtectedOtherTests(unittest.TestCase):
     def test_legacy_custom_other_definition_is_replaced(self) -> None:
         definitions = ensure_canonical_tag_definitions({"Innovation": "New", "OTHER": "Custom"})
         self.assertEqual(definitions, {"Innovation": "New", "Other": RESERVED_OTHER_DEFINITION})
+
+
+class TaggingModeStateTests(unittest.TestCase):
+    def test_multiple_applicable_mode_survives_processed_row_reset(self) -> None:
+        state = State(tagging_mode="Multiple applicable tags", tag_definitions={}, tags_text="")
+        init_ai_tagging_state(state)
+        unique = pd.DataFrame({"Group ID": [1], "AI Tag": ["AP"], "Tag_Processed": [True]})
+        rows = unique.copy()
+
+        reset_unique, _ = reset_ai_tagging_results(unique, rows)
+
+        self.assertEqual(get_configured_tagging_mode(state), "Multiple applicable tags")
+        self.assertTrue(pd.isna(reset_unique.loc[0, "AI Tag"]))
+
+    def test_single_best_mode_survives_processed_row_reset(self) -> None:
+        state = State(tagging_mode="Single best tag", tag_definitions={}, tags_text="")
+        init_ai_tagging_state(state)
+        unique = pd.DataFrame({"Group ID": [1], "AI Tag": ["AP"], "Tag_Processed": [True]})
+        rows = unique.copy()
+
+        reset_ai_tagging_results(unique, rows)
+
+        self.assertEqual(get_configured_tagging_mode(state), "Single best tag")
+
+    def test_setup_widget_state_is_separate_from_durable_tagging_mode(self) -> None:
+        state = State(tagging_mode="Multiple applicable tags", tag_definitions={}, tags_text="")
+
+        prepare_tagging_mode_widget_state(state)
+
+        self.assertEqual(state["tagging_mode"], "Multiple applicable tags")
+        self.assertEqual(state["tagging_mode_input"], "Multiple applicable tags")
+
+        state["tagging_mode_input"] = "Single best tag"
+        committed = commit_tagging_mode_from_widget(state)
+
+        self.assertEqual(committed, "Single best tag")
+        self.assertEqual(state["tagging_mode"], "Single best tag")
+
+    def test_spot_check_control_mode_follows_durable_tagging_mode(self) -> None:
+        self.assertTrue(uses_multi_tag_review_controls("Multiple applicable tags"))
+        self.assertFalse(uses_multi_tag_review_controls("Single best tag"))
+        self.assertFalse(uses_multi_tag_review_controls("unexpected mode"))
+
+    def test_run_step_keeps_only_processed_row_reset_action(self) -> None:
+        page_source = (
+            Path(__file__).resolve().parents[1] / "pages" / "8-Tagging.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('st.button("Reset Processed Rows")', page_source)
+        self.assertNotIn("Reset Tagging Dataset", page_source)
 
 
 class CheckpointAndSnapshotTests(unittest.TestCase):

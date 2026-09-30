@@ -24,7 +24,6 @@ from processing.tagging_config import (
     init_tagging_config_state,
     calculate_representative_sample_size,
     prepare_tagging_datasets,
-    reset_tagging_config_state,
     get_tagging_source_rows,
     apply_coverage_flag_exclusions,
     DEFAULT_MAX_FULL_ROWS,
@@ -34,8 +33,11 @@ from processing.ai_tagging import (
     build_default_tags_text,
     parse_tag_definitions,
     ensure_canonical_tag_definitions,
+    commit_tagging_mode_from_widget,
+    get_configured_tagging_mode,
     get_remaining_tagging_rows,
     get_effective_tag_series,
+    prepare_tagging_mode_widget_state,
     normalize_tag_list,
     analyze_story_worker,
     apply_tagging_result_to_unique_df,
@@ -45,6 +47,7 @@ from processing.ai_tagging import (
     summarize_effective_tag_sources,
     DEFAULT_TAGGING_BATCH_SIZE,
     DEFAULT_TAGGING_MAX_WORKERS,
+    TAGGING_MODES,
 )
 from utils.api_meter import (
     apply_usage_to_session,
@@ -378,11 +381,11 @@ if st.session_state.tagging_section == "Setup":
         help="One per line, in the format: TagName: Criteria",
     )
 
+    prepare_tagging_mode_widget_state(st.session_state)
     tagging_mode = st.radio(
         "Tagging mode",
-        ["Single best tag", "Multiple applicable tags"],
-        index=0 if st.session_state.get("tagging_mode", "Single best tag") == "Single best tag" else 1,
-        key="tagging_mode",
+        list(TAGGING_MODES),
+        key="tagging_mode_input",
     )
 
     prep_clicked = st.button("Prepare Tagging Dataset", type="primary")
@@ -430,6 +433,7 @@ if st.session_state.tagging_section == "Setup":
 
         # Lock config here
         st.session_state.tag_definitions = tag_definitions
+        st.session_state.tagging_mode = commit_tagging_mode_from_widget(st.session_state)
         st.session_state.tagging_model = DEFAULT_TAGGING_MODEL
         st.session_state.tagging_observation_output = None
         st.session_state.pop("tagging_review_idx", None)
@@ -438,6 +442,7 @@ if st.session_state.tagging_section == "Setup":
         st.session_state.pop("__last_tagging_pre_review_summary__", None)
         st.session_state.pop("tagging_second_opinion_target_batch", None)
         st.session_state.pop("tagging_second_opinion_target_source_count", None)
+        st.session_state.pop("tagging_pre_review_n", None)
         st.session_state.tagging_section = "Run"
         reset_workflow_checkpoints(st.session_state, "tagging")
 
@@ -482,19 +487,11 @@ if st.session_state.tagging_section == "Run":
         interval=1000,
     )
 
-    reset_col1, reset_col2 = st.columns([4, 1])
-    with reset_col2:
-        if st.button("Reset Tagging Dataset"):
-            reset_tagging_config_state(st.session_state)
-            reset_workflow_checkpoints(st.session_state, "tagging")
-            st.session_state.tagging_section = "Setup"
-            st.rerun()
-
     config_col1, config_col2 = st.columns(2)
     with config_col1:
         st.caption(f"Dataset mode: {_format_sample_mode(st.session_state.get('tagging_sample_mode', 'representative'))}")
     with config_col2:
-        st.caption(f"Tagging mode: {st.session_state.get('tagging_mode', 'Single best tag')}")
+        st.caption(f"Tagging mode: {get_configured_tagging_mode(st.session_state)}")
 
     if remaining_count == 0:
         row_limit = 0
@@ -543,7 +540,7 @@ if st.session_state.tagging_section == "Run":
     if apply_clicked:
         tag_definitions = ensure_canonical_tag_definitions(st.session_state.get("tag_definitions", {}))
         st.session_state.tag_definitions = tag_definitions
-        tagging_mode = st.session_state.get("tagging_mode", "Single best tag")
+        tagging_mode = get_configured_tagging_mode(st.session_state)
         model = st.session_state.get("tagging_model", DEFAULT_TAGGING_MODEL)
 
         if len(tag_definitions) <= 1:
@@ -611,6 +608,7 @@ if st.session_state.tagging_section == "Run":
         st.session_state.pop("__last_tagging_pre_review_summary__", None)
         st.session_state.pop("tagging_second_opinion_target_batch", None)
         st.session_state.pop("tagging_second_opinion_target_source_count", None)
+        st.session_state.pop("tagging_pre_review_n", None)
 
         apply_usage_to_session(total_in, total_out, model)
 

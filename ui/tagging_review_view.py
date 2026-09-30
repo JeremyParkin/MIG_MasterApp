@@ -17,6 +17,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         ensure_tag_review_columns,
         ensure_canonical_tag_definitions,
         filter_tag_candidates_for_review_mode,
+        get_configured_tagging_mode,
         get_effective_ai_tag_confidence_series,
         get_effective_tag_series,
         normalize_tag_assignment,
@@ -24,6 +25,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         recommend_tag_second_opinion_batch_size,
         run_batch_tag_second_opinion,
         set_assigned_tag,
+        uses_multi_tag_review_controls,
     )
     from processing.sentiment_config import build_tolerant_regex_str
     from processing.spot_checks import (
@@ -34,6 +36,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
     )
     from utils.api_meter import apply_usage_to_session
     from utils.ai_checkpoints import record_checkpoint_progress, render_checkpoint_save_reminder
+    from utils.second_opinion_batch import prepare_second_opinion_batch_size
     from utils.time_display import format_local_timestamp
 
     def sync_tagging_state(unique_df: pd.DataFrame, rows_df: pd.DataFrame) -> None:
@@ -45,7 +48,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         st.session_state.df_tagging_rows,
     )
     sync_tagging_state(df_unique, df_rows)
-    tagging_mode = st.session_state.get("tagging_mode", "Single best tag")
+    tagging_mode = get_configured_tagging_mode(st.session_state)
     st.session_state.tag_definitions = ensure_canonical_tag_definitions(st.session_state.get("tag_definitions", {}))
 
     review_base_candidates = compute_tag_review_candidates(st.session_state.df_tagging_unique, exclude_reviewed=False)
@@ -103,37 +106,22 @@ def render_tagging_review_page(*, review_stage: str) -> None:
 
         stored_source_count = int(st.session_state.get("tagging_second_opinion_target_source_count", 0) or 0)
         stored_target = int(st.session_state.get("tagging_second_opinion_target_batch", 0) or 0)
-        if stored_target <= 0 or with_first_opinion_count > stored_source_count:
+        target_refreshed = stored_target <= 0 or with_first_opinion_count > stored_source_count
+        if target_refreshed:
             stored_target = recommend_tag_second_opinion_batch_size(len(base_candidates))
             st.session_state.tagging_second_opinion_target_batch = stored_target
             st.session_state.tagging_second_opinion_target_source_count = with_first_opinion_count
         completed_second_opinion_count = with_second_opinion_count
         remaining_recommended = max(0, stored_target - completed_second_opinion_count)
         recommended_batch = min(len(base_candidates), remaining_recommended)
-        if "tagging_pre_review_n" not in st.session_state:
-            st.session_state.tagging_pre_review_n = max(
-                1,
-                min(
-                    len(base_candidates),
-                    recommended_batch or DEFAULT_TAGGING_REVIEW_BATCH_SIZE,
-                ),
-            )
-        current_batch_size = int(st.session_state.get("tagging_pre_review_n", 0) or 0)
-        if current_batch_size > len(base_candidates):
-            current_batch_size = len(base_candidates)
-        # If the widget is still sitting on the generic default while the recommendation
-        # is something more specific, seed it from the recommendation instead.
-        if (
-            recommended_batch > 0
-            and current_batch_size == DEFAULT_TAGGING_REVIEW_BATCH_SIZE
-            and recommended_batch != DEFAULT_TAGGING_REVIEW_BATCH_SIZE
-            and with_second_opinion_count == 0
-        ):
-            current_batch_size = recommended_batch
-        if recommended_batch == 0 and len(base_candidates) > 0:
-            current_batch_size = min(current_batch_size or min(10, len(base_candidates)), len(base_candidates))
-        st.session_state.tagging_pre_review_n = max(1, current_batch_size)
-        default_batch_size = st.session_state.tagging_pre_review_n
+        default_batch_size = prepare_second_opinion_batch_size(
+            st.session_state,
+            input_key="tagging_pre_review_n",
+            recommended_batch=recommended_batch,
+            available_count=len(base_candidates),
+            refresh_recommendation=target_refreshed,
+            fallback_batch_size=DEFAULT_TAGGING_REVIEW_BATCH_SIZE,
+        )
 
         st.caption("Second-opinion priority favors more syndicated, higher-visibility, lower-confidence stories before you move on to human review.")
 
@@ -516,7 +504,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         multi_tag_selection: str | None = None
         if tag_names:
             st.write("**Choose final tag**")
-            if tagging_mode == "Multiple applicable tags":
+            if uses_multi_tag_review_controls(tagging_mode):
                 default_selected = normalize_tag_list(
                     _safe_text(row.get("Assigned Tag"))
                     or _safe_text(row.get("Review AI Tag"))
@@ -606,7 +594,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         with nav1:
             if st.button("", disabled=(idx <= 0), use_container_width=True, icon=":material/skip_previous:", help="Previous story"):
                 target_group_id = int(candidates.iloc[idx - 1]["Group ID"])
-                if tagging_mode == "Multiple applicable tags" and multi_tag_selection is not None:
+                if uses_multi_tag_review_controls(tagging_mode) and multi_tag_selection is not None:
                     unique2, rows2 = set_assigned_tag(
                         st.session_state.df_tagging_unique,
                         st.session_state.df_tagging_rows,
@@ -626,7 +614,7 @@ def render_tagging_review_page(*, review_stage: str) -> None:
         with nav2:
             if st.button("", disabled=(idx >= len(candidates) - 1), use_container_width=True, icon=":material/skip_next:", help="Next story"):
                 target_group_id = int(candidates.iloc[idx + 1]["Group ID"])
-                if tagging_mode == "Multiple applicable tags" and multi_tag_selection is not None:
+                if uses_multi_tag_review_controls(tagging_mode) and multi_tag_selection is not None:
                     unique2, rows2 = set_assigned_tag(
                         st.session_state.df_tagging_unique,
                         st.session_state.df_tagging_rows,

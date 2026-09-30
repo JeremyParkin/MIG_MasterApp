@@ -57,6 +57,7 @@ get_auth_outlet_todo = author_outlets.get_auth_outlet_todo
 get_author_search_urls = author_outlets.get_author_search_urls
 init_author_outlet_prefetch_state = author_outlets.init_author_outlet_prefetch_state
 make_author_cache_key = author_outlets.make_author_cache_key
+normalize_author_name = author_outlets.normalize_author_name
 init_author_outlets_state = author_outlets.init_author_outlets_state
 prepare_traditional_for_author_outlets = author_outlets.prepare_traditional_for_author_outlets
 reset_outlet_skips = author_outlets.reset_outlet_skips
@@ -293,7 +294,7 @@ def render_authors_page() -> None:
 
         status_message = st.session_state.pop("authors_missing_status_message", None)
         if status_message:
-            st.success(status_message)
+            st.toast(status_message)
 
         headline_table = build_fixable_headline_table(author_working_df)
         obvious_acceptance_table = build_obvious_author_acceptance_table(author_working_df)
@@ -521,7 +522,7 @@ def render_authors_page() -> None:
                             st.session_state.auth_skip_counter = refreshed_headlines.index(headline_text)
                         else:
                             st.session_state.auth_skip_counter = min(counter, len(refreshed_headline_table) - 1)
-                    st.session_state.authors_missing_status_message = f"Updated missing author rows for this headline to {new_author}."
+                    st.session_state.authors_missing_status_message = f"Updated author to {new_author}."
                     st.rerun()
         else:
             st.info("You've reached the end of the list!")
@@ -781,7 +782,11 @@ def render_authors_page() -> None:
             def name_match(series):
                 non_match = "color: #985331;"
                 match = "color: goldenrod"
-                return [non_match if cell_value != match_author_name else match for cell_value in series]
+                normalized_author_name = normalize_author_name(match_author_name)
+                return [
+                    match if normalize_author_name(cell_value) == normalized_author_name else non_match
+                    for cell_value in series
+                ]
 
             outlets_in_coverage = cache_entry.get("outlets_in_coverage", pd.DataFrame())
             outlets_in_coverage_list = cache_entry.get("outlets_in_coverage_list", pd.Index(["Freelance"]))

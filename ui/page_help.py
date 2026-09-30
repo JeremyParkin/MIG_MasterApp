@@ -430,6 +430,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "bullets": [
                         "Shows one saved top story at a time with its current example link and alternate source options.",
                         "Lets you rotate to the next source when the current link is weak, dead, or low quality.",
+                        "Lets you remove a saved story from the shortlist when no available source is suitable for client reporting.",
                         "Lets you confirm a source and remove that story from the active validation queue.",
                     ],
                 },
@@ -445,7 +446,8 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "heading": "What to review manually",
                     "bullets": [
                         "Use Open current link to confirm the source is live and feels like a strong example for final use.",
-                        "Try next source when the current page is dead, low quality, or clearly not the best representative example.",
+                        "Try next source when you want to keep the story but change the representative example.",
+                        "Remove story when the saved story should leave the shortlist because its available source is not suitable.",
                         "Confirm a source once you are satisfied so you do not keep seeing the same story in the active queue.",
                     ],
                 },
@@ -794,6 +796,154 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                     "heading": "Key logic / heuristics",
                     "bullets": [
                         "The main distribution uses underlying story volume first, with grouped-story counts shown as secondary context.",
+                    ],
+                },
+            ],
+        },
+        ("Rapid Labeling", "Prepare & Configure"): {
+            "title": "Rapid Labeling > Prepare & Configure",
+            "intro": "Prepare a grouped-story sample for Rapid Labeling and set the optional tag configuration used during labeling.",
+            "sections": [
+                {
+                    "heading": "What this step does",
+                    "bullets": [
+                        "Choose a full, representative, custom, or reusable prepared sample.",
+                        "Review the saved Analysis Context used to interpret the client collective.",
+                        "Optionally define tags and choose how tag assignments should be presented.",
+                    ],
+                },
+                {
+                    "heading": "What the app does automatically",
+                    "bullets": [
+                        "Applies the qualitative coverage exclusions already used elsewhere in the app.",
+                        "Groups eligible coverage into unique stories before labeling.",
+                        "Uses the saved entity names, related terms, programs, and guidance as shared context.",
+                    ],
+                },
+                {
+                    "heading": "What to review manually",
+                    "bullets": [
+                        "Confirm the sample is appropriate before preparing it.",
+                        "Add only tags that are meaningful for this analysis.",
+                        "Preparing a new sample replaces Rapid results for the prior prepared sample.",
+                    ],
+                },
+            ],
+        },
+        ("Rapid Labeling", "Run Rapid Labeling"): {
+            "title": "Rapid Labeling > Run Rapid Labeling",
+            "intro": "Run the first structured labeling pass across prepared grouped stories in batches you can continue over time.",
+            "sections": [
+                {
+                    "heading": "What this step does",
+                    "bullets": [
+                        "Labels each grouped story for sentiment and, when configured, tags.",
+                        "Lets you choose a batch size and continue until the prepared sample is complete.",
+                    ],
+                },
+                {
+                    "heading": "What the app does automatically",
+                    "bullets": [
+                        "Keeps results attached to their grouped stories.",
+                        "Preserves completed results while later batches run.",
+                        "Records incomplete or failed rows without stopping later stories from processing.",
+                    ],
+                },
+                {
+                    "heading": "What to review manually",
+                    "bullets": [
+                        "Review initial labels and any available supporting evidence.",
+                        "Adjust the batch size to fit the size and urgency of the job.",
+                        "Treat this as an initial machine pass; later steps are available when additional QA is useful.",
+                    ],
+                },
+            ],
+        },
+        ("Rapid Labeling", "AI Second Opinion"): {
+            "title": "Rapid Labeling > AI Second Opinion",
+            "intro": "Optionally collect an independent second opinion for Rapid-labeled stories before deciding whether human review is needed.",
+            "sections": [
+                {
+                    "heading": "What this step does",
+                    "bullets": [
+                        "Lets you review a recommended QA batch or any remaining available stories.",
+                        "Keeps the first and second opinions separate for comparison.",
+                    ],
+                },
+                {
+                    "heading": "What the app does automatically",
+                    "bullets": [
+                        "Prioritizes contradictions, uncertainty, and high-impact stories when recommending a batch.",
+                        "Keeps routine stories available even when they are not prioritized.",
+                        "Retains both opinions as evidence rather than silently replacing the first result.",
+                    ],
+                },
+                {
+                    "heading": "What to review manually",
+                    "bullets": [
+                        "A completed recommended batch does not require reviewing every remaining story.",
+                        "Compare conclusions and supporting evidence in context; confidence values are not necessarily a like-for-like vote.",
+                        "You can skip this step or return to it later without blocking other Rapid work.",
+                    ],
+                },
+            ],
+        },
+        ("Rapid Labeling", "Spot Checks"): {
+            "title": "Rapid Labeling > Spot Checks",
+            "intro": "Review selected Rapid sentiment or tagging decisions and record the human judgment where it is needed.",
+            "sections": [
+                {
+                    "heading": "What this step does",
+                    "bullets": [
+                        "Lets you switch between sentiment and tagging review.",
+                        "Supports either the 3-way or 5-way sentiment review scale.",
+                        "Supports one-best-tag or multiple-applicable-tags review.",
+                    ],
+                },
+                {
+                    "heading": "What the app does automatically",
+                    "bullets": [
+                        "Prioritizes unresolved disagreements and conflicts in the review queue.",
+                        "Highlights configured entity and context terms in the story.",
+                        "Keeps sentiment scales and tagging formulations independent so reviewing one does not silently overwrite another.",
+                    ],
+                },
+                {
+                    "heading": "What to review manually",
+                    "bullets": [
+                        "Accept the current machine result when it is suitable, or assign a different result when it is not.",
+                        "A multi-tag review remains a multi-tag decision even when machine opinions differ in breadth.",
+                        "Review only as much of the queue as the analysis requires.",
+                    ],
+                },
+            ],
+        },
+        ("Rapid Labeling", "Insights"): {
+            "title": "Rapid Labeling > Insights",
+            "intro": "Review current Rapid distributions and generate observations from the available effective labels.",
+            "sections": [
+                {
+                    "heading": "What this step does",
+                    "bullets": [
+                        "Provides separate sentiment and tagging views.",
+                        "Lets you select the sentiment scale or tag formulation used for the view.",
+                        "Generates observations from the current available results.",
+                    ],
+                },
+                {
+                    "heading": "What the app does automatically",
+                    "bullets": [
+                        "Uses human-reviewed decisions where available and machine-effective results elsewhere.",
+                        "Supports partial completed samples when enough usable labels exist.",
+                        "Warns when labels, settings, or context have changed since observations were generated.",
+                    ],
+                },
+                {
+                    "heading": "What to review manually",
+                    "bullets": [
+                        "Read warnings as guidance for interpretation and regeneration, not as hard gates.",
+                        "Check the distributions and linked examples before using generated observations in client-facing reporting.",
+                        "Regenerate observations after meaningful label, configuration, or context changes.",
                     ],
                 },
             ],

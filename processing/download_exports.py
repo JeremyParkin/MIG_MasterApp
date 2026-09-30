@@ -19,6 +19,30 @@ from processing.analysis_context import (
     get_qualitative_coverage_flag_exclusions,
 )
 from processing.author_insights import build_author_headline_table, build_author_metrics
+from processing.ai_sentiment import (
+    build_effective_ai_sentiment_confidence_series,
+    build_effective_ai_sentiment_series,
+    build_effective_sentiment_source_series,
+    build_final_sentiment_series,
+)
+from processing.jev_sentiment import (
+    JEV_SHARED_RESULT_COLUMNS,
+    RAPID_LABELING_SAMPLE_SHEET_NAME,
+    rapid_labeling_column_name,
+    rename_jev_columns_to_rapid,
+)
+from processing.rapid_resolution import (
+    EFFECTIVE_SENTIMENT_COLUMNS,
+    EFFECTIVE_TAG_COLUMNS,
+    FINAL_SENTIMENT_COLUMNS,
+    FINAL_TAG_COLUMNS,
+    RAPID_HUMAN_REVIEW_COLUMNS,
+    build_effective_rapid_sentiment_frame,
+    build_effective_rapid_tag_frame,
+    build_final_rapid_sentiment_frame,
+    build_final_rapid_tag_frame,
+)
+from processing.rapid_second_opinion import RAPID_REVIEW_COLUMNS
 from processing.outlet_insights import build_outlet_headline_table, build_outlet_metrics
 from processing.regions import (
     build_region_rankings,
@@ -35,6 +59,99 @@ from utils.time_display import format_local_timestamp
 
 
 # ---------- Core helpers ----------
+
+SENTIMENT_EXPORT_COMPARISON_COLUMNS = [
+    "Final Sentiment",
+    "Final Sentiment Source",
+    "Assigned Sentiment",
+    "Effective AI Sentiment",
+    "Effective AI Sentiment Confidence",
+    "AI Sentiment",
+    "AI Sentiment Confidence",
+    "AI Sentiment Rationale",
+    "Review AI Sentiment",
+    "Review AI Confidence",
+    "Review AI Rationale",
+    "AI Agreement",
+    "Needs Human Review",
+]
+
+SENTIMENT_CORE_EXPORT_COLUMNS = ["Final Sentiment"]
+SENTIMENT_AUDIT_EXPORT_COLUMNS = [
+    "Final Sentiment Source",
+    "Assigned Sentiment",
+    "Effective AI Sentiment",
+    "Effective AI Sentiment Confidence",
+    "AI Sentiment",
+    "AI Sentiment Confidence",
+    "AI Sentiment Rationale",
+    "Review AI Sentiment",
+    "Review AI Confidence",
+    "Review AI Rationale",
+    "AI Agreement",
+    "Needs Human Review",
+]
+
+TAGGING_CORE_EXPORT_COLUMNS = ["Final Tag"]
+TAGGING_AUDIT_EXPORT_COLUMNS = [
+    "AI Tag",
+    "AI Tag Confidence",
+    "AI Tag Rationale",
+    "Assigned Tag",
+    "Assigned Tag Source",
+    "Review AI Tag",
+    "Review AI Confidence",
+    "Review AI Rationale",
+    "AI Tag Agreement",
+    "AI Tags",
+    "Needs Human Review",
+    "Tag_Processed",
+]
+
+JEV_CORE_ANALYTICAL_COLUMNS = [
+    "Jev Sentiment",
+    "Jev 5-Way Sentiment",
+    "Jev Sentiment Score",
+    "Jev Score Relevant Probability",
+    "Jev Mixture Label",
+    "Jev Mixture Score",
+    "Jev Tags",
+    "Jev Tag Count",
+    "Jev Best Tag",
+]
+
+JEV_REQUEST_METADATA_COLUMNS = [
+    "Jev Model",
+    "Jev Input Tokens",
+    "Jev Cost USD",
+    "Jev Error",
+    "Jev Raw Response",
+]
+
+RAPID_CORE_EXPORT_COLUMNS = [
+    "Final Rapid Relevance",
+    "Final Rapid Sentiment 3-Way",
+    "Final Rapid Sentiment 5-Way",
+    "Final Rapid Sentiment Score",
+    "Final Rapid Best Tag",
+    "Final Rapid Tags",
+]
+
+RAPID_AUDIT_DERIVED_COLUMNS = [
+    "Final Rapid Sentiment Source",
+    "Final Rapid Tag Source",
+    *EFFECTIVE_SENTIMENT_COLUMNS,
+    *EFFECTIVE_TAG_COLUMNS,
+]
+
+RAPID_REVIEW_REQUEST_METADATA_COLUMNS = {
+    "Rapid Review Error",
+    "Rapid Review Model",
+    "Rapid Review Input Tokens",
+    "Rapid Review Output Tokens",
+    "Rapid Review Cost USD",
+    "Rapid Review Raw Response",
+}
 
 def rename_ave(df: pd.DataFrame, original_ave_col: str | None = None) -> pd.DataFrame:
     """Restore internal AVE column to original uploaded AVE column name for export."""
@@ -114,7 +231,12 @@ def add_mapped_outlet_column(df: pd.DataFrame, outlet_rollup_map: dict[str, str]
     return out
 
 
-def remove_inactive_workflow_columns(df: pd.DataFrame, session_state) -> pd.DataFrame:
+def remove_inactive_workflow_columns(
+    df: pd.DataFrame,
+    session_state,
+    *,
+    include_labeling_audit_columns: bool = False,
+) -> pd.DataFrame:
     """Drop workflow-added columns when that workflow has not actually been used in this session."""
     if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame() if df is None else df.copy()
@@ -131,53 +253,42 @@ def remove_inactive_workflow_columns(df: pd.DataFrame, session_state) -> pd.Data
     if not outlet_mapping_active:
         out = out.drop(columns=["Mapped Outlet"], errors="ignore")
 
-    sentiment_keep_cols = [
-        "Final Sentiment",
-        "AI Sentiment",
-        "AI Sentiment Confidence",
-        "AI Sentiment Rationale",
-    ]
+    sentiment_keep_cols = list(SENTIMENT_CORE_EXPORT_COLUMNS)
     sentiment_detail_cols = [
-        "Assigned Sentiment",
-        "Assigned Sentiment Source",
-        "Review AI Sentiment",
-        "Review AI Confidence",
-        "Review AI Rationale",
-        "AI Agreement",
-        "Needs Human Review",
         "Hybrid Sentiment",
         "Hybrid Sentiment Confidence",
         "Final Sentiment Confidence",
+        "Assigned Sentiment Source",
+        *SENTIMENT_AUDIT_EXPORT_COLUMNS,
     ]
     sentiment_active = should_merge_sentiment_into_clean_trad(session_state) or sentiment_processed_complete_enough(session_state)
     if sentiment_active:
-        out = out.drop(columns=sentiment_detail_cols, errors="ignore")
+        if not include_labeling_audit_columns:
+            out = out.drop(columns=sentiment_detail_cols, errors="ignore")
     else:
         out = out.drop(columns=sentiment_keep_cols + sentiment_detail_cols, errors="ignore")
 
     binary_tag_cols = [c for c in out.columns if str(c).startswith("AI Tag: ")]
-    tagging_keep_cols = [
-        "Final Tag",
-        "AI Tag",
-        "AI Tag Confidence",
-        "AI Tag Rationale",
-    ]
-    tagging_detail_cols = [
-        "Assigned Tag",
-        "Assigned Tag Source",
-        "Review AI Tag",
-        "Review AI Confidence",
-        "Review AI Rationale",
-        "AI Tag Agreement",
-        "AI Tags",
-        "Needs Human Review",
-        "Tag_Processed",
-    ]
+    tagging_keep_cols = list(TAGGING_CORE_EXPORT_COLUMNS)
+    tagging_detail_cols = list(TAGGING_AUDIT_EXPORT_COLUMNS)
     tagging_active = should_merge_tagging_into_clean_trad(session_state) or tagging_processed_complete_enough(session_state)
     if tagging_active:
-        out = out.drop(columns=tagging_detail_cols + binary_tag_cols, errors="ignore")
+        if not include_labeling_audit_columns:
+            out = out.drop(columns=tagging_detail_cols + binary_tag_cols, errors="ignore")
     else:
         out = out.drop(columns=tagging_keep_cols + tagging_detail_cols + binary_tag_cols, errors="ignore")
+
+    rapid_all_cols = _rapid_clean_export_column_names(session_state, include_audit=True)
+    rapid_audit_cols = [
+        column
+        for column in rapid_all_cols
+        if column not in RAPID_CORE_EXPORT_COLUMNS
+    ]
+    if jev_sentiment_processed_complete_enough(session_state):
+        if not include_labeling_audit_columns:
+            out = out.drop(columns=rapid_audit_cols, errors="ignore")
+    else:
+        out = out.drop(columns=rapid_all_cols, errors="ignore")
 
     return out
 
@@ -566,9 +677,12 @@ def tagging_processed_complete_enough(session_state) -> bool:
     df_unique = session_state.get("df_tagging_unique", pd.DataFrame())
     if not isinstance(df_unique, pd.DataFrame) or df_unique.empty:
         return False
-    if "Tag_Processed" not in df_unique.columns:
-        return False
-    return bool(df_unique["Tag_Processed"].fillna(False).any())
+    processed = df_unique["Tag_Processed"].fillna(False) if "Tag_Processed" in df_unique.columns else pd.Series(False, index=df_unique.index)
+    has_output = pd.Series(False, index=df_unique.index)
+    for column in ["Final Tag", "AI Tag", "Assigned Tag"]:
+        if column in df_unique.columns:
+            has_output = has_output | _nonempty_text_mask(df_unique[column])
+    return bool((processed | has_output).any())
 
 
 def sentiment_processed_complete_enough(session_state) -> bool:
@@ -576,10 +690,40 @@ def sentiment_processed_complete_enough(session_state) -> bool:
     if not isinstance(df_unique, pd.DataFrame) or df_unique.empty:
         return False
 
-    has_ai = "AI Sentiment" in df_unique.columns and bool(df_unique["AI Sentiment"].notna().any())
-    has_assigned = "Assigned Sentiment" in df_unique.columns and bool(df_unique["Assigned Sentiment"].notna().any())
+    working = add_final_sentiment_columns(df_unique.copy())
+    has_output = pd.Series(False, index=working.index)
+    for column in ["Final Sentiment", "AI Sentiment", "Assigned Sentiment"]:
+        if column in working.columns:
+            has_output = has_output | _nonempty_text_mask(working[column])
+    return bool(has_output.any())
 
-    return has_ai or has_assigned
+
+def jev_sentiment_processed_complete_enough(session_state) -> bool:
+    df_unique = session_state.get("df_jev_sentiment_unique", pd.DataFrame())
+    if not isinstance(df_unique, pd.DataFrame) or df_unique.empty:
+        return False
+
+    jev_cols = [column for column in JEV_CORE_ANALYTICAL_COLUMNS if column in df_unique.columns]
+    jev_cols.extend([column for column in df_unique.columns if str(column).startswith("Jev Tag [")])
+    if not jev_cols:
+        return False
+
+    has_output = (
+        df_unique[jev_cols]
+        .fillna("")
+        .astype(str)
+        .apply(lambda col: col.str.strip().ne(""))
+        .any(axis=1)
+    )
+    return bool(has_output.any())
+
+
+def labeling_audit_available(session_state) -> bool:
+    return (
+        sentiment_processed_complete_enough(session_state)
+        or tagging_processed_complete_enough(session_state)
+        or jev_sentiment_processed_complete_enough(session_state)
+    )
 
 
 def should_merge_tagging_into_clean_trad(session_state) -> bool:
@@ -651,22 +795,13 @@ def _rename_source_sentiment_column(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _trim_tagging_export_columns(df: pd.DataFrame) -> pd.DataFrame:
+def _trim_tagging_export_columns(df: pd.DataFrame, *, include_audit: bool = False) -> pd.DataFrame:
     out = _rename_source_sentiment_column(df.copy())
 
-    excluded_cols = {
-        "Assigned Tag",
-        "Assigned Tag Source",
-        "Review AI Tag",
-        "Review AI Confidence",
-        "Review AI Rationale",
-        "AI Tag Agreement",
-        "AI Tags",
-        "Needs Human Review",
-        "Tag_Processed",
-    }
-    excluded_cols.update({c for c in out.columns if str(c).startswith("AI Tag: ")})
-    out = out.drop(columns=[c for c in excluded_cols if c in out.columns], errors="ignore")
+    if not include_audit:
+        excluded_cols = set(TAGGING_AUDIT_EXPORT_COLUMNS)
+        excluded_cols.update({c for c in out.columns if str(c).startswith("AI Tag: ")})
+        out = out.drop(columns=[c for c in excluded_cols if c in out.columns], errors="ignore")
 
     priority_cols = [
         "Group ID",
@@ -678,31 +813,27 @@ def _trim_tagging_export_columns(df: pd.DataFrame) -> pd.DataFrame:
         "Mentions",
         "Impressions",
         "Effective Reach",
-        "Final Tag",
-        "AI Tag",
-        "AI Tag Confidence",
-        "AI Tag Rationale",
+        *TAGGING_CORE_EXPORT_COLUMNS,
+        *(TAGGING_AUDIT_EXPORT_COLUMNS if include_audit else []),
     ]
+    if include_audit:
+        priority_cols.extend([c for c in out.columns if str(c).startswith("AI Tag: ")])
     existing_priority = [c for c in priority_cols if c in out.columns]
     remaining_cols = [c for c in out.columns if c not in existing_priority]
     return out[existing_priority + remaining_cols].copy()
 
 
-def _trim_sentiment_export_columns(df: pd.DataFrame) -> pd.DataFrame:
+def _trim_sentiment_export_columns(df: pd.DataFrame, *, include_audit: bool = False) -> pd.DataFrame:
     out = _rename_source_sentiment_column(df.copy())
 
     excluded_cols = {
-        "Assigned Sentiment",
         "Assigned Sentiment Source",
-        "Review AI Sentiment",
-        "Review AI Confidence",
-        "Review AI Rationale",
-        "AI Agreement",
-        "Needs Human Review",
         "Hybrid Sentiment",
         "Hybrid Sentiment Confidence",
         "Final Sentiment Confidence",
     }
+    if not include_audit:
+        excluded_cols.update(SENTIMENT_AUDIT_EXPORT_COLUMNS)
     out = out.drop(columns=[c for c in excluded_cols if c in out.columns], errors="ignore")
 
     priority_cols = [
@@ -715,17 +846,224 @@ def _trim_sentiment_export_columns(df: pd.DataFrame) -> pd.DataFrame:
         "Mentions",
         "Impressions",
         "Effective Reach",
-        "Final Sentiment",
-        "AI Sentiment",
-        "AI Sentiment Confidence",
-        "AI Sentiment Rationale",
+        *SENTIMENT_CORE_EXPORT_COLUMNS,
+        *(SENTIMENT_AUDIT_EXPORT_COLUMNS if include_audit else []),
     ]
     existing_priority = [c for c in priority_cols if c in out.columns]
     remaining_cols = [c for c in out.columns if c not in existing_priority]
     return out[existing_priority + remaining_cols].copy()
 
 
-def build_tagging_sample_export(session_state) -> pd.DataFrame:
+def _jev_result_columns(df: pd.DataFrame) -> list[str]:
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return []
+    return [column for column in df.columns if str(column).startswith("Jev")]
+
+
+def _jev_core_columns(df: pd.DataFrame) -> list[str]:
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return []
+    core = [column for column in JEV_CORE_ANALYTICAL_COLUMNS if column in df.columns]
+    core.extend([column for column in df.columns if str(column).startswith("Jev Tag [")])
+    return list(dict.fromkeys(core))
+
+
+def _jev_export_columns(df: pd.DataFrame, *, include_audit: bool = False) -> list[str]:
+    jev_cols = _jev_result_columns(df)
+    if include_audit:
+        return jev_cols
+    return [column for column in _jev_core_columns(df) if column in jev_cols]
+
+
+def _jev_output_mask(df: pd.DataFrame, jev_cols: list[str]) -> pd.Series:
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty or not jev_cols:
+        return pd.Series(False, index=df.index if isinstance(df, pd.DataFrame) else None)
+    return (
+        df[jev_cols]
+        .fillna("")
+        .astype(str)
+        .apply(lambda col: col.str.strip().ne(""))
+        .any(axis=1)
+    )
+
+
+def _merge_jev_columns_by_group(session_state, df: pd.DataFrame, *, include_audit: bool = False) -> pd.DataFrame:
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty or "Group ID" not in df.columns:
+        return pd.DataFrame() if df is None else df.copy()
+
+    jev_unique = session_state.get("df_jev_sentiment_unique", pd.DataFrame())
+    if not isinstance(jev_unique, pd.DataFrame) or jev_unique.empty or "Group ID" not in jev_unique.columns:
+        return df.copy()
+
+    jev_cols = _jev_export_columns(jev_unique, include_audit=include_audit)
+    jev_cols = [column for column in jev_cols if column not in JEV_REQUEST_METADATA_COLUMNS]
+    if not jev_cols:
+        return df.copy()
+
+    jev_map = jev_unique[["Group ID", *jev_cols]].copy()
+    jev_map = jev_map[_jev_output_mask(jev_map, jev_cols)].drop_duplicates(subset=["Group ID"], keep="last")
+    if jev_map.empty:
+        return df.copy()
+
+    out = df.drop(columns=[column for column in _jev_result_columns(df) if column in df.columns], errors="ignore").copy()
+    return out.merge(jev_map, on="Group ID", how="left")
+
+
+def _rapid_audit_source_columns(df: pd.DataFrame) -> list[str]:
+    first_pass = [
+        column
+        for column in _jev_result_columns(df)
+        if column not in JEV_SHARED_RESULT_COLUMNS
+    ]
+    review = [
+        column
+        for column in RAPID_REVIEW_COLUMNS
+        if column in df.columns
+        and column not in RAPID_REVIEW_REQUEST_METADATA_COLUMNS
+        and column not in RAPID_AUDIT_DERIVED_COLUMNS
+    ]
+    human = [column for column in RAPID_HUMAN_REVIEW_COLUMNS if column in df.columns]
+    return list(dict.fromkeys([*first_pass, *review, *human]))
+
+
+def _rapid_clean_export_column_names(session_state, *, include_audit: bool) -> list[str]:
+    columns = list(RAPID_CORE_EXPORT_COLUMNS)
+    if not include_audit:
+        return columns
+
+    columns.extend(RAPID_AUDIT_DERIVED_COLUMNS)
+    rapid_unique = session_state.get("df_jev_sentiment_unique", pd.DataFrame())
+    if isinstance(rapid_unique, pd.DataFrame):
+        columns.extend(
+            rapid_labeling_column_name(column)
+            for column in _rapid_audit_source_columns(rapid_unique)
+        )
+    return list(dict.fromkeys(columns))
+
+
+def build_rapid_clean_export_map(session_state, *, include_audit: bool = False) -> pd.DataFrame:
+    """Build one final Rapid export row per canonical Group ID."""
+    rapid_unique = session_state.get("df_jev_sentiment_unique", pd.DataFrame())
+    if (
+        not jev_sentiment_processed_complete_enough(session_state)
+        or not isinstance(rapid_unique, pd.DataFrame)
+        or rapid_unique.empty
+        or "Group ID" not in rapid_unique.columns
+    ):
+        return pd.DataFrame(columns=["Group ID", *RAPID_CORE_EXPORT_COLUMNS])
+
+    tag_definitions = session_state.get("jev_tag_definitions", {})
+    final_sentiment = build_final_rapid_sentiment_frame(rapid_unique)
+    final_tags = build_final_rapid_tag_frame(rapid_unique, tag_definitions=tag_definitions)
+
+    # Attach resolver values to their canonical group before combining the two frames.
+    sentiment_map = rapid_unique[["Group ID"]].copy()
+    for column in FINAL_SENTIMENT_COLUMNS:
+        sentiment_map[column] = final_sentiment[column].tolist()
+    tag_map = rapid_unique[["Group ID"]].copy()
+    for column in FINAL_TAG_COLUMNS:
+        tag_map[column] = final_tags[column].tolist()
+
+    out = sentiment_map.drop_duplicates(subset=["Group ID"], keep="last").merge(
+        tag_map.drop_duplicates(subset=["Group ID"], keep="last"),
+        on="Group ID",
+        how="outer",
+    )
+
+    if include_audit:
+        effective_sentiment = build_effective_rapid_sentiment_frame(rapid_unique)
+        effective_tags = build_effective_rapid_tag_frame(
+            rapid_unique,
+            tag_definitions=tag_definitions,
+        )
+        effective_map = rapid_unique[["Group ID"]].copy()
+        for column in EFFECTIVE_SENTIMENT_COLUMNS:
+            effective_map[column] = effective_sentiment[column].tolist()
+        for column in EFFECTIVE_TAG_COLUMNS:
+            effective_map[column] = effective_tags[column].tolist()
+
+        audit_source_columns = _rapid_audit_source_columns(rapid_unique)
+        raw_map = rapid_unique[["Group ID", *audit_source_columns]].copy()
+        raw_map = rename_jev_columns_to_rapid(raw_map)
+        out = out.merge(
+            effective_map.drop_duplicates(subset=["Group ID"], keep="last"),
+            on="Group ID",
+            how="left",
+        ).merge(
+            raw_map.drop_duplicates(subset=["Group ID"], keep="last"),
+            on="Group ID",
+            how="left",
+        )
+
+    selected_columns = [
+        column
+        for column in ["Group ID", *_rapid_clean_export_column_names(session_state, include_audit=include_audit)]
+        if column in out.columns
+    ]
+    return out[selected_columns].copy()
+
+
+def _merge_production_sentiment_columns_by_group(
+    session_state,
+    df: pd.DataFrame,
+    *,
+    include_audit: bool = False,
+) -> pd.DataFrame:
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty or "Group ID" not in df.columns:
+        return pd.DataFrame() if df is None else df.copy()
+
+    sent_unique = session_state.get("df_sentiment_unique", pd.DataFrame())
+    if not isinstance(sent_unique, pd.DataFrame) or sent_unique.empty or "Group ID" not in sent_unique.columns:
+        return df.copy()
+
+    sent_map = add_final_sentiment_columns(sent_unique.copy())
+    desired_cols = SENTIMENT_CORE_EXPORT_COLUMNS + (SENTIMENT_AUDIT_EXPORT_COLUMNS if include_audit else [])
+    sentiment_cols = [column for column in desired_cols if column in sent_map.columns]
+    if not sentiment_cols:
+        return df.copy()
+
+    sent_map = sent_map[["Group ID", *sentiment_cols]].drop_duplicates(subset=["Group ID"], keep="last")
+    out = df.drop(columns=[column for column in sentiment_cols if column in df.columns], errors="ignore").copy()
+    return out.merge(sent_map, on="Group ID", how="left")
+
+
+def build_jev_sentiment_sample_export(session_state, *, include_audit: bool = False) -> pd.DataFrame:
+    df = session_state.get("df_jev_sentiment_unique", pd.DataFrame())
+    if not isinstance(df, pd.DataFrame) or df.empty or not jev_sentiment_processed_complete_enough(session_state):
+        return pd.DataFrame()
+
+    out = df.copy()
+    jev_cols = _jev_export_columns(out, include_audit=include_audit)
+    if not jev_cols:
+        return pd.DataFrame()
+
+    out = out[_jev_output_mask(out, jev_cols)].copy()
+    if out.empty:
+        return out
+    excluded_jev_cols = [column for column in _jev_result_columns(out) if column not in jev_cols]
+    out = out.drop(columns=excluded_jev_cols, errors="ignore")
+    if sentiment_processed_complete_enough(session_state):
+        out = _merge_production_sentiment_columns_by_group(session_state, out, include_audit=include_audit)
+
+    priority_cols = [
+        "Group ID",
+        "Prime Example",
+        "Date",
+        "Headline",
+        "Outlet",
+        "Type",
+        "Mentions",
+        "Impressions",
+        "Effective Reach",
+        *SENTIMENT_EXPORT_COMPARISON_COLUMNS,
+        *jev_cols,
+    ]
+    existing_priority = [column for column in priority_cols if column in out.columns]
+    remaining_cols = [column for column in out.columns if column not in existing_priority]
+    return rename_jev_columns_to_rapid(out[existing_priority + remaining_cols].copy())
+
+
+def build_tagging_sample_export(session_state, *, include_audit: bool = False) -> pd.DataFrame:
     df = session_state.get("df_tagging_rows", pd.DataFrame())
     if (
         not isinstance(df, pd.DataFrame)
@@ -741,10 +1079,10 @@ def build_tagging_sample_export(session_state) -> pd.DataFrame:
     if out.empty:
         return out
 
-    return _trim_tagging_export_columns(out)
+    return _trim_tagging_export_columns(out, include_audit=include_audit)
 
 
-def build_sentiment_sample_export(session_state) -> pd.DataFrame:
+def build_sentiment_sample_export(session_state, *, include_audit: bool = False) -> pd.DataFrame:
     df = session_state.get("df_sentiment_rows", pd.DataFrame())
     if (
         not isinstance(df, pd.DataFrame)
@@ -760,10 +1098,12 @@ def build_sentiment_sample_export(session_state) -> pd.DataFrame:
     if out.empty:
         return out
 
-    return _trim_sentiment_export_columns(out)
+    if jev_sentiment_processed_complete_enough(session_state):
+        out = _merge_jev_columns_by_group(session_state, out, include_audit=include_audit)
+    return rename_jev_columns_to_rapid(_trim_sentiment_export_columns(out, include_audit=include_audit))
 
 
-def build_shared_sample_ai_export(session_state) -> pd.DataFrame:
+def build_shared_sample_ai_export(session_state, *, include_audit: bool = False) -> pd.DataFrame:
     if not sampled_workflows_share_sample(session_state):
         return pd.DataFrame()
 
@@ -777,14 +1117,18 @@ def build_shared_sample_ai_export(session_state) -> pd.DataFrame:
 
     if tagging_processed_complete_enough(session_state):
         tag_map = add_final_tag_columns(tag_rows.copy())
-        tag_cols = [c for c in ["Group ID", "Final Tag", "AI Tag", "AI Tag Confidence", "AI Tag Rationale"] if c in tag_map.columns]
+        desired_tag_cols = TAGGING_CORE_EXPORT_COLUMNS + (TAGGING_AUDIT_EXPORT_COLUMNS if include_audit else [])
+        if include_audit:
+            desired_tag_cols.extend([c for c in tag_map.columns if str(c).startswith("AI Tag: ")])
+        tag_cols = [c for c in ["Group ID", *desired_tag_cols] if c in tag_map.columns]
         if "Group ID" in tag_cols:
             out = out.drop(columns=[c for c in tag_cols if c != "Group ID" and c in out.columns], errors="ignore")
             out = out.merge(tag_map[tag_cols].drop_duplicates(subset=["Group ID"], keep="last"), on="Group ID", how="left")
 
     if sentiment_processed_complete_enough(session_state):
         sent_map = add_final_sentiment_columns(sent_rows.copy())
-        sent_cols = [c for c in ["Group ID", "Final Sentiment", "AI Sentiment", "AI Sentiment Confidence", "AI Sentiment Rationale"] if c in sent_map.columns]
+        desired_sent_cols = SENTIMENT_CORE_EXPORT_COLUMNS + (SENTIMENT_AUDIT_EXPORT_COLUMNS if include_audit else [])
+        sent_cols = [c for c in ["Group ID", *desired_sent_cols] if c in sent_map.columns]
         if "Group ID" in sent_cols:
             out = out.drop(columns=[c for c in sent_cols if c != "Group ID" and c in out.columns], errors="ignore")
             out = out.merge(sent_map[sent_cols].drop_duplicates(subset=["Group ID"], keep="last"), on="Group ID", how="left")
@@ -797,24 +1141,19 @@ def build_shared_sample_ai_export(session_state) -> pd.DataFrame:
     if out.empty:
         return out
 
+    if jev_sentiment_processed_complete_enough(session_state):
+        out = _merge_jev_columns_by_group(session_state, out, include_audit=include_audit)
     out = _rename_source_sentiment_column(out)
     excluded_cols = {
-        "Assigned Tag",
-        "Review AI Tag",
-        "Review AI Confidence",
-        "Review AI Rationale",
-        "AI Tag Agreement",
-        "AI Tags",
-        "Needs Human Review",
-        "Tag_Processed",
-        "Assigned Sentiment",
-        "Review AI Sentiment",
-        "AI Agreement",
         "Hybrid Sentiment",
         "Hybrid Sentiment Confidence",
         "Final Sentiment Confidence",
+        "Assigned Sentiment Source",
     }
-    excluded_cols.update({c for c in out.columns if str(c).startswith("AI Tag: ")})
+    if not include_audit:
+        excluded_cols.update(TAGGING_AUDIT_EXPORT_COLUMNS)
+        excluded_cols.update(SENTIMENT_AUDIT_EXPORT_COLUMNS)
+        excluded_cols.update({c for c in out.columns if str(c).startswith("AI Tag: ")})
     out = out.drop(columns=[c for c in excluded_cols if c in out.columns], errors="ignore")
 
     priority_cols = [
@@ -827,21 +1166,24 @@ def build_shared_sample_ai_export(session_state) -> pd.DataFrame:
         "Mentions",
         "Impressions",
         "Effective Reach",
-        "Final Tag",
-        "AI Tag",
-        "AI Tag Confidence",
-        "AI Tag Rationale",
-        "Final Sentiment",
-        "AI Sentiment",
-        "AI Sentiment Confidence",
-        "AI Sentiment Rationale",
+        *TAGGING_CORE_EXPORT_COLUMNS,
+        *(TAGGING_AUDIT_EXPORT_COLUMNS if include_audit else []),
+        *SENTIMENT_CORE_EXPORT_COLUMNS,
+        *(SENTIMENT_AUDIT_EXPORT_COLUMNS if include_audit else []),
     ]
+    if include_audit:
+        priority_cols.extend([c for c in out.columns if str(c).startswith("AI Tag: ")])
     existing_priority = [c for c in priority_cols if c in out.columns]
     remaining_cols = [c for c in out.columns if c not in existing_priority]
-    return out[existing_priority + remaining_cols].copy()
+    return rename_jev_columns_to_rapid(out[existing_priority + remaining_cols].copy())
 
 
-def merge_full_scope_ai_columns_into_clean_trad(session_state, traditional: pd.DataFrame) -> pd.DataFrame:
+def merge_full_scope_ai_columns_into_clean_trad(
+    session_state,
+    traditional: pd.DataFrame,
+    *,
+    include_labeling_audit_columns: bool = False,
+) -> pd.DataFrame:
     out = traditional.copy()
 
     if tagging_visible_in_clean_trad(session_state):
@@ -852,13 +1194,13 @@ def merge_full_scope_ai_columns_into_clean_trad(session_state, traditional: pd.D
                 | _nonempty_text_mask(tag_rows.get("AI Tag", pd.Series(index=tag_rows.index, dtype="object")))
             ].copy()
         tag_cols = [
-            c for c in [
+            c
+            for c in [
                 "Group ID",
-                "Final Tag",
-                "AI Tag",
-                "AI Tag Confidence",
-                "AI Tag Rationale",
-            ] if c in tag_rows.columns
+                *TAGGING_CORE_EXPORT_COLUMNS,
+                *(TAGGING_AUDIT_EXPORT_COLUMNS if include_labeling_audit_columns else []),
+            ]
+            if c in tag_rows.columns
         ]
 
         if "Group ID" in tag_cols:
@@ -874,20 +1216,25 @@ def merge_full_scope_ai_columns_into_clean_trad(session_state, traditional: pd.D
                 _nonempty_text_mask(sent_rows.get("Final Sentiment", pd.Series(index=sent_rows.index, dtype="object")))
                 | _nonempty_text_mask(sent_rows.get("AI Sentiment", pd.Series(index=sent_rows.index, dtype="object")))
             ].copy()
-        sent_cols = [
-            c for c in [
-                "Group ID",
-                "Final Sentiment",
-                "AI Sentiment",
-                "AI Sentiment Confidence",
-                "AI Sentiment Rationale",
-            ] if c in sent_rows.columns
-        ]
+        desired_sent_cols = SENTIMENT_CORE_EXPORT_COLUMNS + (
+            SENTIMENT_AUDIT_EXPORT_COLUMNS if include_labeling_audit_columns else []
+        )
+        sent_cols = [c for c in ["Group ID", *desired_sent_cols] if c in sent_rows.columns]
         if "Group ID" in sent_cols:
             sent_map = sent_rows[sent_cols].drop_duplicates(subset=["Group ID"], keep="last")
             cols_to_drop = [c for c in sent_cols if c != "Group ID" and c in out.columns]
             out = out.drop(columns=cols_to_drop, errors="ignore")
             out = out.merge(sent_map, on="Group ID", how="left")
+
+    if jev_sentiment_processed_complete_enough(session_state):
+        rapid_map = build_rapid_clean_export_map(
+            session_state,
+            include_audit=include_labeling_audit_columns,
+        )
+        rapid_cols = [column for column in rapid_map.columns if column != "Group ID"]
+        if "Group ID" in rapid_map.columns:
+            out = out.drop(columns=[column for column in rapid_cols if column in out.columns], errors="ignore")
+            out = out.merge(rapid_map, on="Group ID", how="left")
 
     return out
 
@@ -921,6 +1268,7 @@ def build_export_metadata_sheet(
 
     sent_rows = session_state.get("df_sentiment_rows", pd.DataFrame())
     sent_unique = session_state.get("df_sentiment_unique", pd.DataFrame())
+    jev_unique = session_state.get("df_jev_sentiment_unique", pd.DataFrame())
 
     tag_processed_groups = 0
     if isinstance(tag_unique, pd.DataFrame) and not tag_unique.empty and "Tag_Processed" in tag_unique.columns:
@@ -931,6 +1279,12 @@ def build_export_metadata_sheet(
         has_ai = sent_unique["AI Sentiment"].notna() if "AI Sentiment" in sent_unique.columns else pd.Series(False, index=sent_unique.index)
         has_assigned = sent_unique["Assigned Sentiment"].notna() if "Assigned Sentiment" in sent_unique.columns else pd.Series(False, index=sent_unique.index)
         sent_processed_groups = int((has_ai | has_assigned).sum())
+
+    jev_processed_groups = 0
+    if isinstance(jev_unique, pd.DataFrame) and not jev_unique.empty:
+        jev_cols = _jev_result_columns(jev_unique)
+        if jev_cols:
+            jev_processed_groups = int(_jev_output_mask(jev_unique, jev_cols).sum())
 
     shared_sample_sheet = sampled_workflows_share_sample(session_state)
     tagging_visible = tagging_visible_in_clean_trad(session_state)
@@ -948,6 +1302,7 @@ def build_export_metadata_sheet(
     shared_sample_rows = len(build_shared_sample_ai_export(session_state)) if shared_sample_sheet else 0
     tagging_sample_rows = shared_sample_rows if tagging_sample_sheet == "SAMPLED AI RESULTS" else len(build_tagging_sample_export(session_state))
     sentiment_sample_rows = shared_sample_rows if sentiment_sample_sheet == "SAMPLED AI RESULTS" else len(build_sentiment_sample_export(session_state))
+    jev_sample_rows = len(build_jev_sentiment_sample_export(session_state))
     session_started = format_session_started(session_state)
     session_duration = format_session_duration(get_current_session_duration_seconds(session_state))
 
@@ -991,6 +1346,12 @@ def build_export_metadata_sheet(
         ("Sentiment Visible In CLEAN TRAD", "Yes" if sentiment_visible else "No"),
         ("Sentiment Sample Sheet", sentiment_sample_sheet),
         ("Sentiment Exported Rows", sentiment_sample_rows),
+
+        ("Rapid Labeling Run", "Yes" if jev_sentiment_processed_complete_enough(session_state) else "No"),
+        ("Rapid Labeling Processed Groups", jev_processed_groups),
+        ("Rapid Labeling Sample Sheet", RAPID_LABELING_SAMPLE_SHEET_NAME if jev_sample_rows else "No"),
+        ("Rapid Labeling Exported Rows", jev_sample_rows),
+        ("Rapid Labeling Usage/Cost Source", RAPID_LABELING_SAMPLE_SHEET_NAME if jev_sample_rows else "No"),
     ]
 
     if not excluded_counts_df.empty:
@@ -1041,28 +1402,32 @@ def add_final_sentiment_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     out = df.copy()
 
-    base_ai_sent = out.get("AI Sentiment", pd.Series(index=out.index, dtype="object"))
-    base_ai_conf = out.get("AI Sentiment Confidence", pd.Series(index=out.index, dtype="object"))
-    base_ai_rat = out.get("AI Sentiment Rationale", pd.Series(index=out.index, dtype="object"))
+    required_columns = [
+        "Assigned Sentiment",
+        "AI Sentiment",
+        "AI Sentiment Confidence",
+        "AI Sentiment Rationale",
+        "Review AI Sentiment",
+        "Review AI Confidence",
+        "Review AI Rationale",
+    ]
+    for column in required_columns:
+        if column not in out.columns:
+            out[column] = pd.NA
 
-    review_ai_sent = out.get("Review AI Sentiment", pd.Series(index=out.index, dtype="object"))
-    review_ai_conf = out.get("Review AI Confidence", pd.Series(index=out.index, dtype="object"))
-    review_ai_rat = out.get("Review AI Rationale", pd.Series(index=out.index, dtype="object"))
+    out["Effective AI Sentiment"] = build_effective_ai_sentiment_series(out).replace("", pd.NA)
+    out["Effective AI Sentiment Confidence"] = build_effective_ai_sentiment_confidence_series(out)
+    out["Final Sentiment"] = build_final_sentiment_series(out)
 
-    review_sent_clean = review_ai_sent.fillna("").astype(str).str.strip()
-
-    out["AI Sentiment"] = review_ai_sent.where(review_sent_clean != "", base_ai_sent)
-    out["AI Sentiment Confidence"] = review_ai_conf.where(review_sent_clean != "", base_ai_conf)
-    out["AI Sentiment Rationale"] = review_ai_rat.where(review_sent_clean != "", base_ai_rat)
-
-    assigned = out.get("Assigned Sentiment", pd.Series(index=out.index, dtype="object"))
-    ai = out.get("AI Sentiment", pd.Series(index=out.index, dtype="object"))
-
-    assigned_clean = assigned.fillna("").astype(str).str.strip()
-    ai_clean = ai.fillna("").astype(str).str.strip()
-
-    out["Final Sentiment"] = assigned_clean.where(assigned_clean != "", ai_clean)
-    out["Final Sentiment"] = out["Final Sentiment"].replace("", pd.NA)
+    source = build_effective_sentiment_source_series(out).replace(
+        {
+            "Human input": "Assigned",
+            "AI second opinion": "Review AI",
+            "AI first pass": "First-pass AI",
+            "": pd.NA,
+        }
+    )
+    out["Final Sentiment Source"] = source
 
     return out
 
@@ -1356,16 +1721,25 @@ def _iter_outlet_report_blocks(session_state) -> list[dict[str, Any]]:
     return blocks
 
 
-def _iter_sentiment_report_sections(session_state) -> tuple[str, list[dict[str, Any]]]:
-    observation_output = session_state.get("sentiment_observation_output", {}) or {}
+def _iter_observation_report_sections(
+    observation_output: dict[str, Any] | None,
+    *,
+    sections_key: str,
+    label_key: str,
+    summary_key: str,
+    examples_key: str,
+) -> tuple[str, list[dict[str, Any]]]:
+    observation_output = observation_output or {}
+    if observation_output.get("_error"):
+        return "", []
     overall = _safe_string(observation_output.get("overall_observation", ""))
     sections = []
-    for section in observation_output.get("sentiment_sections", []) or []:
-        label = _safe_string(section.get("sentiment", ""))
+    for section in observation_output.get(sections_key, []) or []:
+        label = _safe_string(section.get(label_key, ""))
         if not label:
             continue
         examples = []
-        for item in (observation_output.get("_examples_by_sentiment", {}) or {}).get(label, []):
+        for item in (observation_output.get(examples_key, {}) or {}).get(label, []):
             examples.append(
                 {
                     "headline": _safe_string(item.get("headline", "")),
@@ -1384,11 +1758,31 @@ def _iter_sentiment_report_sections(session_state) -> tuple[str, list[dict[str, 
         sections.append(
             {
                 "title": label,
-                "summary": _safe_string(section.get("observation", "")),
+                "summary": _safe_string(section.get(summary_key, "")),
                 "examples": examples,
             }
         )
     return overall, sections
+
+
+def _iter_sentiment_report_sections(session_state) -> tuple[str, list[dict[str, Any]]]:
+    return _iter_observation_report_sections(
+        session_state.get("sentiment_observation_output", {}) or {},
+        sections_key="sentiment_sections",
+        label_key="sentiment",
+        summary_key="observation",
+        examples_key="_examples_by_sentiment",
+    )
+
+
+def _iter_rapid_sentiment_report_sections(session_state) -> tuple[str, list[dict[str, Any]]]:
+    return _iter_observation_report_sections(
+        session_state.get("rapid_sentiment_observation_output", {}) or {},
+        sections_key="sentiment_sections",
+        label_key="sentiment",
+        summary_key="observation",
+        examples_key="_examples_by_sentiment",
+    )
 
 
 def _iter_regions_report_sections(session_state) -> list[dict[str, Any]]:
@@ -1448,38 +1842,44 @@ def _iter_regions_report_sections(session_state) -> list[dict[str, Any]]:
 
 
 def _iter_tag_report_sections(session_state) -> tuple[str, list[dict[str, Any]]]:
-    observation_output = session_state.get("tagging_observation_output", {}) or {}
-    overall = _safe_string(observation_output.get("overall_observation", ""))
-    sections = []
-    for section in observation_output.get("tag_sections", []) or []:
-        label = _safe_string(section.get("tag", ""))
-        if not label:
-            continue
-        examples = []
-        for item in (observation_output.get("_examples_by_tag", {}) or {}).get(label, []):
-            examples.append(
-                {
-                    "headline": _safe_string(item.get("headline", "")),
-                    "url": _safe_string(item.get("url", "")),
-                    "metrics": _format_metric_parts(
-                        [
-                            ("Outlet", _safe_string(item.get("outlet", ""))),
-                            ("Media Type", _safe_string(item.get("example_type", ""))),
-                            ("Mentions", int(item.get("mentions", 0) or 0)),
-                            ("Impressions", int(item.get("impressions", 0) or 0)),
-                            ("Effective Reach", int(item.get("effective_reach", 0) or 0)),
-                        ]
-                    ),
-                }
-            )
-        sections.append(
-            {
-                "title": label,
-                "summary": _safe_string(section.get("observation", "")),
-                "examples": examples,
-            }
-        )
-    return overall, sections
+    return _iter_observation_report_sections(
+        session_state.get("tagging_observation_output", {}) or {},
+        sections_key="tag_sections",
+        label_key="tag",
+        summary_key="observation",
+        examples_key="_examples_by_tag",
+    )
+
+
+def _iter_rapid_tag_report_sections(session_state) -> tuple[str, list[dict[str, Any]]]:
+    return _iter_observation_report_sections(
+        session_state.get("rapid_tag_observation_output", {}) or {},
+        sections_key="tag_sections",
+        label_key="tag",
+        summary_key="observation",
+        examples_key="_examples_by_tag",
+    )
+
+
+def _docx_add_observation_sections(document, *, heading: str, overall: str, sections: list[dict[str, Any]]) -> bool:
+    if not overall and not sections:
+        return False
+    document.add_heading(heading, level=1)
+    if overall:
+        document.add_heading("Overall Observations", level=2)
+        document.add_paragraph(overall)
+    for section in sections:
+        document.add_heading(section["title"], level=2)
+        if section.get("summary"):
+            document.add_paragraph(section["summary"])
+        if section.get("examples"):
+            p = document.add_paragraph()
+            p.add_run("Representative examples").bold = True
+            for example in section["examples"]:
+                _docx_add_example_block(document, example["headline"], example.get("url", ""), example.get("metrics", ""))
+    return True
+
+
 
 
 def _iter_top_story_blocks(session_state) -> tuple[str, list[dict[str, Any]]]:
@@ -1578,38 +1978,40 @@ def build_report_copy_docx_bytes(session_state) -> bytes:
             _docx_add_top_story_block(document, block)
 
     sentiment_overall, sentiment_sections = _iter_sentiment_report_sections(session_state)
-    if sentiment_overall or sentiment_sections:
+    if _docx_add_observation_sections(
+        document,
+        heading="Sentiment Insights",
+        overall=sentiment_overall,
+        sections=sentiment_sections,
+    ):
         has_content = True
-        document.add_heading("Sentiment Insights", level=1)
-        if sentiment_overall:
-            document.add_heading("Overall Observations", level=2)
-            document.add_paragraph(sentiment_overall)
-        for section in sentiment_sections:
-            document.add_heading(section["title"], level=2)
-            if section.get("summary"):
-                document.add_paragraph(section["summary"])
-            if section.get("examples"):
-                p = document.add_paragraph()
-                p.add_run("Representative examples").bold = True
-                for example in section["examples"]:
-                    _docx_add_example_block(document, example["headline"], example.get("url", ""), example.get("metrics", ""))
+
+    rapid_sentiment_overall, rapid_sentiment_sections = _iter_rapid_sentiment_report_sections(session_state)
+    if _docx_add_observation_sections(
+        document,
+        heading="Rapid Sentiment Insights",
+        overall=rapid_sentiment_overall,
+        sections=rapid_sentiment_sections,
+    ):
+        has_content = True
 
     tag_overall, tag_sections = _iter_tag_report_sections(session_state)
-    if tag_overall or tag_sections:
+    if _docx_add_observation_sections(
+        document,
+        heading="Tag Insights",
+        overall=tag_overall,
+        sections=tag_sections,
+    ):
         has_content = True
-        document.add_heading("Tag Insights", level=1)
-        if tag_overall:
-            document.add_heading("Overall Observations", level=2)
-            document.add_paragraph(tag_overall)
-        for section in tag_sections:
-            document.add_heading(section["title"], level=2)
-            if section.get("summary"):
-                document.add_paragraph(section["summary"])
-            if section.get("examples"):
-                p = document.add_paragraph()
-                p.add_run("Representative examples").bold = True
-                for example in section["examples"]:
-                    _docx_add_example_block(document, example["headline"], example.get("url", ""), example.get("metrics", ""))
+
+    rapid_tag_overall, rapid_tag_sections = _iter_rapid_tag_report_sections(session_state)
+    if _docx_add_observation_sections(
+        document,
+        heading="Rapid Tag Insights",
+        overall=rapid_tag_overall,
+        sections=rapid_tag_sections,
+    ):
+        has_content = True
 
     regions_sections = _iter_regions_report_sections(session_state)
     if regions_sections:
@@ -1639,7 +2041,10 @@ def build_report_copy_docx_bytes(session_state) -> bytes:
 
 # ---------- Workbook builder ----------
 
-def build_clean_workbook_bytes(session_state) -> bytes:
+def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns: bool | None = None) -> bytes:
+    if include_labeling_audit_columns is None:
+        include_labeling_audit_columns = bool(session_state.get("include_labeling_audit_columns", False))
+
     traditional, excluded_rows, excluded_counts = build_scoped_traditional_export_bundle(session_state)
     social = session_state.get("df_social", pd.DataFrame()).copy()
     top_stories = session_state.get("added_df", pd.DataFrame()).copy()
@@ -1653,7 +2058,11 @@ def build_clean_workbook_bytes(session_state) -> bytes:
 
     original_ave_col = session_state.get("original_ave_col") or "AVE"
 
-    traditional = merge_full_scope_ai_columns_into_clean_trad(session_state, traditional)
+    traditional = merge_full_scope_ai_columns_into_clean_trad(
+        session_state,
+        traditional,
+        include_labeling_audit_columns=include_labeling_audit_columns,
+    )
     traditional = explode_tags(traditional)
 
     social = explode_tags(social)
@@ -1672,7 +2081,11 @@ def build_clean_workbook_bytes(session_state) -> bytes:
         if len(traditional) > 0:
             trad_export = rename_ave(traditional.copy(), original_ave_col=original_ave_col)
             trad_export = add_mapped_outlet_column(trad_export, outlet_rollup_map=outlet_rollup_map)
-            trad_export = remove_inactive_workflow_columns(trad_export, session_state)
+            trad_export = remove_inactive_workflow_columns(
+                trad_export,
+                session_state,
+                include_labeling_audit_columns=include_labeling_audit_columns,
+            )
             if "Impressions" in trad_export.columns:
                 trad_export = trad_export.sort_values(by=["Impressions"], ascending=False)
             trad_export.to_excel(writer, sheet_name="CLEAN TRAD", startrow=1, header=False, index=False)
@@ -1684,7 +2097,11 @@ def build_clean_workbook_bytes(session_state) -> bytes:
         if len(social) > 0:
             social_export = rename_ave(social.copy(), original_ave_col=original_ave_col)
             social_export = add_mapped_outlet_column(social_export, outlet_rollup_map=outlet_rollup_map)
-            social_export = remove_inactive_workflow_columns(social_export, session_state)
+            social_export = remove_inactive_workflow_columns(
+                social_export,
+                session_state,
+                include_labeling_audit_columns=include_labeling_audit_columns,
+            )
             if "Impressions" in social_export.columns:
                 social_export = social_export.sort_values(by=["Impressions"], ascending=False)
             social_export.to_excel(writer, sheet_name="CLEAN SOCIAL", startrow=1, header=False, index=False)
@@ -1692,7 +2109,10 @@ def build_clean_workbook_bytes(session_state) -> bytes:
             ws.set_tab_color("black")
             cleaned_exports.append(("CLEAN SOCIAL", social_export, ws))
 
-        shared_sample_export = rename_ave(build_shared_sample_ai_export(session_state), original_ave_col=original_ave_col)
+        shared_sample_export = rename_ave(
+            build_shared_sample_ai_export(session_state, include_audit=include_labeling_audit_columns),
+            original_ave_col=original_ave_col,
+        )
 
         # SHARED SAMPLED AI RESULTS
         if not shared_sample_export.empty:
@@ -1703,7 +2123,10 @@ def build_clean_workbook_bytes(session_state) -> bytes:
 
         # TAGGING SAMPLE
         if tagging_uses_sample_export(session_state) and shared_sample_export.empty:
-            tagging_export = rename_ave(build_tagging_sample_export(session_state), original_ave_col=original_ave_col)
+            tagging_export = rename_ave(
+                build_tagging_sample_export(session_state, include_audit=include_labeling_audit_columns),
+                original_ave_col=original_ave_col,
+            )
             if not tagging_export.empty:
                 tagging_export.to_excel(writer, sheet_name="TAGGING SAMPLE", header=True, index=False)
                 ws = writer.sheets["TAGGING SAMPLE"]
@@ -1712,12 +2135,26 @@ def build_clean_workbook_bytes(session_state) -> bytes:
 
         # SENTIMENT SAMPLE
         if sentiment_uses_sample_export(session_state) and shared_sample_export.empty:
-            sentiment_export = rename_ave(build_sentiment_sample_export(session_state), original_ave_col=original_ave_col)
+            sentiment_export = rename_ave(
+                build_sentiment_sample_export(session_state, include_audit=include_labeling_audit_columns),
+                original_ave_col=original_ave_col,
+            )
             if not sentiment_export.empty:
                 sentiment_export.to_excel(writer, sheet_name="SENTIMENT SAMPLE", header=True, index=False)
                 ws = writer.sheets["SENTIMENT SAMPLE"]
                 ws.set_tab_color("#7f8c8d")
                 cleaned_exports.append(("SENTIMENT SAMPLE", sentiment_export, ws))
+
+        # RAPID LABELING SAMPLE
+        jev_sentiment_export = rename_ave(
+            build_jev_sentiment_sample_export(session_state, include_audit=include_labeling_audit_columns),
+            original_ave_col=original_ave_col,
+        )
+        if not jev_sentiment_export.empty:
+            jev_sentiment_export.to_excel(writer, sheet_name=RAPID_LABELING_SAMPLE_SHEET_NAME, header=True, index=False)
+            ws = writer.sheets[RAPID_LABELING_SAMPLE_SHEET_NAME]
+            ws.set_tab_color("#9b59b6")
+            cleaned_exports.append((RAPID_LABELING_SAMPLE_SHEET_NAME, jev_sentiment_export, ws))
 
         # AUTHORS
         authors = build_author_insights_export_table(session_state, df_traditional=traditional)
@@ -1785,7 +2222,11 @@ def build_clean_workbook_bytes(session_state) -> bytes:
         if len(dupes) > 0:
             dupes_export = rename_ave(dupes.copy(), original_ave_col=original_ave_col)
             dupes_export = add_mapped_outlet_column(dupes_export, outlet_rollup_map=outlet_rollup_map)
-            dupes_export = remove_inactive_workflow_columns(dupes_export, session_state)
+            dupes_export = remove_inactive_workflow_columns(
+                dupes_export,
+                session_state,
+                include_labeling_audit_columns=include_labeling_audit_columns,
+            )
             dupes_export.to_excel(writer, sheet_name="DLTD DUPES", header=True, index=False)
             ws = writer.sheets["DLTD DUPES"]
             ws.set_tab_color("#c26f4f")
@@ -1795,7 +2236,11 @@ def build_clean_workbook_bytes(session_state) -> bytes:
         if len(excluded_rows) > 0:
             excluded_export = rename_ave(excluded_rows.copy(), original_ave_col=original_ave_col)
             excluded_export = add_mapped_outlet_column(excluded_export, outlet_rollup_map=outlet_rollup_map)
-            excluded_export = remove_inactive_workflow_columns(excluded_export, session_state)
+            excluded_export = remove_inactive_workflow_columns(
+                excluded_export,
+                session_state,
+                include_labeling_audit_columns=include_labeling_audit_columns,
+            )
             if "Impressions" in excluded_export.columns:
                 excluded_export = excluded_export.sort_values(by=["Impressions"], ascending=False)
             excluded_export.to_excel(writer, sheet_name="EXCLUDED ROWS", header=True, index=False)
@@ -1806,7 +2251,11 @@ def build_clean_workbook_bytes(session_state) -> bytes:
         # RAW
         raw_export = rename_ave(raw.copy(), original_ave_col=original_ave_col)
         raw_export = add_mapped_outlet_column(raw_export, outlet_rollup_map=outlet_rollup_map)
-        raw_export = remove_inactive_workflow_columns(raw_export, session_state)
+        raw_export = remove_inactive_workflow_columns(
+            raw_export,
+            session_state,
+            include_labeling_audit_columns=include_labeling_audit_columns,
+        )
         raw_export.drop(["Mentions"], axis=1, inplace=True, errors="ignore")
         raw_export.to_excel(writer, sheet_name="RAW", header=True, index=False)
         ws = writer.sheets["RAW"]
@@ -1826,7 +2275,15 @@ def build_clean_workbook_bytes(session_state) -> bytes:
         cleaned_exports.append(("EXPORT METADATA", metadata_export, ws))
 
         # Apply Excel table structures + formatting
-        row_level_sheets = {"CLEAN TRAD", "CLEAN SOCIAL", "TAGGING SAMPLE", "SENTIMENT SAMPLE", "SAMPLED AI RESULTS", "DLTD DUPES"}
+        row_level_sheets = {
+            "CLEAN TRAD",
+            "CLEAN SOCIAL",
+            "TAGGING SAMPLE",
+            "SENTIMENT SAMPLE",
+            "SAMPLED AI RESULTS",
+            RAPID_LABELING_SAMPLE_SHEET_NAME,
+            "DLTD DUPES",
+        }
 
         for sheet_name, clean_df, ws in cleaned_exports:
             if clean_df.empty:

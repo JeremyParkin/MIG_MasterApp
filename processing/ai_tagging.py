@@ -16,6 +16,8 @@ from utils.api_meter import add_api_usage, extract_usage_tokens
 DEFAULT_TAGGING_MODEL = "gpt-5.6-luna"
 DEFAULT_TAGGING_OBSERVATION_MODEL = "gpt-5.6-luna"
 DEFAULT_TAGGING_REVIEW_MODEL = "gpt-5.6-luna"
+DEFAULT_TAGGING_MODE = "Single best tag"
+TAGGING_MODES = ("Single best tag", "Multiple applicable tags")
 FIRST_PASS_REASONING_EFFORT = "low"
 SECOND_OPINION_REASONING_EFFORT = "medium"
 CHAT_COMPLETIONS_TOOL_REASONING_EFFORT = "none"
@@ -49,14 +51,41 @@ _TAGGING_WORKFLOW_DEFAULTS: dict[str, Any] = {
 
 def init_ai_tagging_state(session_state) -> None:
     session_state["tag_definitions"] = ensure_canonical_tag_definitions(session_state.get("tag_definitions", {}))
-    session_state.setdefault("tagging_mode", "Single best tag")
+    session_state["tagging_mode"] = normalize_tagging_mode(session_state.get("tagging_mode", DEFAULT_TAGGING_MODE))
     session_state["tags_text"] = remove_reserved_tag_from_text(session_state.get("tags_text", ""))
     session_state.setdefault("tagging_observation_output", None)
     session_state.setdefault("tagging_review_idx", 0)
     session_state.setdefault("tagging_review_low_conf_threshold", DEFAULT_TAGGING_REVIEW_CONFIDENCE_THRESHOLD)
     if session_state.get("tagging_review_low_conf_threshold") == 90:
         session_state["tagging_review_low_conf_threshold"] = DEFAULT_TAGGING_REVIEW_CONFIDENCE_THRESHOLD
-    session_state.setdefault("tagging_pre_review_n", DEFAULT_TAGGING_REVIEW_BATCH_SIZE)
+
+
+def normalize_tagging_mode(mode: Any) -> str:
+    mode_text = str(mode or "").strip()
+    return mode_text if mode_text in TAGGING_MODES else DEFAULT_TAGGING_MODE
+
+
+def get_configured_tagging_mode(session_state) -> str:
+    return normalize_tagging_mode(session_state.get("tagging_mode", DEFAULT_TAGGING_MODE))
+
+
+def uses_multi_tag_review_controls(tagging_mode: Any) -> bool:
+    return normalize_tagging_mode(tagging_mode) == "Multiple applicable tags"
+
+
+def prepare_tagging_mode_widget_state(session_state, *, widget_key: str = "tagging_mode_input") -> str:
+    mode = get_configured_tagging_mode(session_state)
+    if widget_key not in session_state:
+        session_state[widget_key] = mode
+    else:
+        session_state[widget_key] = normalize_tagging_mode(session_state[widget_key])
+    return mode
+
+
+def commit_tagging_mode_from_widget(session_state, *, widget_key: str = "tagging_mode_input") -> str:
+    mode = normalize_tagging_mode(session_state.get(widget_key, get_configured_tagging_mode(session_state)))
+    session_state["tagging_mode"] = mode
+    return mode
 
 
 def initialize_tagging_workflow_columns(df: pd.DataFrame) -> pd.DataFrame:

@@ -12,6 +12,7 @@ from processing.download_exports import (
     build_clean_workbook_bytes,
     build_report_copy_docx_bytes,
     build_scoped_traditional_export_bundle,
+    labeling_audit_available,
 )
 from processing.notebooklm_exports import build_notebooklm_zip
 
@@ -28,13 +29,25 @@ if not st.session_state.get("standard_step", False):
 st.divider()
 st.subheader("Clean data workbook")
 
+if labeling_audit_available(st.session_state):
+    st.checkbox(
+        "Include labeling audit columns",
+        value=False,
+        key="include_labeling_audit_columns",
+    )
+else:
+    st.session_state.include_labeling_audit_columns = False
+
 had_clean_workbook = "clean_excel_bytes" in st.session_state
 
 build_xlsx = st.button("Build cleaned data workbook", key="build_clean_workbook")
 if build_xlsx:
     try:
         with st.spinner("Building workbook now..."):
-            st.session_state.clean_excel_bytes = build_clean_workbook_bytes(st.session_state)
+            st.session_state.clean_excel_bytes = build_clean_workbook_bytes(
+                st.session_state,
+                include_labeling_audit_columns=bool(st.session_state.get("include_labeling_audit_columns", False)),
+            )
             st.session_state.clean_excel_built_at = format_local_timestamp()
             action_word = "rebuilt" if had_clean_workbook else "built"
             st.success(f"Cleaned workbook {action_word} at {st.session_state.clean_excel_built_at}")

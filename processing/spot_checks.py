@@ -13,6 +13,7 @@ from openai import OpenAI
 from processing.ai_sentiment import (
     CHAT_COMPLETIONS_TOOL_REASONING_EFFORT,
     SECOND_OPINION_REASONING_EFFORT,
+    annotate_entity_match_conflict,
 )
 from processing.sentiment_config import get_negative_priority_weights, get_sentiment_labels
 from utils.api_meter import extract_usage_tokens
@@ -27,6 +28,7 @@ W_MENTIONS = 0.15
 W_IMP = 0.15
 W_ER = 0.10
 W_LOWCF = 0.10
+W_ENTITY_MATCH_CONFLICT = 1.00
 DEFAULT_CONF_THRESH = 75
 
 DEFAULT_SECOND_OPINION_MODEL = "gpt-5.6-luna"
@@ -294,6 +296,14 @@ def compute_candidates(
 
     pool["AI_UPPER"] = pool["AI Sentiment"].astype(str).str.upper().str.strip()
     pool["AI_CONF"] = pd.to_numeric(pool["AI Sentiment Confidence"], errors="coerce").fillna(100)
+    pool["ENTITY_MATCH_CONFLICT"] = (
+        pool.get("AI Entity Match Conflict", pd.Series(index=pool.index, dtype="object"))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+        .eq("YES")
+    )
     pool["GROUP_CT"] = pd.to_numeric(pool.get("Group Count", 1), errors="coerce").fillna(1)
     pool["MENTIONS_NUM"] = pd.to_numeric(pool.get("Mentions", 0), errors="coerce").fillna(0)
     pool["IMP_NUM"] = pd.to_numeric(pool.get("Impressions", 0), errors="coerce").fillna(0)
@@ -322,12 +332,13 @@ def compute_candidates(
         W_MENTIONS * pool["MENTIONS_NORM"] +
         W_IMP * pool["IMP_NORM"] +
         W_ER * pool["ER_NORM"] +
-        W_LOWCF * pool["LOWCONF"]
+        W_LOWCF * pool["LOWCONF"] +
+        W_ENTITY_MATCH_CONFLICT * pool["ENTITY_MATCH_CONFLICT"].astype(float)
     )
 
     pool = pool.sort_values(
-        ["SCORE", "GROUP_CT", "MENTIONS_NUM", "IMP_NUM", "ER_NUM"],
-        ascending=[False, False, False, False, False],
+        ["ENTITY_MATCH_CONFLICT", "SCORE", "GROUP_CT", "MENTIONS_NUM", "IMP_NUM", "ER_NUM"],
+        ascending=[False, False, False, False, False, False],
     ).reset_index(drop=True)
     return pool
 
@@ -530,6 +541,8 @@ def ensure_review_columns(
         "Review AI Sentiment": pd.NA,
         "Review AI Confidence": pd.NA,
         "Review AI Rationale": pd.NA,
+        "Review Entity Match Conflict": pd.NA,
+        "Review Entity Match Conflict Reason": pd.NA,
         "AI Agreement": pd.NA,
         "Needs Human Review": pd.NA,
         "Assigned Sentiment Source": pd.NA,
@@ -550,6 +563,8 @@ def write_review_opinion_to_group(
     review_label: str | None,
     review_confidence,
     review_rationale: str | None,
+    entity_match_conflict: str | None = None,
+    entity_match_conflict_reason: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     unique = df_unique.copy()
     grouped = df_grouped.copy()
@@ -559,6 +574,8 @@ def write_review_opinion_to_group(
         df.loc[mask, "Review AI Sentiment"] = review_label
         df.loc[mask, "Review AI Confidence"] = review_confidence
         df.loc[mask, "Review AI Rationale"] = review_rationale
+        df.loc[mask, "Review Entity Match Conflict"] = entity_match_conflict or "No"
+        df.loc[mask, "Review Entity Match Conflict Reason"] = entity_match_conflict_reason
 
     return unique, grouped
 
@@ -704,9 +721,7 @@ def second_opinion_worker(
     if result is None:
         return idx, {}, note or "Second opinion failed.", 0, 0
 
-    from processing.ai_sentiment import enforce_not_relevant_direct_mention_rule
-
-    result = enforce_not_relevant_direct_mention_rule(
+    result = annotate_entity_match_conflict(
         result,
         headline=headline,
         snippet=snippet,
@@ -785,6 +800,8 @@ def run_batch_second_opinion(
                     review_label,
                     review_conf,
                     review_rsn,
+                    result.get("entity_match_conflict", "No"),
+                    result.get("entity_match_conflict_reason"),
                 )
 
                 unique, grouped = apply_review_flags_to_group(

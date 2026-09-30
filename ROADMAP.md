@@ -61,10 +61,9 @@ This file is a lightweight parking lot for product and workflow ideas that are w
   - print outlet metrics
   - updateable reference records so each run improves future runs
 
-### Top Stories / Example Link Validation
-- Expand the new Top Stories validation step based on analyst usage.
-- Keep improving source rotation so saved stories can quickly swap to the next-best source when a link is weak, dead, or low quality.
-- Consider smarter source ranking for story families, favoring stronger canonical sources over thin syndication pages.
+### Top Stories Representative-Source Ranking
+- Validation and within-story source rotation are implemented. Revisit their ordering only after analyst usage identifies a clear ranking problem.
+- Consider smarter source ranking for story families, favoring stronger canonical sources over thin syndication pages while preserving the current Prime Example as the initial source.
 
 ### Cross-Workflow Link Review
 - Consider a shared late-stage `Link Review` step near the end of the workflow or before Download.

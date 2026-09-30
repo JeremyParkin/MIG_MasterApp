@@ -111,6 +111,23 @@ def _clean_list(values: list[str] | None) -> list[str]:
     return out
 
 
+def normalize_analysis_context_terms(values: list[str] | tuple[str, ...] | None) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        raw = str(value or "")
+        for part in re.split(r"[,\n\r]+", raw):
+            cleaned = part.strip()
+            if not cleaned:
+                continue
+            key = _match_key(cleaned)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(cleaned)
+    return out
+
+
 def split_coverage_flags(value: object) -> list[str]:
     raw = str(value or "").strip()
     if not raw:
@@ -1026,9 +1043,9 @@ def apply_analysis_context_suggestions(session_state, suggestions: dict[str, Any
         if _match_key(item["name"]) not in {client_key, primary_key}
     ]
 
-    merged_aliases = _clean_list(payload["alternate_names"] + alias_names)
-    merged_spokespeople = _clean_list(payload["spokespeople"] + spokesperson_names)
-    merged_products = _clean_list(payload["products"] + product_names)
+    merged_aliases = normalize_analysis_context_terms(payload["alternate_names"] + alias_names)
+    merged_spokespeople = normalize_analysis_context_terms(payload["spokespeople"] + spokesperson_names)
+    merged_products = normalize_analysis_context_terms(payload["products"] + product_names)
 
     session_state.analysis_alternate_names = merged_aliases
     session_state.analysis_spokespeople = merged_spokespeople
@@ -1061,24 +1078,24 @@ def init_analysis_context_state(session_state) -> None:
             primary_seed = cleaned
             break
 
-    alternate_seed = _clean_list(
+    alternate_seed = normalize_analysis_context_terms(
         session_state.get("analysis_alternate_names")
         or session_state.get("ui_alternate_names")
         or []
     )
-    spokes_seed = _clean_list(
+    spokes_seed = normalize_analysis_context_terms(
         session_state.get("analysis_spokespeople")
         or session_state.get("ui_spokespeople")
         or session_state.get("top_story_spokespeople")
         or []
     )
-    products_seed = _clean_list(
+    products_seed = normalize_analysis_context_terms(
         session_state.get("analysis_products")
         or session_state.get("ui_products")
         or session_state.get("top_story_products")
         or []
     )
-    highlight_keywords_seed = _clean_list(
+    highlight_keywords_seed = normalize_analysis_context_terms(
         session_state.get("analysis_highlight_keywords")
         or []
     )
@@ -1159,10 +1176,10 @@ def save_analysis_context(
 ) -> None:
     client_name = str(client_name or "").strip()
     primary_names = _clean_list([primary_name])
-    alternate_names = _clean_list(alternate_names)
-    spokespeople = _clean_list(spokespeople)
-    products = _clean_list(products)
-    highlight_keywords = _clean_list(highlight_keywords)
+    alternate_names = normalize_analysis_context_terms(alternate_names)
+    spokespeople = normalize_analysis_context_terms(spokespeople)
+    products = normalize_analysis_context_terms(products)
+    highlight_keywords = normalize_analysis_context_terms(highlight_keywords)
     general_guidance = str(general_guidance or "").strip()
     sentiment_guidance = str(sentiment_guidance or "").strip()
 
@@ -1229,10 +1246,10 @@ def get_analysis_context_payload(session_state) -> dict[str, Any]:
     return {
         "client_name": client_name,
         "primary_name": primary_names[0] if primary_names else "",
-        "alternate_names": _clean_list(session_state.get("analysis_alternate_names", [])),
-        "spokespeople": _clean_list(session_state.get("analysis_spokespeople", [])),
-        "products": _clean_list(session_state.get("analysis_products", [])),
-        "highlight_keywords": _clean_list(session_state.get("analysis_highlight_keywords", [])),
+        "alternate_names": normalize_analysis_context_terms(session_state.get("analysis_alternate_names", [])),
+        "spokespeople": normalize_analysis_context_terms(session_state.get("analysis_spokespeople", [])),
+        "products": normalize_analysis_context_terms(session_state.get("analysis_products", [])),
+        "highlight_keywords": normalize_analysis_context_terms(session_state.get("analysis_highlight_keywords", [])),
         "general_guidance": general_guidance,
         "sentiment_guidance": sentiment_guidance,
         "guidance": general_guidance,

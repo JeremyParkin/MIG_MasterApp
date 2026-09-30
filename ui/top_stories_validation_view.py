@@ -14,12 +14,12 @@ def render_top_stories_validation() -> None:
     warnings.filterwarnings("ignore")
     top_stories_module = importlib.reload(top_stories_module)
 
-    build_prime_grouped_story_candidates = top_stories_module.build_prime_grouped_story_candidates
     build_story_identity_key = top_stories_module.build_story_identity_key
-    build_source_candidate_table_from_candidates = top_stories_module.build_source_candidate_table_from_candidates
+    build_validation_source_candidate_table = top_stories_module.build_validation_source_candidate_table
+    cleanup_top_story_validation_state_after_removal = top_stories_module.cleanup_top_story_validation_state_after_removal
     normalize_top_stories_df = top_stories_module.normalize_top_stories_df
-    parse_source_group_ids = top_stories_module.parse_source_group_ids
-    rotate_saved_story_source_from_candidates = top_stories_module.rotate_saved_story_source_from_candidates
+    remove_saved_top_story = top_stories_module.remove_saved_top_story
+    rotate_saved_story_source = top_stories_module.rotate_saved_story_source
     strip_html_tags = top_stories_module.strip_html_tags
 
     st.markdown(
@@ -39,7 +39,7 @@ def render_top_stories_validation() -> None:
     )
 
     st.subheader("Step 2: Top Story Validation")
-    st.caption("Review saved story links and rotate to the next-best source when the current example URL is weak or unavailable.")
+    st.caption("Review saved story links, rotate weak examples, remove unsuitable saved stories, or confirm the source to keep.")
 
     if len(st.session_state.get("added_df", [])) == 0:
         st.error("Please save your TOP STORIES before trying this step.")
@@ -54,26 +54,6 @@ def render_top_stories_validation() -> None:
     source_df = grouped_source_df.copy()
     if "Type" in source_df.columns:
         source_df = source_df[~source_df["Type"].fillna("").astype(str).str.upper().isin(SOCIAL_TYPES)].copy()
-
-    source_signature = (
-        len(grouped_source_df),
-        len(source_df),
-        tuple(source_df.columns.tolist()),
-        int(pd.to_numeric(source_df.get("Mentions", pd.Series(dtype="float64")), errors="coerce").fillna(0).sum()),
-        int(pd.to_numeric(source_df.get("Impressions", pd.Series(dtype="float64")), errors="coerce").fillna(0).sum()),
-        int(pd.to_numeric(source_df.get("Effective Reach", pd.Series(dtype="float64")), errors="coerce").fillna(0).sum()),
-        int(pd.to_numeric(source_df.get("Prime Example", pd.Series(dtype="float64")), errors="coerce").fillna(0).sum()),
-    )
-    cached_signature = st.session_state.get("top_stories_validation_prime_candidates_signature")
-    if cached_signature == source_signature and isinstance(
-        st.session_state.get("top_stories_validation_prime_candidates"),
-        pd.DataFrame,
-    ):
-        prime_source_candidates = st.session_state.top_stories_validation_prime_candidates
-    else:
-        prime_source_candidates = build_prime_grouped_story_candidates(source_df)
-        st.session_state.top_stories_validation_prime_candidates = prime_source_candidates
-        st.session_state.top_stories_validation_prime_candidates_signature = source_signature
 
     if saved_df.empty:
         st.info("No saved top stories available for validation.")
@@ -141,11 +121,11 @@ def render_top_stories_validation() -> None:
     row = queue_df.iloc[current_index]
     story_group_id = row.get("Group ID")
     story_identity_key = str(row.get("_story_identity_key", "") or "").strip()
-    source_ids = parse_source_group_ids(row.get("Source Group IDs", ""), fallback_group_id=story_group_id)
-    source_candidates = build_source_candidate_table_from_candidates(
-        candidates=prime_source_candidates,
+    source_candidates = build_validation_source_candidate_table(
+        source_df,
         source_group_ids=row.get("Source Group IDs", ""),
         fallback_group_id=story_group_id,
+        current_source=row.to_dict(),
         require_url_if_available=bool(str(row.get("Example URL", "") or "").strip()),
     )
     source_count = max(len(source_candidates), 1)
@@ -186,24 +166,38 @@ def render_top_stories_validation() -> None:
         st.caption(" | ".join(meta_parts))
         st.caption(f"Source option {current_rank} of {source_count}")
 
-        action1, action2, action3, action4 = st.columns([1, 1, 1, 2], gap="small")
+        action1, action2, action3, action4 = st.columns(4, gap="small")
         with action1:
             if current_url:
-                st.link_button("Open current link", current_url, use_container_width=True)
+                st.link_button("Open current link", current_url, use_container_width=True, icon=":material/open_in_new:")
             else:
-                st.button("Open current link", key=f"top_story_open_link_disabled_{current_index}", disabled=True, use_container_width=True)
+                st.button("Open current link", key=f"top_story_open_link_disabled_{current_index}", disabled=True, use_container_width=True, icon=":material/open_in_new:")
         with action2:
-            if st.button("Try next source", key=f"top_story_next_source_{current_index}", disabled=source_count <= 1):
-                st.session_state.added_df = rotate_saved_story_source_from_candidates(
+            if st.button("Try next source", key=f"top_story_next_source_{current_index}", disabled=source_count <= 1, icon=":material/sync:", use_container_width=True):
+                st.session_state.added_df = rotate_saved_story_source(
                     saved_df=st.session_state.added_df.copy(),
-                    candidates=prime_source_candidates,
+                    source_df=source_df,
                     story_group_id=story_group_id,
                     step=1,
                 )
                 st.session_state.top_story_observation_output = None
                 st.rerun()
         with action3:
-            if st.button("Confirm source", key=f"top_story_confirm_source_{current_index}", use_container_width=True):
+            if st.button("Remove story", key=f"top_story_remove_story_{current_index}", use_container_width=True, icon=":material/delete:"):
+                st.session_state.added_df = remove_saved_top_story(
+                    st.session_state.added_df.copy(),
+                    source_group_ids=row.get("Source Group IDs", ""),
+                    fallback_group_id=story_group_id,
+                )
+                cleanup_top_story_validation_state_after_removal(
+                    st.session_state,
+                    story_identity_key,
+                    current_index=current_index,
+                    remaining_queue_count=max(len(queue_df) - 1, 0),
+                )
+                st.rerun()
+        with action4:
+            if st.button("Confirm source", key=f"top_story_confirm_source_{current_index}", use_container_width=True, icon=":material/check_circle:"):
                 confirmed = {
                     str(key).strip()
                     for key in st.session_state.get("top_stories_validation_confirmed_keys", [])
@@ -214,6 +208,5 @@ def render_top_stories_validation() -> None:
                 st.session_state.top_stories_validation_confirmed_keys = sorted(confirmed)
                 st.session_state.top_stories_validation_index = min(current_index, max(len(queue_df) - 2, 0))
                 st.rerun()
-        with action4:
-            if source_ids:
-                st.caption(f"{len(source_ids)} source instance(s) available in this story family.")
+        if source_count:
+            st.caption(f"{source_count} distinct source option(s) available for this story.")

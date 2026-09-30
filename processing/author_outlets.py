@@ -263,10 +263,20 @@ def apply_author_name_fix(
     session_state.last_author_for_fix = new_name
 
 
-def get_matched_authors_df(search_results, outlets_in_coverage_list) -> tuple[pd.DataFrame, list[str], list[str]]:
+def normalize_author_name(author_name: object) -> str:
+    normalized = unidecode(str(author_name or "").strip()).casefold()
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def get_matched_authors_df(
+    search_results,
+    outlets_in_coverage_list,
+    author_name: str = "",
+) -> tuple[pd.DataFrame, list[str], list[str]]:
     """
     Build dataframe of matched authors from database response.
-    Also returns db_outlets and possibles lists.
+    Also returns db_outlets and possibles lists. Exact normalized author-name
+    matches are listed first, followed by the existing coverage-outlet priority.
     """
     db_outlets: list[str] = []
     possibles: list[str] = []
@@ -301,21 +311,27 @@ def get_matched_authors_df(search_results, outlets_in_coverage_list) -> tuple[pd
 
     matched_authors.loc[matched_authors["Outlet"] == "[Freelancer]", "Outlet"] = "Freelance"
 
+    matching_outlets = set(outlets_in_coverage_list).intersection(set(matched_authors["Outlet"]))
+    normalized_target = normalize_author_name(author_name)
+    matched_authors["_exact_name_match"] = (
+        matched_authors["Name"].map(normalize_author_name).eq(normalized_target)
+        if normalized_target
+        else False
+    )
+    matched_authors["_coverage_outlet_match"] = matched_authors["Outlet"].isin(matching_outlets)
+    matched_authors["_api_order"] = range(len(matched_authors))
+    matched_authors = (
+        matched_authors.sort_values(
+            ["_exact_name_match", "_coverage_outlet_match", "_api_order"],
+            ascending=[False, False, True],
+            kind="stable",
+        )
+        .drop(columns=["_exact_name_match", "_coverage_outlet_match", "_api_order"])
+        .reset_index(drop=True)
+    )
+
     db_outlets = matched_authors["Outlet"].tolist()
     possibles = matched_authors["Outlet"].tolist()
-
-    matching_outlets = set(outlets_in_coverage_list).intersection(set(possibles))
-
-    if len(matching_outlets) > 0 and len(possibles) > 1:
-        matched_authors_top = matched_authors[matched_authors["Outlet"].isin(matching_outlets)].copy()
-        matched_authors_bottom = matched_authors[~matched_authors["Outlet"].isin(matching_outlets)].copy()
-        matched_authors = pd.concat([matched_authors_top, matched_authors_bottom], ignore_index=True)
-        possibles = matched_authors["Outlet"].tolist()
-
-    matching_outlet = [outlet for outlet in outlets_in_coverage_list if outlet in possibles]
-    if len(matching_outlet) == 1:
-        index = possibles.index(matching_outlet[0])
-        possibles = [matching_outlet[0]] + possibles[:index] + possibles[index + 1:]
 
     return matched_authors, db_outlets, possibles
 
@@ -401,6 +417,7 @@ def build_author_outlet_cache_entry(
     matched_authors, db_outlets, possibles = get_matched_authors_df(
         search_results=search_results,
         outlets_in_coverage_list=outlets_in_coverage_list,
+        author_name=author_name,
     )
 
     return {

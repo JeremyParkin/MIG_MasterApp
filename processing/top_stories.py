@@ -596,11 +596,13 @@ def consolidate_top_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_grouped_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Group filtered row-level stories by Group ID and use the canonical Prime Example row
-    as the representative row.
+    Build one Top Stories candidate per canonical Group ID.
+
+    Canonical grouping is authoritative for Top Stories. The Prime Example
+    remains the initial representative source, but Top Stories no longer creates
+    synthetic TOPMERGE identities.
     """
-    result = build_prime_grouped_story_candidates(df)
-    return consolidate_top_story_candidates(result)
+    return build_prime_grouped_story_candidates(df)
 
 
 def parse_source_group_ids(value: Any, fallback_group_id: Any = None) -> list[str]:
@@ -647,6 +649,56 @@ def dedupe_saved_top_stories(saved_df: pd.DataFrame) -> pd.DataFrame:
     return working.drop(columns=["_story_identity_key"], errors="ignore").reset_index(drop=True)
 
 
+def remove_saved_top_story(
+    saved_df: pd.DataFrame,
+    source_group_ids: Any,
+    fallback_group_id: Any = None,
+) -> pd.DataFrame:
+    if saved_df.empty or "Group ID" not in saved_df.columns:
+        return saved_df
+
+    remove_key = build_story_identity_key(source_group_ids, fallback_group_id=fallback_group_id)
+    if not remove_key:
+        return saved_df
+
+    working = saved_df.copy()
+    saved_source_ids = (
+        working["Source Group IDs"]
+        if "Source Group IDs" in working.columns
+        else pd.Series(index=working.index, data="")
+    )
+    working["_story_identity_key"] = [
+        build_story_identity_key(saved_source_ids.iloc[idx], working.iloc[idx].get("Group ID"))
+        for idx in range(len(working))
+    ]
+    working = working[working["_story_identity_key"].fillna("").astype(str).str.strip().ne(remove_key)].copy()
+    return working.drop(columns=["_story_identity_key"], errors="ignore").reset_index(drop=True)
+
+
+def cleanup_top_story_validation_state_after_removal(
+    session_state,
+    story_identity_key: str,
+    *,
+    current_index: int = 0,
+    remaining_queue_count: int = 0,
+) -> None:
+    removed_key = str(story_identity_key or "").strip()
+    confirmed = {
+        str(key).strip()
+        for key in session_state.get("top_stories_validation_confirmed_keys", [])
+        if str(key).strip()
+    }
+    if removed_key:
+        confirmed.discard(removed_key)
+    session_state["top_stories_validation_confirmed_keys"] = sorted(confirmed)
+    session_state["top_story_observation_output"] = None
+    session_state.pop("top_stories_validation_saved_signature", None)
+    session_state["top_stories_validation_index"] = min(
+        max(int(current_index or 0), 0),
+        max(int(remaining_queue_count or 0) - 1, 0),
+    )
+
+
 def build_source_candidate_table(
     df: pd.DataFrame,
     source_group_ids: Any,
@@ -658,6 +710,150 @@ def build_source_candidate_table(
         source_group_ids=source_group_ids,
         fallback_group_id=fallback_group_id,
     )
+
+
+def _normalize_source_url(value: Any) -> str:
+    raw = "" if value is None or pd.isna(value) else str(value)
+    return re.sub(r"\s+", "", raw).strip().lower()
+
+
+def _source_candidate_fallback_key(row: pd.Series) -> str:
+    parts = [
+        str(row.get("Outlet", "") or "").strip().casefold(),
+        str(row.get("Type", "") or "").strip().casefold(),
+        str(pd.to_datetime(row.get("Date", pd.NaT), errors="coerce").date())
+        if pd.notna(pd.to_datetime(row.get("Date", pd.NaT), errors="coerce"))
+        else "",
+        _normalize_top_story_headline(str(row.get("Headline", "") or "")),
+        _top_story_snippet_fingerprint(str(row.get("Snippet", "") or "")),
+    ]
+    return "fallback::" + "|".join(parts)
+
+
+def _source_candidate_ids_for_validation(source_group_ids: Any, fallback_group_id: Any = None) -> list[str]:
+    fallback = "" if fallback_group_id is None or pd.isna(fallback_group_id) else str(fallback_group_id).strip()
+    if fallback and not fallback.startswith("TOPMERGE::"):
+        return [fallback]
+    return parse_source_group_ids(source_group_ids, fallback_group_id=fallback_group_id)
+
+
+def build_validation_source_candidate_table(
+    source_df: pd.DataFrame,
+    source_group_ids: Any,
+    fallback_group_id: Any = None,
+    *,
+    current_source: dict[str, Any] | None = None,
+    require_url_if_available: bool = False,
+) -> pd.DataFrame:
+    source_df = normalize_top_stories_df(source_df)
+    if source_df.empty or "Group ID" not in source_df.columns:
+        return _empty_top_story_candidate_df()
+
+    source_ids = _source_candidate_ids_for_validation(source_group_ids, fallback_group_id=fallback_group_id)
+    if not source_ids:
+        return _empty_top_story_candidate_df()
+
+    current_source = current_source or {}
+    current_url = str(current_source.get("Example URL", "") or "").strip()
+    current_outlet = str(current_source.get("Example Outlet", "") or "").strip()
+    current_type = str(current_source.get("Example Type", "") or "").strip()
+    current_headline = str(current_source.get("Headline", "") or "").strip()
+
+    working = source_df.copy()
+    working["_group_id_key"] = working["Group ID"].astype(str)
+    working = working[working["_group_id_key"].isin(source_ids)].copy()
+    if working.empty:
+        return _empty_top_story_candidate_df()
+
+    for column in ["Headline", "Outlet", "URL", "Type", "Snippet"]:
+        if column not in working.columns:
+            working[column] = ""
+        working[column] = working[column].fillna("").astype(str)
+    if "Date" not in working.columns:
+        working["Date"] = pd.NaT
+
+    working["_has_url"] = working["URL"].fillna("").astype(str).str.strip().ne("")
+    if require_url_if_available and working["_has_url"].any():
+        working = working[working["_has_url"]].copy()
+    if working.empty:
+        return _empty_top_story_candidate_df()
+
+    working["_url_key"] = working["URL"].map(_normalize_source_url)
+    working["_dedupe_key"] = working.apply(
+        lambda row: f"url::{row['_url_key']}" if row["_url_key"] else _source_candidate_fallback_key(row),
+        axis=1,
+    )
+    working["_same_original_group"] = working["_group_id_key"].eq(
+        "" if fallback_group_id is None or pd.isna(fallback_group_id) else str(fallback_group_id).strip()
+    )
+    working["_is_current_source"] = (
+        working["URL"].fillna("").astype(str).str.strip().eq(current_url)
+        & working["Outlet"].fillna("").astype(str).str.strip().eq(current_outlet)
+        & working["Type"].fillna("").astype(str).str.strip().eq(current_type)
+    )
+    if current_headline:
+        working["_is_current_source"] = working["_is_current_source"] | (
+            working["Headline"].fillna("").astype(str).str.strip().eq(current_headline)
+            & working["URL"].fillna("").astype(str).str.strip().eq(current_url)
+        )
+
+    if "Prime Example" in working.columns:
+        working["_is_prime"] = pd.to_numeric(working["Prime Example"], errors="coerce").fillna(0).eq(1)
+    else:
+        working["_is_prime"] = False
+    working["_snippet_len"] = working["Snippet"].fillna("").astype(str).str.len()
+    working["_headline_len"] = working["Headline"].fillna("").astype(str).str.len()
+    for column in ["Effective Reach", "Impressions", "Mentions"]:
+        if column not in working.columns:
+            working[column] = 0
+        working[column] = pd.to_numeric(working[column], errors="coerce").fillna(0)
+    working["_date_dt"] = pd.to_datetime(working["Date"], errors="coerce")
+
+    working = working.sort_values(
+        by=[
+            "_is_current_source",
+            "_same_original_group",
+            "_has_url",
+            "_is_prime",
+            "_snippet_len",
+            "Effective Reach",
+            "Impressions",
+            "Mentions",
+            "_date_dt",
+            "_headline_len",
+        ],
+        ascending=[False, False, False, False, False, False, False, False, False, False],
+        na_position="last",
+        kind="mergesort",
+    )
+    working = working.drop_duplicates(subset=["_dedupe_key"], keep="first").reset_index(drop=True)
+    working["Source Rank"] = range(1, len(working) + 1)
+    working["Source Group IDs"] = working["Group ID"].apply(lambda value: "" if pd.isna(value) else str(value).strip())
+
+    renamed = working.rename(
+        columns={
+            "Outlet": "Example Outlet",
+            "URL": "Example URL",
+            "Type": "Example Type",
+            "Snippet": "Example Snippet",
+        }
+    )
+    display_cols = [
+        "Source Rank",
+        "Group ID",
+        "Headline",
+        "Date",
+        "Mentions",
+        "Impressions",
+        "Effective Reach",
+        "Example Outlet",
+        "Example URL",
+        "Example Type",
+        "Example Snippet",
+        "Source Group IDs",
+    ]
+    existing = [c for c in display_cols if c in renamed.columns]
+    return renamed[existing].copy()
 
 
 def build_source_candidate_table_from_candidates(
@@ -719,13 +915,58 @@ def rotate_saved_story_source(
     story_group_id: Any,
     step: int = 1,
 ) -> pd.DataFrame:
-    candidates = build_prime_grouped_story_candidates(source_df)
-    return rotate_saved_story_source_from_candidates(
-        saved_df=saved_df,
-        candidates=candidates,
-        story_group_id=story_group_id,
-        step=step,
+    if saved_df.empty or "Group ID" not in saved_df.columns:
+        return saved_df
+
+    story_key = "" if pd.isna(story_group_id) else str(story_group_id).strip()
+    if not story_key:
+        return saved_df
+
+    working = saved_df.copy()
+    working["_group_id_key"] = working["Group ID"].astype(str)
+    match_idx = working.index[working["_group_id_key"] == story_key].tolist()
+    if not match_idx:
+        return saved_df
+
+    row_idx = match_idx[0]
+    current_row = working.loc[row_idx]
+    source_candidates = build_validation_source_candidate_table(
+        source_df,
+        source_group_ids=current_row.get("Source Group IDs", ""),
+        fallback_group_id=current_row.get("Group ID"),
+        current_source=current_row.to_dict(),
+        require_url_if_available=bool(str(current_row.get("Example URL", "") or "").strip()),
     )
+    if len(source_candidates) <= 1:
+        return saved_df
+
+    current_url = str(current_row.get("Example URL", "") or "").strip()
+    current_outlet = str(current_row.get("Example Outlet", "") or "").strip()
+    current_type = str(current_row.get("Example Type", "") or "").strip()
+
+    current_pos = 0
+    for pos, (_, candidate) in enumerate(source_candidates.iterrows()):
+        if (
+            str(candidate.get("Example URL", "") or "").strip() == current_url
+            and str(candidate.get("Example Outlet", "") or "").strip() == current_outlet
+            and str(candidate.get("Example Type", "") or "").strip() == current_type
+        ):
+            current_pos = pos
+            break
+
+    next_pos = (current_pos + step) % len(source_candidates)
+    next_candidate = source_candidates.iloc[next_pos]
+
+    for col in ["Headline", "Example Outlet", "Example URL", "Example Type", "Example Snippet", "Date"]:
+        if col in working.columns and col in next_candidate.index:
+            working.at[row_idx, col] = next_candidate.get(col, working.at[row_idx, col])
+
+    for generated_col in ["Chart Callout", "Top Story Summary", "Entity Sentiment Label", "Entity Sentiment Rationale", "Entity Sentiment"]:
+        if generated_col in working.columns:
+            working.at[row_idx, generated_col] = ""
+
+    working = working.drop(columns=["_group_id_key"], errors="ignore")
+    return working
 
 
 def rotate_saved_story_source_from_candidates(

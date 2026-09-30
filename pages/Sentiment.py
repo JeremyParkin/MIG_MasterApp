@@ -28,7 +28,6 @@ from processing.sentiment_config import (
     calculate_representative_sample_size,
     prepare_sentiment_datasets,
     build_sentiment_configuration,
-    reset_sentiment_config_state,
     get_sentiment_source_rows,
     DEFAULT_MAX_FULL_ROWS,
     SENTIMENT_SCHEME_OPTIONS,
@@ -43,6 +42,7 @@ from processing.ai_sentiment import (
     apply_sentiment_result_to_unique_df,
     cascade_sentiment_to_grouped_rows,
     reset_ai_sentiment_results,
+    reset_sentiment_processing_state,
     DEFAULT_SENTIMENT_BATCH_SIZE,
     DEFAULT_SENTIMENT_MAX_WORKERS,
     DEFAULT_SENTIMENT_MODEL,
@@ -488,6 +488,9 @@ if st.session_state.sentiment_section == "Setup":
         st.session_state.sentiment_elapsed_time = time.time() - start
         st.session_state.sentiment_observation_output = {}
         st.session_state.sentiment_observation_include_nr = True
+        st.session_state.pop("sentiment_second_opinion_target_batch", None)
+        st.session_state.pop("sentiment_second_opinion_target_source_count", None)
+        st.session_state.pop("spotcheck_auto_review_n", None)
 
         grouped, unique = ensure_ai_sentiment_columns(
             st.session_state.df_sentiment_grouped_rows,
@@ -555,15 +558,6 @@ if st.session_state.sentiment_section == "Run":
         interval=1000,
     )
 
-    reset_col1, reset_col2 = st.columns([4, 1])
-    with reset_col2:
-        if st.button("Reset Sentiment Dataset"):
-            reset_sentiment_config_state(st.session_state)
-            reset_workflow_checkpoints(st.session_state, "sentiment")
-            st.session_state.sentiment_section = "Setup"
-            st.session_state.sentiment_scroll_to_top = True
-            st.rerun()
-
     config_col1, config_col2, config_col3 = st.columns(3)
     with config_col1:
         st.caption(f"Dataset mode: {_format_sample_mode(st.session_state.get('sentiment_sample_mode', 'representative'))}")
@@ -598,7 +592,7 @@ if st.session_state.sentiment_section == "Run":
     st.write(f"Selected grouped stories for analysis: {len(batch_df):,}")
 
     run_clicked = st.button("Run AI first pass", type="primary", disabled=(len(batch_df) == 0))
-    reset_ai_clicked = st.button("Reset AI Results")
+    reset_ai_clicked = st.button("Reset Processed Rows")
 
     if reset_ai_clicked:
         unique, grouped = reset_ai_sentiment_results(
@@ -608,12 +602,9 @@ if st.session_state.sentiment_section == "Run":
         st.session_state.df_sentiment_unique = unique
         st.session_state.df_sentiment_grouped_rows = grouped
         st.session_state.df_sentiment_rows = grouped.copy()
-        st.session_state.sentiment_observation_output = {}
-        st.session_state.sentiment_observation_include_nr = True
-        st.session_state.pop("sentiment_second_opinion_target_batch", None)
-        st.session_state.pop("sentiment_second_opinion_target_source_count", None)
+        reset_sentiment_processing_state(st.session_state)
         reset_workflow_checkpoints(st.session_state, "sentiment")
-        st.success("Reset AI sentiment results.")
+        st.success("Reset AI sentiment results for the prepared dataset.")
         st.rerun()
 
     if run_clicked:
@@ -678,6 +669,9 @@ if st.session_state.sentiment_section == "Run":
             st.session_state.df_sentiment_unique,
         )
         st.session_state.df_sentiment_rows = st.session_state.df_sentiment_grouped_rows.copy()
+        st.session_state.pop("sentiment_second_opinion_target_batch", None)
+        st.session_state.pop("sentiment_second_opinion_target_source_count", None)
+        st.session_state.pop("spotcheck_auto_review_n", None)
 
         apply_usage_to_session(total_in, total_out, model_choice)
         batch_cost = estimate_cost_usd(total_in, total_out, model_choice)

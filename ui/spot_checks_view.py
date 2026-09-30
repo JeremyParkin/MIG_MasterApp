@@ -52,6 +52,7 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         get_api_cost_usd,
     )
     from utils.ai_checkpoints import record_checkpoint_progress, render_checkpoint_save_reminder
+    from utils.second_opinion_batch import prepare_second_opinion_batch_size
     from utils.time_display import format_local_timestamp
     
     warnings.filterwarnings("ignore")
@@ -512,19 +513,22 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
         def render_pre_review_controls() -> None:
             stored_source_count = int(st.session_state.get("sentiment_second_opinion_target_source_count", 0) or 0)
             stored_target = int(st.session_state.get("sentiment_second_opinion_target_batch", 0) or 0)
-            if stored_target <= 0 or with_first_opinion_count > stored_source_count:
+            target_refreshed = stored_target <= 0 or with_first_opinion_count > stored_source_count
+            if target_refreshed:
                 stored_target = recommend_second_opinion_batch_size(len(base_candidates))
                 st.session_state.sentiment_second_opinion_target_batch = stored_target
                 st.session_state.sentiment_second_opinion_target_source_count = with_first_opinion_count
             completed_second_opinion_count = with_second_opinion_count
             remaining_recommended = max(0, stored_target - completed_second_opinion_count)
             recommended_batch = min(len(base_candidates), remaining_recommended)
-            default_batch_size = min(
-                int(st.session_state.get("spotcheck_auto_review_n", recommended_batch or min(50, len(base_candidates)))),
-                len(base_candidates),
+            default_batch_size = prepare_second_opinion_batch_size(
+                st.session_state,
+                input_key="spotcheck_auto_review_n",
+                recommended_batch=recommended_batch,
+                available_count=len(base_candidates),
+                refresh_recommendation=target_refreshed,
+                fallback_batch_size=min(50, len(base_candidates)),
             )
-            if recommended_batch == 0 and len(base_candidates) > 0:
-                default_batch_size = min(default_batch_size or min(10, len(base_candidates)), len(base_candidates))
             st.caption("Second-opinion priority favors more syndicated, higher-visibility, lower-confidence stories. Negative sentiment stories also get an extra boost.")
 
             batch_col1, batch_col2 = st.columns([1.25, 1], gap="medium")
@@ -875,9 +879,9 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
                 )
 
             if ai_result:
-                from processing.ai_sentiment import enforce_not_relevant_direct_mention_rule
+                from processing.ai_sentiment import annotate_entity_match_conflict
 
-                ai_result = enforce_not_relevant_direct_mention_rule(
+                ai_result = annotate_entity_match_conflict(
                     ai_result,
                     headline=head_raw,
                     snippet=body_raw,
@@ -894,6 +898,8 @@ def render_spot_checks_page(*, embedded_review: bool | None = None, spot_checks_
                     label,
                     conf,
                     why,
+                    ai_result.get("entity_match_conflict", "No"),
+                    ai_result.get("entity_match_conflict_reason"),
                 )
                 sync_sentiment_state(unique, grouped)
     

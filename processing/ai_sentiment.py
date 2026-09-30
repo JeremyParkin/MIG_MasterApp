@@ -32,9 +32,13 @@ _SENTIMENT_WORKFLOW_DEFAULTS: dict[str, Any] = {
     "AI Sentiment": pd.NA,
     "AI Sentiment Confidence": pd.NA,
     "AI Sentiment Rationale": pd.NA,
+    "AI Entity Match Conflict": pd.NA,
+    "AI Entity Match Conflict Reason": pd.NA,
     "Review AI Sentiment": pd.NA,
     "Review AI Confidence": pd.NA,
     "Review AI Rationale": pd.NA,
+    "Review Entity Match Conflict": pd.NA,
+    "Review Entity Match Conflict Reason": pd.NA,
     "AI Agreement": pd.NA,
     "Needs Human Review": pd.NA,
     "Hybrid Sentiment": pd.NA,
@@ -84,7 +88,13 @@ def _clean_entity_terms(entity_terms: list[str] | None) -> list[str]:
     return cleaned
 
 
-def story_mentions_entity_umbrella(
+ENTITY_MATCH_CONFLICT_REASON = (
+    "AI returned NOT RELEVANT even though configured entity-term lexical matching found a possible entity term. "
+    "Review whether the matched text is the monitored collective entity or a different organization, product, or proper name."
+)
+
+
+def story_has_configured_entity_term_match(
     headline: str,
     snippet: str,
     entity_terms: list[str] | None,
@@ -107,29 +117,20 @@ def story_mentions_entity_umbrella(
         return False
 
 
-def enforce_not_relevant_direct_mention_rule(
+def annotate_entity_match_conflict(
     result: dict[str, Any],
     *,
     headline: str,
     snippet: str,
     entity_terms: list[str] | None,
 ) -> dict[str, Any]:
+    annotated = dict(result)
     sentiment = str(result.get("sentiment", "")).strip().upper()
-    if sentiment != "NOT RELEVANT":
-        return result
-
-    if not story_mentions_entity_umbrella(headline, snippet, entity_terms):
-        return result
-
-    adjusted = dict(result)
-    adjusted["sentiment"] = "NEUTRAL"
-    existing_conf = pd.to_numeric(pd.Series([adjusted.get("confidence")]), errors="coerce").iloc[0]
-    adjusted["confidence"] = int(min(60, existing_conf)) if pd.notna(existing_conf) else 60
-    adjusted["explanation"] = (
-        "The collective entity is directly mentioned in the story text, so NOT RELEVANT is not allowed here. "
-        "Defaulting to NEUTRAL because the coverage mentions the entity without clear positive or negative judgment."
-    )
-    return adjusted
+    has_lexical_match = story_has_configured_entity_term_match(headline, snippet, entity_terms)
+    conflict = sentiment == "NOT RELEVANT" and has_lexical_match
+    annotated["entity_match_conflict"] = "Yes" if conflict else "No"
+    annotated["entity_match_conflict_reason"] = ENTITY_MATCH_CONFLICT_REASON if conflict else pd.NA
+    return annotated
 
 
 def _validate_structured_result(result: dict[str, Any], sentiment_type: str) -> tuple[dict[str, Any], str | None]:
@@ -349,7 +350,7 @@ def analyze_sentiment_worker(
                 functions=functions,
                 sentiment_type=sentiment_type,
             )
-            result = enforce_not_relevant_direct_mention_rule(
+            result = annotate_entity_match_conflict(
                 result,
                 headline=headline,
                 snippet=snippet,
@@ -372,6 +373,8 @@ def apply_sentiment_result_to_unique_df(
     df.loc[original_index, "AI Sentiment"] = result.get("sentiment")
     df.loc[original_index, "AI Sentiment Confidence"] = result.get("confidence")
     df.loc[original_index, "AI Sentiment Rationale"] = result.get("explanation")
+    df.loc[original_index, "AI Entity Match Conflict"] = result.get("entity_match_conflict", "No")
+    df.loc[original_index, "AI Entity Match Conflict Reason"] = result.get("entity_match_conflict_reason", pd.NA)
 
     return df
 
@@ -383,10 +386,29 @@ def cascade_sentiment_to_grouped_rows(
     grouped = df_sentiment_grouped_rows.copy()
     unique = df_sentiment_unique.copy()
 
-    cols_to_copy = ["Group ID", "AI Sentiment", "AI Sentiment Confidence", "AI Sentiment Rationale"]
+    cols_to_copy = [
+        "Group ID",
+        "AI Sentiment",
+        "AI Sentiment Confidence",
+        "AI Sentiment Rationale",
+        "AI Entity Match Conflict",
+        "AI Entity Match Conflict Reason",
+    ]
+    for column in cols_to_copy:
+        if column not in unique.columns:
+            unique[column] = pd.NA
     mapping = unique[cols_to_copy].drop_duplicates(subset=["Group ID"]).copy()
 
-    grouped = grouped.drop(columns=["AI Sentiment", "AI Sentiment Confidence", "AI Sentiment Rationale"], errors="ignore")
+    grouped = grouped.drop(
+        columns=[
+            "AI Sentiment",
+            "AI Sentiment Confidence",
+            "AI Sentiment Rationale",
+            "AI Entity Match Conflict",
+            "AI Entity Match Conflict Reason",
+        ],
+        errors="ignore",
+    )
     grouped = grouped.merge(mapping, on="Group ID", how="left")
 
     return grouped
@@ -399,6 +421,32 @@ def reset_ai_sentiment_results(
     unique = initialize_sentiment_workflow_columns(df_sentiment_unique)
     grouped = initialize_sentiment_workflow_columns(df_sentiment_grouped_rows)
     return unique, grouped
+
+
+def reset_sentiment_processing_state(session_state) -> None:
+    """Clear result-dependent UI state while preserving the configured sentiment job."""
+    session_state["sentiment_observation_output"] = {}
+    session_state["sentiment_observation_include_nr"] = True
+    session_state["initial_ai_label"] = {}
+    session_state["spot_checked_groups"] = set()
+    session_state["accepted_initial"] = set()
+    session_state["spot_ai_loading"] = False
+    session_state["spot_ai_refresh_requested"] = False
+    session_state["spot_idx"] = 0
+    session_state["spot_lock_gid"] = None
+    session_state["spot_ai_model_override"] = None
+
+    for key in [
+        "__last_sentiment_batch_summary__",
+        "sentiment_second_opinion_target_batch",
+        "sentiment_second_opinion_target_source_count",
+        "spotcheck_auto_review_n",
+        "spotcheck_pre_review_message",
+        "spotcheck_auto_resolve_message",
+        "spotcheck_review_mode",
+        "spotcheck_selected_bucket",
+    ]:
+        session_state.pop(key, None)
 
 def build_sentiment_distribution(
     df_unique: pd.DataFrame,
