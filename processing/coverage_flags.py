@@ -4,10 +4,28 @@ import pandas as pd
 import re
 
 FLAG_SPLIT_PATTERN = r"[;,]\s*|\|\s*"
+STORY_FAMILY_FLAGS_COL = "Story Family Flags"
+STORY_FAMILY_PRESS_RELEASE_EVIDENCE_COL = "Story Family Press Release Evidence"
+
+PRESS_RELEASE_DISTRIBUTOR_TERMS = [
+    "pressrelease", "accesswire", "business wire", "businesswire", "CNW",
+    "presswire", "openPR", "pr-gateway", "Prlog", "PRWEB", "Pressebox",
+    "Presseportal", "RTTNews", "SBWIRE", "issuewire", "prunderground",
+]
+PRESS_RELEASE_SNIPPET_TERMS = [*PRESS_RELEASE_DISTRIBUTOR_TERMS, "newswire"]
+PRESS_RELEASE_AUTHOR_PATTERN = r"newswire|press\s*release|distribution|newsfile"
+PRESS_RELEASE_URL_PATTERN = r"/pr\.|news-release|press-release|newswise\.com"
 
 
 def split_coverage_flags(value: object) -> list[str]:
-    raw = str(value or "").strip()
+    if value is None or value is pd.NA:
+        return []
+    try:
+        if bool(pd.isna(value)):
+            return []
+    except (TypeError, ValueError):
+        pass
+    raw = str(value).strip()
     if not raw:
         return []
     parts = re.split(FLAG_SPLIT_PATTERN, raw)
@@ -21,6 +39,86 @@ def has_coverage_flag(value: object, target_flag: str) -> bool:
     return target in split_coverage_flags(value)
 
 
+def effective_coverage_flags(row: pd.Series | dict | object) -> list[str]:
+    """Return direct and derived story-family flags without changing source truth."""
+    if not isinstance(row, (pd.Series, dict)):
+        return split_coverage_flags(row)
+
+    direct = split_coverage_flags(row.get("Coverage Flags", ""))
+    family = split_coverage_flags(row.get(STORY_FAMILY_FLAGS_COL, ""))
+    return list(dict.fromkeys([*direct, *family]))
+
+
+def has_effective_coverage_flag(row: pd.Series | dict | object, target_flag: str) -> bool:
+    target = str(target_flag or "").strip()
+    return bool(target) and target in effective_coverage_flags(row)
+
+
+def _text_series(df: pd.DataFrame, column: str) -> pd.Series:
+    return df.get(column, pd.Series("", index=df.index, dtype="object")).fillna("").astype(str)
+
+
+def _original_type_is_press_release(df: pd.DataFrame) -> pd.Series:
+    original_type = _text_series(df, "Original Type")
+    return original_type.str.upper().str.replace("_", " ", regex=False).str.replace(r"\s+", " ", regex=True).str.strip().eq("PRESS RELEASE")
+
+
+def get_strong_press_release_evidence(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """Identify deterministic evidence that may classify an entire story family.
+
+    Snippet-only matches intentionally remain direct row-level signals: less reliable
+    evidence should not spread across a canonical Group ID.
+    """
+    outlet = _text_series(df, "Outlet")
+    url = _text_series(df, "URL")
+    author = _text_series(df, "Author")
+    source_type = _original_type_is_press_release(df)
+    distributor_outlet = outlet.str.contains(
+        "|".join(re.escape(term) for term in PRESS_RELEASE_DISTRIBUTOR_TERMS),
+        case=False,
+        na=False,
+        regex=True,
+    ) | outlet.str.contains("EurekAlert", case=False, na=False, regex=False)
+    release_url = url.str.contains(PRESS_RELEASE_URL_PATTERN, case=False, na=False, regex=True)
+    release_author = author.str.contains(PRESS_RELEASE_AUTHOR_PATTERN, case=False, na=False, regex=True)
+
+    strong = source_type | distributor_outlet | release_url | release_author
+    evidence = pd.Series("", index=df.index, dtype="object")
+    evidence = evidence.mask(source_type, "Source type")
+    evidence = evidence.mask(~source_type & release_url, "Press-release URL")
+    evidence = evidence.mask(~source_type & ~release_url & release_author, "Press-release author")
+    evidence = evidence.mask(
+        ~source_type & ~release_url & ~release_author & distributor_outlet,
+        "Distribution outlet",
+    )
+    return strong, evidence
+
+
+def apply_story_family_press_release_flags(df: pd.DataFrame) -> pd.DataFrame:
+    """Annotate canonical groups while leaving direct row-level flags untouched."""
+    out = df.copy()
+    if "Group ID" not in out.columns:
+        return out
+
+    out[STORY_FAMILY_FLAGS_COL] = ""
+    out[STORY_FAMILY_PRESS_RELEASE_EVIDENCE_COL] = ""
+    strong, evidence = get_strong_press_release_evidence(out)
+    if not strong.any():
+        return out
+
+    strong_evidence = out.loc[strong, ["Group ID"]].copy()
+    strong_evidence["Evidence"] = evidence.loc[strong].astype(str)
+    evidence_by_group = (
+        strong_evidence.groupby("Group ID", dropna=False)["Evidence"]
+        .agg(lambda values: "; ".join(dict.fromkeys(value for value in values if value)))
+    )
+    group_evidence = out["Group ID"].map(evidence_by_group).fillna("")
+    family_press_release = group_evidence.ne("")
+    out.loc[family_press_release, STORY_FAMILY_FLAGS_COL] = "Press Release"
+    out.loc[family_press_release, STORY_FAMILY_PRESS_RELEASE_EVIDENCE_COL] = group_evidence.loc[family_press_release]
+    return out
+
+
 def extract_relevant_text(snippet: str) -> str:
     words = str(snippet or "").split()
     if len(words) > 250:
@@ -29,12 +127,6 @@ def extract_relevant_text(snippet: str) -> str:
 
 def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-
-    newswire_phrases = [
-        "pressrelease", "accesswire", "business wire", "businesswire", "CNW",
-        "newswire", "presswire", "openPR", "pr-gateway", "Prlog", "PRWEB",
-        "Pressebox", "Presseportal", "RTTNews", "SBWIRE", "issuewire", "prunderground"
-    ]
 
     stock_moves_phrases = [
         "ADVFN", "ARIVA.DE", "Benzinga", "Barchart", "Daily Advent", "ETF Daily News",
@@ -138,25 +230,23 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
     outlet_series = df["Outlet"].fillna("").astype(str)
 
     newswire_mask = df["Snippet_Limited"].str.contains(
-        "|".join(re.escape(phrase) for phrase in newswire_phrases),
+        "|".join(re.escape(phrase) for phrase in PRESS_RELEASE_SNIPPET_TERMS),
         case=False,
         na=False,
         regex=True,
     )
 
-    newswire_author_pattern = r"newswire|press\s*release|distribution|newsfile"
-
     newswire_mask = (
         newswire_mask
         | outlet_series.str.contains(
-            "|".join(re.escape(phrase) for phrase in newswire_phrases),
+            "|".join(re.escape(phrase) for phrase in PRESS_RELEASE_SNIPPET_TERMS),
             case=False,
             na=False,
             regex=True,
         )
         | df["Outlet"].str.contains("EurekAlert", case=False, na=False)
         | df["URL"].str.contains(r"/pr\.|news-release|press-release|newswise\.com", case=False, na=False, regex=True)
-        | df["Author"].str.contains(newswire_author_pattern, case=False, na=False, regex=True)
+        | df["Author"].str.contains(PRESS_RELEASE_AUTHOR_PATTERN, case=False, na=False, regex=True)
     )
 
     advertorial_snippet_mask = df["Snippet_Limited"].str.contains(
@@ -219,7 +309,8 @@ def add_coverage_flags(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     df.loc[market_report_mask, "Market Report Flag"] = "Market Report Spam"
-    df.loc[newswire_mask & ~market_report_mask, "Newswire Flag"] = "Press Release"
+    source_press_release_mask = _original_type_is_press_release(df)
+    df.loc[(newswire_mask & ~market_report_mask) | source_press_release_mask, "Newswire Flag"] = "Press Release"
     df.loc[~newswire_mask & ~market_report_mask & financial_outlet_mask, "Financial Outlet Flag"] = "Financial Outlet"
     df.loc[~newswire_mask & ~market_report_mask & advertorial_mask, "Advertorial Flag"] = "Advertorial"
     # Disabled for now: snippet-only advertorial hints are too noisy to surface as a live flag.

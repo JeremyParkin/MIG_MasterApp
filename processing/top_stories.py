@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from processing.coverage_flags import has_coverage_flag
+from processing.coverage_flags import has_coverage_flag, has_effective_coverage_flag
 
 from processing.prominence import get_prominence_weight_series
 
@@ -1170,10 +1170,11 @@ def apply_filters(
     if exclude_types:
         working = working[~working["Type"].isin(exclude_types)]
 
-    if exclude_coverage_flags and "Coverage Flags" in working.columns:
+    if exclude_coverage_flags and {"Coverage Flags", "Story Family Flags"}.intersection(working.columns):
         working = working[
-            ~working["Coverage Flags"].apply(
-                lambda value: any(has_coverage_flag(value, flag) for flag in exclude_coverage_flags)
+            ~working.apply(
+                lambda row: any(has_effective_coverage_flag(row, flag) for flag in exclude_coverage_flags),
+                axis=1,
             )
         ]
 

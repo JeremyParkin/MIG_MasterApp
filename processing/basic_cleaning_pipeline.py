@@ -15,6 +15,7 @@ from processing.story_grouping import (
     build_unique_story_table,
     mark_prime_examples,
 )
+from processing.coverage_flags import apply_story_family_press_release_flags
 from processing.standard_cleaning import run_standard_cleaning
 
 
@@ -43,6 +44,7 @@ def run_basic_cleaning_pipeline(
         similarity_threshold=similarity_threshold,
         max_batch_size=max_batch_size,
     )
+    df_ai_grouped = apply_story_family_press_release_flags(df_ai_grouped)
     df_ai_grouped = mark_prime_examples(df_ai_grouped)
     df_ai_unique = build_unique_story_table(df_ai_grouped)
 

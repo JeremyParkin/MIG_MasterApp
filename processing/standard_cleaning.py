@@ -150,6 +150,14 @@ def standardize_media_types(df: pd.DataFrame, merge_online: bool = True) -> pd.D
     if "Type" not in df.columns:
         return df
 
+    # Retain the source classification before operational media-type normalization.
+    # In particular, merging press releases into ONLINE must not erase that provenance.
+    if "Original Type" not in df.columns:
+        df["Original Type"] = df["Type"]
+    else:
+        original_type = df["Original Type"].fillna("").astype(str).str.strip()
+        df["Original Type"] = df["Original Type"].where(original_type.ne(""), df["Type"])
+
     # Prefer the original destination URL before platform detection so
     # wrapped/redirect URLs do not leave social rows misclassified as traditional.
     if "Original URL" in df.columns:

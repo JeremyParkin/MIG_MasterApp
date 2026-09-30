@@ -135,6 +135,14 @@ CLEAN_TRAD_GROUPING_COLUMNS = [
     "Grouping Warning",
 ]
 
+CLEAN_TRAD_PRESS_RELEASE_COLUMNS = [
+    "Original Type",
+    "Type",
+    "Coverage Flags",
+    "Story Family Flags",
+]
+STORY_FAMILY_AUDIT_COLUMNS = ["Story Family Press Release Evidence"]
+
 RAPID_CORE_EXPORT_COLUMNS = [
     "Final Rapid Relevance",
     "Final Rapid Sentiment 3-Way",
@@ -260,6 +268,9 @@ def remove_inactive_workflow_columns(
     if not outlet_mapping_active:
         out = out.drop(columns=["Mapped Outlet"], errors="ignore")
 
+    if not include_labeling_audit_columns:
+        out = out.drop(columns=STORY_FAMILY_AUDIT_COLUMNS, errors="ignore")
+
     sentiment_keep_cols = list(SENTIMENT_CORE_EXPORT_COLUMNS)
     sentiment_detail_cols = [
         "Hybrid Sentiment",
@@ -313,6 +324,24 @@ def order_clean_trad_grouping_columns(df: pd.DataFrame) -> pd.DataFrame:
     remaining_columns = [column for column in df.columns if column not in grouping_columns]
     insert_at = sum(column not in grouping_columns for column in df.columns[:group_id_position])
     ordered_columns = remaining_columns[:insert_at] + grouping_columns + remaining_columns[insert_at:]
+    return df.loc[:, ordered_columns].copy()
+
+
+def order_clean_trad_press_release_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep direct and derived press-release classification fields together."""
+    if df is None or "Type" not in df.columns:
+        return pd.DataFrame() if df is None else df.copy()
+
+    classification_columns = [
+        column for column in CLEAN_TRAD_PRESS_RELEASE_COLUMNS if column in df.columns
+    ]
+    if len(classification_columns) <= 1:
+        return df.copy()
+
+    type_position = df.columns.get_loc("Type")
+    remaining_columns = [column for column in df.columns if column not in classification_columns]
+    insert_at = sum(column not in classification_columns for column in df.columns[:type_position])
+    ordered_columns = remaining_columns[:insert_at] + classification_columns + remaining_columns[insert_at:]
     return df.loc[:, ordered_columns].copy()
 
 
@@ -2109,6 +2138,7 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
                 session_state,
                 include_labeling_audit_columns=include_labeling_audit_columns,
             )
+            trad_export = order_clean_trad_press_release_columns(trad_export)
             trad_export = order_clean_trad_grouping_columns(trad_export)
             if "Impressions" in trad_export.columns:
                 trad_export = trad_export.sort_values(by=["Impressions"], ascending=False)

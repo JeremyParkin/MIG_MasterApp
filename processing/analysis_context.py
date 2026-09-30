@@ -15,6 +15,7 @@ from processing.prominence import (
     get_prominence_columns,
     normalize_selected_prominence_column,
 )
+from processing.coverage_flags import effective_coverage_flags, has_effective_coverage_flag
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
@@ -219,9 +220,10 @@ def _build_dataset_scope_masks(
             masks["Excluded media type"] = base_false.copy()
 
     if blocked_flags:
-        if "Coverage Flags" in working.columns:
-            masks["Excluded coverage flag"] = working["Coverage Flags"].apply(
-                lambda value: any(flag in blocked_flags for flag in split_coverage_flags(value))
+        if {"Coverage Flags", "Story Family Flags"}.intersection(working.columns):
+            masks["Excluded coverage flag"] = working.apply(
+                lambda row: any(has_effective_coverage_flag(row, flag) for flag in blocked_flags),
+                axis=1,
             )
         else:
             masks["Excluded coverage flag"] = base_false.copy()
@@ -274,14 +276,15 @@ def apply_coverage_flag_policy(
         return pd.DataFrame()
 
     blocked_flags = {str(flag).strip() for flag in excluded_flags or [] if str(flag).strip()}
-    if not blocked_flags or "Coverage Flags" not in df_rows.columns:
+    if not blocked_flags or not {"Coverage Flags", "Story Family Flags"}.intersection(df_rows.columns):
         return df_rows.copy().reset_index(drop=True)
 
     filtered = df_rows.copy()
     keep_row_keys = {str(key).strip() for key in keep_row_keys or set() if str(key).strip()}
     filtered["_coverage_row_key"] = build_coverage_row_key_series(filtered)
-    filtered["_flag_blocked"] = filtered["Coverage Flags"].apply(
-        lambda value: any(flag in blocked_flags for flag in split_coverage_flags(value))
+    filtered["_flag_blocked"] = filtered.apply(
+        lambda row: any(has_effective_coverage_flag(row, flag) for flag in blocked_flags),
+        axis=1,
     )
     filtered = filtered[
         ~(
@@ -326,7 +329,7 @@ def build_coverage_flag_removal_preview(
         }
 
     working = df_rows.copy()
-    if "Coverage Flags" not in working.columns:
+    if not {"Coverage Flags", "Story Family Flags"}.intersection(working.columns):
         empty = pd.DataFrame()
         return {
             "removed_rows": 0,
@@ -347,8 +350,9 @@ def build_coverage_flag_removal_preview(
 
     working["_row_key"] = build_coverage_row_key_series(working)
     keep_row_keys = {str(key).strip() for key in keep_row_keys or set() if str(key).strip()}
-    working["_matched_flags"] = working["Coverage Flags"].apply(
-        lambda value: [flag for flag in split_coverage_flags(value) if flag in blocked_flags]
+    working["_matched_flags"] = working.apply(
+        lambda row: [flag for flag in effective_coverage_flags(row) if flag in blocked_flags],
+        axis=1,
     )
     removed = working[
         working["_matched_flags"].map(bool)

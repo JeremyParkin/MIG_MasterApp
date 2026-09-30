@@ -7,7 +7,7 @@ import re
 from typing import Literal
 
 import pandas as pd
-from processing.coverage_flags import has_coverage_flag, split_coverage_flags
+from processing.coverage_flags import has_effective_coverage_flag, split_coverage_flags
 from utils.time_display import format_local_timestamp
 
 
@@ -180,12 +180,13 @@ def apply_coverage_flag_exclusions(
         return pd.DataFrame()
 
     excluded_flags = excluded_flags or []
-    if not excluded_flags or "Coverage Flags" not in df_rows.columns:
+    if not excluded_flags or not {"Coverage Flags", "Story Family Flags"}.intersection(df_rows.columns):
         return df_rows.copy().reset_index(drop=True)
 
     return df_rows[
-        ~df_rows["Coverage Flags"].apply(
-            lambda value: any(has_coverage_flag(value, flag) for flag in excluded_flags or [])
+        ~df_rows.apply(
+            lambda row: any(has_effective_coverage_flag(row, flag) for flag in excluded_flags or []),
+            axis=1,
         )
     ].copy().reset_index(drop=True)
 

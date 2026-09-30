@@ -4,7 +4,6 @@ import html
 import importlib
 import urllib.parse
 import warnings
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
 import streamlit as st
@@ -47,6 +46,7 @@ from utils.dataframe_helpers import top_x_by_mentions
 author_outlets = importlib.reload(author_outlets_module)
 
 FORMAT_DICT = author_outlets.FORMAT_DICT
+AUTHOR_OUTLET_PREFETCH_BATCH_SIZE = author_outlets.AUTHOR_OUTLET_PREFETCH_BATCH_SIZE
 apply_author_name_fix = author_outlets.apply_author_name_fix
 assign_outlet = author_outlets.assign_outlet
 build_author_outlet_cache_entry = author_outlets.build_author_outlet_cache_entry
@@ -54,13 +54,16 @@ build_auth_outlet_table = author_outlets.build_auth_outlet_table
 build_outlet_assignment_payload = author_outlets.build_outlet_assignment_payload
 find_strict_auto_assign_outlet = author_outlets.find_strict_auto_assign_outlet
 get_auth_outlet_todo = author_outlets.get_auth_outlet_todo
+get_author_outlet_prefetch_authors = author_outlets.get_author_outlet_prefetch_authors
 get_author_search_urls = author_outlets.get_author_search_urls
 init_author_outlet_prefetch_state = author_outlets.init_author_outlet_prefetch_state
 make_author_cache_key = author_outlets.make_author_cache_key
 normalize_author_name = author_outlets.normalize_author_name
+prefetch_author_outlet_cache_entries = author_outlets.prefetch_author_outlet_cache_entries
 init_author_outlets_state = author_outlets.init_author_outlets_state
 prepare_traditional_for_author_outlets = author_outlets.prepare_traditional_for_author_outlets
 reset_outlet_skips = author_outlets.reset_outlet_skips
+should_prefetch_author_outlet_matches = author_outlets.should_prefetch_author_outlet_matches
 undo_last_outlet_assignment = author_outlets.undo_last_outlet_assignment
 
 warnings.filterwarnings("ignore")
@@ -168,67 +171,45 @@ def render_authors_page() -> None:
         for author_name in author_names:
             cache.pop(make_author_cache_key(author_name), None)
 
-    def get_prefetch_target_authors(auth_outlet_todo: pd.DataFrame) -> list[str]:
-        if auth_outlet_todo is None or auth_outlet_todo.empty:
-            return []
-
-        working = auth_outlet_todo.copy()
-        for col in ["Author", "Mentions", "Impressions"]:
-            if col not in working.columns:
-                working[col] = 0 if col != "Author" else ""
-
-        working["Author"] = working["Author"].fillna("").astype(str).str.strip()
-        working = working[working["Author"] != ""].copy()
-        if working.empty:
-            return []
-
-        by_mentions = (
-            working.sort_values(["Mentions", "Impressions"], ascending=False)["Author"]
-            .head(15)
-            .tolist()
-        )
-        by_impressions = (
-            working.sort_values(["Impressions", "Mentions"], ascending=False)["Author"]
-            .head(15)
-            .tolist()
-        )
-
-        target_authors = list(dict.fromkeys(by_mentions + by_impressions))
-
-        current_index = int(st.session_state.get("auth_outlet_skipped", 0) or 0)
-        if 0 <= current_index < len(working):
-            current_batch = working.iloc[current_index: current_index + 10]["Author"].tolist()
-            current_batch = [author for author in current_batch if make_author_cache_key(author) not in st.session_state.author_outlet_api_cache]
-            target_authors = list(dict.fromkeys(target_authors + current_batch))
-
-        return target_authors
-
     def prefetch_author_outlet_matches(auth_outlet_todo: pd.DataFrame, auto_assign: bool = False) -> dict:
-        target_authors = get_prefetch_target_authors(auth_outlet_todo)
         cache = st.session_state.author_outlet_api_cache
-        missing_authors = [author for author in target_authors if make_author_cache_key(author) not in cache]
+        current_position = int(st.session_state.get("auth_outlet_skipped", 0) or 0)
+        current_rank = get_author_rank_metric()
+        rank_changed = st.session_state.get("author_outlet_prefetch_last_rank") != current_rank
+        should_refill = should_prefetch_author_outlet_matches(
+            auth_outlet_todo,
+            current_position,
+            cache,
+            rank_changed=rank_changed,
+        )
+        target_authors = (
+            get_author_outlet_prefetch_authors(
+                auth_outlet_todo,
+                current_position,
+                cache,
+                batch_size=AUTHOR_OUTLET_PREFETCH_BATCH_SIZE,
+            )
+            if should_refill
+            else []
+        )
+        loaded_now = prefetch_author_outlet_cache_entries(
+            target_authors,
+            cache,
+            st.session_state.df_traditional,
+            st.secrets,
+        )
+        st.session_state.author_outlet_prefetch_last_rank = current_rank
 
-        loaded_now = 0
-        if missing_authors:
-            max_workers = min(6, len(missing_authors))
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {
-                    executor.submit(
-                        build_author_outlet_cache_entry,
-                        author,
-                        st.session_state.df_traditional,
-                        st.secrets,
-                    ): author
-                    for author in missing_authors
-                }
-                for future in as_completed(futures):
-                    author_name = futures[future]
-                    cache[make_author_cache_key(author_name)] = future.result()
-                    loaded_now += 1
+        auto_assign_authors: list[str] = []
+        if auto_assign and auth_outlet_todo is not None and not auth_outlet_todo.empty:
+            for author_name in auth_outlet_todo.iloc[current_position: current_position + AUTHOR_OUTLET_PREFETCH_BATCH_SIZE]["Author"].fillna("").astype(str):
+                author_name = author_name.strip()
+                if author_name and author_name not in auto_assign_authors:
+                    auto_assign_authors.append(author_name)
 
         auto_assigned_now = []
         if auto_assign:
-            for author_name in target_authors:
+            for author_name in auto_assign_authors:
                 if author_name not in set(auth_outlet_todo["Author"].tolist()):
                     continue
                 entry = cache.get(make_author_cache_key(author_name))

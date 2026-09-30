@@ -173,6 +173,18 @@ def render_top_stories_validation() -> None:
             else:
                 st.button("Open current link", key=f"top_story_open_link_disabled_{current_index}", disabled=True, use_container_width=True, icon=":material/open_in_new:")
         with action2:
+            if st.button("Confirm source", key=f"top_story_confirm_source_{current_index}", use_container_width=True, icon=":material/check_circle:"):
+                confirmed = {
+                    str(key).strip()
+                    for key in st.session_state.get("top_stories_validation_confirmed_keys", [])
+                    if str(key).strip()
+                }
+                if story_identity_key:
+                    confirmed.add(story_identity_key)
+                st.session_state.top_stories_validation_confirmed_keys = sorted(confirmed)
+                st.session_state.top_stories_validation_index = min(current_index, max(len(queue_df) - 2, 0))
+                st.rerun()
+        with action3:
             if st.button("Try next source", key=f"top_story_next_source_{current_index}", disabled=source_count <= 1, icon=":material/sync:", use_container_width=True):
                 st.session_state.added_df = rotate_saved_story_source(
                     saved_df=st.session_state.added_df.copy(),
@@ -182,7 +194,7 @@ def render_top_stories_validation() -> None:
                 )
                 st.session_state.top_story_observation_output = None
                 st.rerun()
-        with action3:
+        with action4:
             if st.button("Remove story", key=f"top_story_remove_story_{current_index}", use_container_width=True, icon=":material/delete:"):
                 st.session_state.added_df = remove_saved_top_story(
                     st.session_state.added_df.copy(),
@@ -195,18 +207,6 @@ def render_top_stories_validation() -> None:
                     current_index=current_index,
                     remaining_queue_count=max(len(queue_df) - 1, 0),
                 )
-                st.rerun()
-        with action4:
-            if st.button("Confirm source", key=f"top_story_confirm_source_{current_index}", use_container_width=True, icon=":material/check_circle:"):
-                confirmed = {
-                    str(key).strip()
-                    for key in st.session_state.get("top_stories_validation_confirmed_keys", [])
-                    if str(key).strip()
-                }
-                if story_identity_key:
-                    confirmed.add(story_identity_key)
-                st.session_state.top_stories_validation_confirmed_keys = sorted(confirmed)
-                st.session_state.top_stories_validation_index = min(current_index, max(len(queue_df) - 2, 0))
                 st.rerun()
         if source_count:
             st.caption(f"{source_count} distinct source option(s) available for this story.")

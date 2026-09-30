@@ -849,6 +849,19 @@ st.markdown(
         margin: 0 !important;
         padding: 0 !important;
     }
+    .st-key-rapid_sentiment_evidence {
+        gap: 0.3rem !important;
+    }
+    .st-key-rapid_sentiment_evidence div[data-testid="stElementContainer"]:has(p > strong:only-child) {
+        margin-top: 0.45rem;
+    }
+    .st-key-rapid_sentiment_evidence div[data-testid="stElementContainer"]:first-child {
+        margin-top: 0;
+    }
+    div[data-testid="stExpanderDetails"]:has(.st-key-rapid_sentiment_evidence) {
+        padding-top: 0.25rem !important;
+        padding-bottom: 0.6rem !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -1545,25 +1558,27 @@ if st.session_state.jev_sentiment_section == "Spot Checks":
     metric_cols[2].metric("Accepted machine", f"{accepted_count:,}")
     metric_cols[3].metric("Assigned", f"{assigned_count:,}")
 
-    view_col, scale_col = st.columns([1.25, 1], gap="medium")
-    with view_col:
-        review_view = st.selectbox("Spot check view", view_options, key="rapid_spot_review_view")
+    left, right = st.columns([3.8, 1.45], gap="large")
     sentiment_scale = HUMAN_SENTIMENT_SCALE_3_WAY
-    with scale_col:
-        if review_domain == "Sentiment":
-            sentiment_scale = st.radio(
-                "Human sentiment review scale",
-                [HUMAN_SENTIMENT_SCALE_3_WAY, HUMAN_SENTIMENT_SCALE_5_WAY],
-                horizontal=True,
-                key="rapid_human_sentiment_scale",
-            )
-        else:
-            tag_review_mode = st.radio(
-                "Human tagging review mode",
-                [RAPID_TAG_REVIEW_MODE_BEST, RAPID_TAG_REVIEW_MODE_APPLICABLE],
-                horizontal=True,
-                key="rapid_human_tag_review_mode",
-            )
+    with left:
+        view_col, scale_col = st.columns([1.1, 1.4], gap="medium")
+        with view_col:
+            review_view = st.selectbox("Spot check view", view_options, key="rapid_spot_review_view")
+        with scale_col:
+            if review_domain == "Sentiment":
+                sentiment_scale = st.radio(
+                    "Human sentiment review scale",
+                    [HUMAN_SENTIMENT_SCALE_3_WAY, HUMAN_SENTIMENT_SCALE_5_WAY],
+                    horizontal=True,
+                    key="rapid_human_sentiment_scale",
+                )
+            else:
+                tag_review_mode = st.radio(
+                    "Human tagging review mode",
+                    [RAPID_TAG_REVIEW_MODE_BEST, RAPID_TAG_REVIEW_MODE_APPLICABLE],
+                    horizontal=True,
+                    key="rapid_human_tag_review_mode",
+                )
 
     candidates = build_rapid_review_candidates_for_mode(
         unique_for_review,
@@ -1573,12 +1588,14 @@ if st.session_state.jev_sentiment_section == "Spot Checks":
         tag_definitions=tag_definitions,
     )
     metric_cols[4].metric("In review queue", f"{len(candidates):,}")
-    st.caption(
-        "Recommended views focus the queue; all-coverage views let you audit or manually label broader Rapid sample rows."
-    )
+    with left:
+        st.caption(
+            "Recommended views focus the queue; all-coverage views let you audit or manually label broader Rapid sample rows."
+        )
 
     if candidates.empty:
-        st.info("No grouped stories match the current view.")
+        with left:
+            st.info("No grouped stories match the current view.")
         st.stop()
 
     idx_key = "rapid_spot_sentiment_idx" if review_domain == "Sentiment" else "rapid_spot_tagging_idx"
@@ -1615,7 +1632,6 @@ if st.session_state.jev_sentiment_section == "Spot Checks":
             except Exception as exc:
                 st.error(f"Translation failed: {exc}")
 
-    left, right = st.columns([3.8, 1.45], gap="large")
     with left:
         highlighted_head = highlight_with_tolerant_regex(
             escape_markdown(headline),
@@ -1689,13 +1705,25 @@ if st.session_state.jev_sentiment_section == "Spot Checks":
                     )
                     st.rerun()
 
-            with st.expander("Sentiment evidence", expanded=False):
+            with st.expander("Sentiment evidence", expanded=False), st.container(key="rapid_sentiment_evidence"):
                 st.write("**First opinion**")
-                rapid_evidence_line("3-way", row.get("Jev Sentiment", ""))
-                rapid_evidence_line("5-way", row.get("Jev 5-Way Sentiment", ""))
-                rapid_evidence_line("Score", format_rapid_numeric(row.get("Jev Sentiment Score")))
-                rapid_evidence_line("Relevance probability", format_rapid_numeric(row.get("Jev Relevant Probability")))
-                rapid_evidence_line("Mixture", row.get("Jev Mixture Label", ""))
+                for label, column, probability_column in [
+                    ("3-way", "Jev Sentiment", "Jev Selected Probability"),
+                    ("5-way", "Jev 5-Way Sentiment", "Jev 5-Way Selected Probability"),
+                ]:
+                    first_label = safe_display_text(row.get(column, ""))
+                    selected_probability = format_rapid_numeric(row.get(probability_column))
+                    if first_label and selected_probability:
+                        first_label = f"{first_label} ({selected_probability})"
+                    rapid_evidence_line(label, first_label)
+                first_score = format_rapid_numeric(row.get("Jev Sentiment Score"))
+                if first_score:
+                    rapid_evidence_line("Score", f"{first_score} (−7 to +7)")
+                rapid_evidence_line(
+                    "Relevance probability",
+                    format_rapid_numeric(row.get("Jev Score Relevant Probability")),
+                )
+                rapid_evidence_line("In-story sentiment spread", row.get("Jev Mixture Label", ""))
 
                 luna_fields = [
                     safe_display_text(row.get("Rapid Review 3-Way Sentiment", "")),
@@ -2023,6 +2051,9 @@ if st.session_state.jev_sentiment_section == "AI Second Opinion":
         visible_review["First-pass Comparable Score"] = first_pass_norm.map(lambda item: item.get("score", pd.NA))
         visible_review["First-pass 3-Way From Score"] = first_pass_norm.map(lambda item: item.get("derived_3_way", ""))
         visible_review["First-pass 5-Way From Score"] = first_pass_norm.map(lambda item: item.get("derived_5_way", ""))
+        visible_review["Rapid Sentiment Resolution Status"] = build_effective_rapid_sentiment_frame(visible_review)[
+            "Rapid Sentiment Resolution Status"
+        ]
         review_columns = [
             "Group ID",
             "Headline",
@@ -2039,17 +2070,24 @@ if st.session_state.jev_sentiment_section == "AI Second Opinion":
             "Rapid Review Best Tag",
             "Rapid Sentiment 3-Way Agreement",
             "Rapid Sentiment 5-Way Agreement",
+            "Rapid Sentiment Resolution Status",
             "Rapid Tag Best-Fit Agreement",
             "Rapid Tag Set Agreement",
             "Rapid Review Status",
             "Rapid Review Error",
         ]
         existing_review_columns = [column for column in review_columns if column in visible_review.columns]
+        review_table = rename_jev_columns_to_rapid(visible_review[existing_review_columns]).rename(
+            columns={
+                "Rapid Sentiment 3-Way Agreement": "Score-band agreement (3-way)",
+                "Rapid Sentiment 5-Way Agreement": "Score-band agreement (5-way)",
+            }
+        )
         st.dataframe(
-            rename_jev_columns_to_rapid(visible_review[existing_review_columns]),
+            review_table,
             use_container_width=True,
             hide_index=True,
-            column_config=probability_column_config(visible_review[existing_review_columns]),
+            column_config=probability_column_config(review_table),
         )
 
     with st.expander("Rapid second-opinion available-pool details", expanded=False):

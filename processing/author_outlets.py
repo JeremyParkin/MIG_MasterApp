@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import urllib.parse
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
@@ -18,6 +19,9 @@ FORMAT_DICT = {
     "Mentions": "{:,.0f}",
     "Effective Reach": "{:,.0f}",
 }
+
+AUTHOR_OUTLET_PREFETCH_BATCH_SIZE = 6
+AUTHOR_OUTLET_PREFETCH_MAX_WORKERS = 6
 
 
 def init_author_outlets_state(session_state) -> None:
@@ -62,9 +66,87 @@ def reset_outlet_skips(session_state) -> None:
 def init_author_outlet_prefetch_state(session_state) -> None:
     session_state.setdefault("author_outlet_api_cache", {})
     session_state.setdefault("author_outlet_auto_assign_enabled", False)
-    session_state.setdefault("author_outlet_prefetch_limit", 20)
     session_state.setdefault("author_outlet_prefetch_summary", {})
     session_state.setdefault("author_outlet_auto_assigned_rows", [])
+    session_state.setdefault("author_outlet_prefetch_last_rank", None)
+
+
+def get_author_outlet_prefetch_authors(
+    auth_outlet_todo: pd.DataFrame,
+    current_position: int,
+    cache: dict,
+    *,
+    batch_size: int = AUTHOR_OUTLET_PREFETCH_BATCH_SIZE,
+) -> list[str]:
+    """Return the next bounded uncached API wave from the active author queue."""
+    if auth_outlet_todo is None or auth_outlet_todo.empty or "Author" not in auth_outlet_todo.columns:
+        return []
+
+    start = max(0, int(current_position or 0))
+    if start >= len(auth_outlet_todo):
+        return []
+
+    target_authors: list[str] = []
+    seen_keys: set[str] = set()
+    for author_name in auth_outlet_todo.iloc[start:]["Author"].fillna("").astype(str):
+        author_name = author_name.strip()
+        cache_key = make_author_cache_key(author_name)
+        if not author_name or cache_key in cache or cache_key in seen_keys:
+            continue
+        target_authors.append(author_name)
+        seen_keys.add(cache_key)
+        if len(target_authors) >= min(int(batch_size), AUTHOR_OUTLET_PREFETCH_BATCH_SIZE):
+            break
+    return target_authors
+
+
+def should_prefetch_author_outlet_matches(
+    auth_outlet_todo: pd.DataFrame,
+    current_position: int,
+    cache: dict,
+    *,
+    rank_changed: bool,
+) -> bool:
+    """Refill only when a new ranking starts or the active queue item is uncached."""
+    if auth_outlet_todo is None or auth_outlet_todo.empty or "Author" not in auth_outlet_todo.columns:
+        return False
+    if rank_changed:
+        return True
+
+    position = max(0, int(current_position or 0))
+    if position >= len(auth_outlet_todo):
+        return False
+    author_value = auth_outlet_todo.iloc[position]["Author"]
+    author_name = "" if pd.isna(author_value) else str(author_value).strip()
+    return bool(author_name) and make_author_cache_key(author_name) not in cache
+
+
+def prefetch_author_outlet_cache_entries(
+    author_names: list[str],
+    cache: dict,
+    df_traditional: pd.DataFrame,
+    secrets,
+) -> int:
+    """Fetch one bounded author-outlet API wave and update the supplied cache."""
+    missing_authors = [
+        author_name
+        for author_name in author_names[:AUTHOR_OUTLET_PREFETCH_BATCH_SIZE]
+        if make_author_cache_key(author_name) not in cache
+    ]
+    if not missing_authors:
+        return 0
+
+    worker_count = min(AUTHOR_OUTLET_PREFETCH_MAX_WORKERS, len(missing_authors))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(build_author_outlet_cache_entry, author_name, df_traditional, secrets): author_name
+            for author_name in missing_authors
+        }
+        for future in as_completed(futures):
+            author_name = futures[future]
+            cache[make_author_cache_key(author_name)] = future.result()
+
+    return len(missing_authors)
 
 
 def fetch_outlet(author_name: str, secrets) -> tuple[dict | None, dict]:

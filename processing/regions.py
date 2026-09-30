@@ -9,6 +9,7 @@ from openai import OpenAI
 
 from processing.prominence import get_prominence_weight_series
 from processing.top_stories import consolidate_top_story_candidates, parse_source_group_ids
+from processing.coverage_flags import has_effective_coverage_flag
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
@@ -154,8 +155,9 @@ def filter_regions_df(
     blocked_flags = {str(v).strip() for v in exclude_coverage_flags or [] if str(v).strip()}
     if blocked_flags:
         filtered = filtered[
-            ~filtered["Coverage Flags"].apply(
-                lambda value: any(flag in blocked_flags for flag in split_coverage_flags(value))
+            ~filtered.apply(
+                lambda row: any(has_effective_coverage_flag(row, flag) for flag in blocked_flags),
+                axis=1,
             )
         ].copy()
 

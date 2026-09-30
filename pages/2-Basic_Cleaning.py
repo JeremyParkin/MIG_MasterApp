@@ -10,7 +10,7 @@ import streamlit as st
 from ui.page_help import set_page_help_context
 
 from processing.standard_cleaning import run_standard_cleaning
-from processing.coverage_flags import add_coverage_flags
+from processing.coverage_flags import add_coverage_flags, apply_story_family_press_release_flags
 from processing.data_quality import build_data_quality_warnings
 from processing.effective_reach import (
     apply_effective_reach_traditional,
@@ -166,6 +166,7 @@ def run_basic_cleaning_stage_3() -> None:
         similarity_threshold=NORMAL_TEXT_SIMILARITY_THRESHOLD,
         max_batch_size=1800,
     )
+    df_ai_grouped = apply_story_family_press_release_flags(df_ai_grouped)
     df_ai_grouped = mark_prime_examples(df_ai_grouped)
     df_ai_unique = build_unique_story_table(df_ai_grouped)
 
