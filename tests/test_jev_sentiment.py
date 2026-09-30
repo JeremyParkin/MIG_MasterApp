@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import io
 import time
 import unittest
 from pathlib import Path
@@ -40,8 +41,10 @@ from processing.jev_sentiment import (
     run_jev_sentiment_batch,
 )
 from processing.download_exports import (
+    build_clean_workbook_bytes,
     build_export_metadata_sheet,
     build_jev_sentiment_sample_export,
+    build_rapid_labeling_sample_export,
     build_rapid_clean_export_map,
     build_sentiment_sample_export,
     build_tagging_sample_export,
@@ -1092,6 +1095,111 @@ class JevSentimentTests(unittest.TestCase):
         self.assertEqual(int(jev_export["Rapid Labeling Input Tokens"].sum()), 1200)
         self.assertAlmostEqual(float(jev_export["Rapid Labeling Cost USD"].sum()), 0.00009)
 
+    def test_rapid_labeling_sample_uses_prepared_article_rows_and_keeps_request_metadata_grouped(self) -> None:
+        rapid_unique = ensure_jev_sentiment_columns(
+            pd.DataFrame(
+                {
+                    "Group ID": [1, 2],
+                    "Jev Sentiment": ["POSITIVE", "NEGATIVE"],
+                    "Jev 5-Way Sentiment": ["SOMEWHAT POSITIVE", "SOMEWHAT NEGATIVE"],
+                    "Jev Sentiment Score": [2.5, -2.5],
+                    "Jev Score Relevant Probability": [0.98, 0.97],
+                    "Jev Best Tag": ["Access", "Policy"],
+                    "Jev Tags": ["Access", "Policy"],
+                    "Jev Model": ["typesafe/jev-1.13", "typesafe/jev-1.13"],
+                    "Jev Input Tokens": [1200, 900],
+                    "Jev Cost USD": [0.00009, 0.00007],
+                    "Jev Raw Response": ['{"answer": 1}', '{"answer": 2}'],
+                    "Rapid Review Model": ["gpt-5.6-luna", "gpt-5.6-luna"],
+                    "Rapid Review Input Tokens": [400, 300],
+                    "Rapid Review Cost USD": [0.00002, 0.00001],
+                    "Rapid Review Raw Response": ['{"review": 1}', '{"review": 2}'],
+                    "Rapid Human Sentiment Review State": ["Assigned", pd.NA],
+                    "Rapid Human Sentiment Scale": ["3-way", pd.NA],
+                    "Rapid Human Sentiment": ["NEGATIVE", pd.NA],
+                    "Rapid Human Best Tag Review State": ["Assigned", pd.NA],
+                    "Rapid Human Best Tag Assignment": ["Programs", pd.NA],
+                }
+            )
+        )
+        prepared_rows = pd.DataFrame(
+            {
+                "Group ID": [1, 1, 2],
+                "Headline": ["First pickup", "Second pickup", "Separate story"],
+                "URL": ["https://one.example", "https://two.example", "https://three.example"],
+                "Outlet": ["Outlet One", "Outlet Two", "Outlet Three"],
+                "Author": ["Author One", "Author Two", "Author Three"],
+                "Coverage Flags": ["Press Release", "", "Aggregator"],
+                "Mentions": [1, 1, 1],
+            }
+        )
+        state = {
+            "df_jev_sentiment_unique": rapid_unique,
+            "df_jev_sentiment_grouped_rows": prepared_rows,
+            "jev_tag_definitions": {"Access": "Access", "Policy": "Policy", "Programs": "Programs"},
+        }
+
+        article_export = build_rapid_labeling_sample_export(state, include_audit=True)
+        grouped_export = build_jev_sentiment_sample_export(state, include_audit=True)
+
+        self.assertEqual(article_export["Group ID"].tolist(), [1, 1, 2])
+        self.assertEqual(article_export["URL"].tolist(), prepared_rows["URL"].tolist())
+        self.assertEqual(article_export["Outlet"].tolist(), prepared_rows["Outlet"].tolist())
+        self.assertEqual(article_export["Coverage Flags"].tolist(), prepared_rows["Coverage Flags"].tolist())
+        self.assertEqual(
+            article_export.loc[article_export["Group ID"] == 1, "Final Rapid Sentiment 3-Way"].tolist(),
+            ["NEGATIVE", "NEGATIVE"],
+        )
+        self.assertEqual(
+            article_export.loc[article_export["Group ID"] == 1, "Final Rapid Best Tag"].tolist(),
+            ["Programs", "Programs"],
+        )
+        self.assertEqual(article_export.loc[article_export["Group ID"] == 2, "Final Rapid Sentiment 3-Way"].iloc[0], "NEGATIVE")
+        self.assertEqual(article_export.loc[article_export["Group ID"] == 2, "Final Rapid Best Tag"].iloc[0], "Policy")
+        for column in [
+            "Rapid Labeling Model",
+            "Rapid Labeling Input Tokens",
+            "Rapid Labeling Cost USD",
+            "Rapid Labeling Raw Response",
+            "Rapid Review Model",
+            "Rapid Review Input Tokens",
+            "Rapid Review Cost USD",
+            "Rapid Review Raw Response",
+        ]:
+            self.assertNotIn(column, article_export.columns)
+            self.assertIn(column, grouped_export.columns)
+
+        self.assertEqual(len(grouped_export), 2)
+        self.assertEqual(int(grouped_export["Rapid Labeling Input Tokens"].sum()), 2100)
+        self.assertAlmostEqual(float(grouped_export["Rapid Labeling Cost USD"].sum()), 0.00016)
+
+    def test_rapid_labeling_sample_does_not_expand_outside_prepared_rows(self) -> None:
+        state = self._rapid_export_state(
+            pd.DataFrame(
+                {
+                    "Group ID": [1],
+                    "Jev Sentiment": ["NEUTRAL"],
+                    "Jev 5-Way Sentiment": ["NEUTRAL"],
+                    "Jev Sentiment Score": [0.0],
+                }
+            )
+        )
+        state["df_jev_sentiment_grouped_rows"] = pd.DataFrame(
+            {"Group ID": [1], "Headline": ["Prepared pickup"], "URL": ["https://prepared.example"]}
+        )
+        state["df_traditional"] = pd.DataFrame(
+            {
+                "Group ID": [1, 1],
+                "Headline": ["Prepared pickup", "Unprepared pickup"],
+                "URL": ["https://prepared.example", "https://outside.example"],
+            }
+        )
+
+        article_export = build_rapid_labeling_sample_export(state)
+
+        self.assertEqual(len(article_export), 1)
+        self.assertEqual(article_export.loc[0, "URL"], "https://prepared.example")
+
     def _rapid_export_state(
         self,
         rows: pd.DataFrame,
@@ -1318,11 +1426,26 @@ class JevSentimentTests(unittest.TestCase):
                 }
             )
         )
-        metadata = build_export_metadata_sheet({"df_jev_sentiment_unique": jev_unique})
+        state = {
+            "df_jev_sentiment_unique": jev_unique,
+            "df_jev_sentiment_grouped_rows": pd.DataFrame(
+                {"Group ID": [1], "Headline": ["Prepared story"]}
+            ),
+            "df_traditional": pd.DataFrame({"Group ID": [1], "Headline": ["Prepared story"]}),
+        }
+        metadata = build_export_metadata_sheet(state)
         value_by_field = dict(zip(metadata["Field"], metadata["Value"]))
 
         self.assertEqual(value_by_field["Rapid Labeling Sample Sheet"], "RAPID LABELING SAMPLE")
+        self.assertEqual(value_by_field["Rapid Labeling Sampled Article Rows"], 1)
+        self.assertEqual(value_by_field["Rapid Labeling Grouped Results Sheet"], "RAPID LABELING GROUPED RESULTS")
+        self.assertEqual(value_by_field["Rapid Labeling Grouped Results Rows"], 1)
+        self.assertEqual(value_by_field["Rapid Labeling Usage/Cost Source"], "RAPID LABELING GROUPED RESULTS")
         self.assertNotIn("Jev Experimental Sample Sheet", value_by_field)
+
+        workbook = pd.ExcelFile(io.BytesIO(build_clean_workbook_bytes(state)))
+        self.assertIn("RAPID LABELING SAMPLE", workbook.sheet_names)
+        self.assertIn("RAPID LABELING GROUPED RESULTS", workbook.sheet_names)
 
     def test_sentiment_export_preserves_raw_first_pass_and_review_fields(self) -> None:
         sentiment_rows = pd.DataFrame(

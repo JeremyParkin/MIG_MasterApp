@@ -27,6 +27,7 @@ from processing.ai_sentiment import (
 )
 from processing.jev_sentiment import (
     JEV_SHARED_RESULT_COLUMNS,
+    RAPID_LABELING_GROUPED_RESULTS_SHEET_NAME,
     RAPID_LABELING_SAMPLE_SHEET_NAME,
     rapid_labeling_column_name,
     rename_jev_columns_to_rapid,
@@ -1080,6 +1081,7 @@ def _merge_production_sentiment_columns_by_group(
 
 
 def build_jev_sentiment_sample_export(session_state, *, include_audit: bool = False) -> pd.DataFrame:
+    """Build the one-row-per-request Rapid results ledger for export."""
     df = session_state.get("df_jev_sentiment_unique", pd.DataFrame())
     if not isinstance(df, pd.DataFrame) or df.empty or not jev_sentiment_processed_complete_enough(session_state):
         return pd.DataFrame()
@@ -1113,6 +1115,50 @@ def build_jev_sentiment_sample_export(session_state, *, include_audit: bool = Fa
     existing_priority = [column for column in priority_cols if column in out.columns]
     remaining_cols = [column for column in out.columns if column not in existing_priority]
     return rename_jev_columns_to_rapid(out[existing_priority + remaining_cols].copy())
+
+
+def build_rapid_labeling_sample_export(session_state, *, include_audit: bool = False) -> pd.DataFrame:
+    """Build the prepared article-row Rapid sample with story-level labels cascaded by Group ID."""
+    rows = session_state.get("df_jev_sentiment_grouped_rows", pd.DataFrame())
+    if not isinstance(rows, pd.DataFrame) or rows.empty or "Group ID" not in rows.columns:
+        return pd.DataFrame()
+    if not jev_sentiment_processed_complete_enough(session_state):
+        return pd.DataFrame()
+
+    out = rows.copy()
+    rapid_map = build_rapid_clean_export_map(session_state, include_audit=include_audit)
+    rapid_unique = session_state.get("df_jev_sentiment_unique", pd.DataFrame())
+    first_pass_columns = _jev_export_columns(rapid_unique, include_audit=include_audit)
+    first_pass_columns = [column for column in first_pass_columns if column not in JEV_REQUEST_METADATA_COLUMNS]
+
+    if isinstance(rapid_unique, pd.DataFrame) and first_pass_columns:
+        first_pass_map = rapid_unique[["Group ID", *first_pass_columns]].copy()
+        first_pass_map = rename_jev_columns_to_rapid(
+            first_pass_map.drop_duplicates(subset=["Group ID"], keep="last")
+        )
+        rapid_map = rapid_map.merge(first_pass_map, on="Group ID", how="outer")
+
+    rapid_columns = [column for column in rapid_map.columns if column != "Group ID"]
+    out = out.drop(columns=[*_jev_result_columns(out), *rapid_columns], errors="ignore")
+    out = out.merge(rapid_map, on="Group ID", how="left")
+
+    priority_cols = [
+        "Group ID",
+        "Prime Example",
+        "Date",
+        "Headline",
+        "Outlet",
+        "Type",
+        "Mentions",
+        "Impressions",
+        "Effective Reach",
+        *RAPID_CORE_EXPORT_COLUMNS,
+        *(RAPID_AUDIT_DERIVED_COLUMNS if include_audit else []),
+        *[rapid_labeling_column_name(column) for column in first_pass_columns],
+    ]
+    existing_priority = [column for column in priority_cols if column in out.columns]
+    remaining_cols = [column for column in out.columns if column not in existing_priority]
+    return out[existing_priority + remaining_cols].copy()
 
 
 def build_tagging_sample_export(session_state, *, include_audit: bool = False) -> pd.DataFrame:
@@ -1354,7 +1400,8 @@ def build_export_metadata_sheet(
     shared_sample_rows = len(build_shared_sample_ai_export(session_state)) if shared_sample_sheet else 0
     tagging_sample_rows = shared_sample_rows if tagging_sample_sheet == "SAMPLED AI RESULTS" else len(build_tagging_sample_export(session_state))
     sentiment_sample_rows = shared_sample_rows if sentiment_sample_sheet == "SAMPLED AI RESULTS" else len(build_sentiment_sample_export(session_state))
-    jev_sample_rows = len(build_jev_sentiment_sample_export(session_state))
+    rapid_sample_rows = len(build_rapid_labeling_sample_export(session_state))
+    rapid_grouped_result_rows = len(build_jev_sentiment_sample_export(session_state))
     session_started = format_session_started(session_state)
     session_duration = format_session_duration(get_current_session_duration_seconds(session_state))
 
@@ -1401,9 +1448,11 @@ def build_export_metadata_sheet(
 
         ("Rapid Labeling Run", "Yes" if jev_sentiment_processed_complete_enough(session_state) else "No"),
         ("Rapid Labeling Processed Groups", jev_processed_groups),
-        ("Rapid Labeling Sample Sheet", RAPID_LABELING_SAMPLE_SHEET_NAME if jev_sample_rows else "No"),
-        ("Rapid Labeling Exported Rows", jev_sample_rows),
-        ("Rapid Labeling Usage/Cost Source", RAPID_LABELING_SAMPLE_SHEET_NAME if jev_sample_rows else "No"),
+        ("Rapid Labeling Sample Sheet", RAPID_LABELING_SAMPLE_SHEET_NAME if rapid_sample_rows else "No"),
+        ("Rapid Labeling Sampled Article Rows", rapid_sample_rows),
+        ("Rapid Labeling Grouped Results Sheet", RAPID_LABELING_GROUPED_RESULTS_SHEET_NAME if rapid_grouped_result_rows else "No"),
+        ("Rapid Labeling Grouped Results Rows", rapid_grouped_result_rows),
+        ("Rapid Labeling Usage/Cost Source", RAPID_LABELING_GROUPED_RESULTS_SHEET_NAME if rapid_grouped_result_rows else "No"),
     ]
 
     if not excluded_counts_df.empty:
@@ -2199,16 +2248,32 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
                 ws.set_tab_color("#7f8c8d")
                 cleaned_exports.append(("SENTIMENT SAMPLE", sentiment_export, ws))
 
-        # RAPID LABELING SAMPLE
-        jev_sentiment_export = rename_ave(
+        # RAPID LABELING SAMPLE: sampled article rows with story-level Rapid labels.
+        rapid_sample_export = rename_ave(
+            build_rapid_labeling_sample_export(session_state, include_audit=include_labeling_audit_columns),
+            original_ave_col=original_ave_col,
+        )
+        if not rapid_sample_export.empty:
+            rapid_sample_export.to_excel(writer, sheet_name=RAPID_LABELING_SAMPLE_SHEET_NAME, header=True, index=False)
+            ws = writer.sheets[RAPID_LABELING_SAMPLE_SHEET_NAME]
+            ws.set_tab_color("#9b59b6")
+            cleaned_exports.append((RAPID_LABELING_SAMPLE_SHEET_NAME, rapid_sample_export, ws))
+
+        # RAPID LABELING GROUPED RESULTS: one row per request, including usage and debug metadata.
+        rapid_grouped_export = rename_ave(
             build_jev_sentiment_sample_export(session_state, include_audit=include_labeling_audit_columns),
             original_ave_col=original_ave_col,
         )
-        if not jev_sentiment_export.empty:
-            jev_sentiment_export.to_excel(writer, sheet_name=RAPID_LABELING_SAMPLE_SHEET_NAME, header=True, index=False)
-            ws = writer.sheets[RAPID_LABELING_SAMPLE_SHEET_NAME]
+        if not rapid_grouped_export.empty:
+            rapid_grouped_export.to_excel(
+                writer,
+                sheet_name=RAPID_LABELING_GROUPED_RESULTS_SHEET_NAME,
+                header=True,
+                index=False,
+            )
+            ws = writer.sheets[RAPID_LABELING_GROUPED_RESULTS_SHEET_NAME]
             ws.set_tab_color("#9b59b6")
-            cleaned_exports.append((RAPID_LABELING_SAMPLE_SHEET_NAME, jev_sentiment_export, ws))
+            cleaned_exports.append((RAPID_LABELING_GROUPED_RESULTS_SHEET_NAME, rapid_grouped_export, ws))
 
         # AUTHORS
         authors = build_author_insights_export_table(session_state, df_traditional=traditional)
