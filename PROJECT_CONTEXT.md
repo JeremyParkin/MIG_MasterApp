@@ -80,6 +80,8 @@ The uploaded file is retained as source-oriented state, while Basic Cleaning cre
 
 Canonical grouping considers media type, normalized headline/snippet text, and `SyndicationId` when available. Hybrid grouping can connect text-similar representatives and rows sharing a syndication identifier. The resulting `Grouping Source` identifies `Text Similarity`, `SyndicationId`, or `SyndicationId + Text Similarity`; `Grouping Warning` captures notable grouping conditions such as multiple syndication IDs or unusually large groups.
 
+Text similarity normally uses cosine `0.935`. Representatives with fewer than 20 normalized snippet tokens are weak evidence, so any edge touching one requires cosine `0.95`; nonblank same-`SyndicationId` links remain strong and unchanged. The sparse edge filter runs before connected components, preventing rejected low-evidence edges from bridging canonical groups without another vectorization or all-pairs pass. Singleton groups have blank `Grouping Source` and `Grouping Warning` because no rows were actually grouped.
+
 ### Prime Example
 
 Basic Cleaning marks one `Prime Example` per canonical Group ID. Selection favors preferred wire sources, avoids lower-quality flagged coverage where possible, and considers text completeness, impressions, and date. A prime row is the default representative, not a second identity layer and not the only usable source for a story family.
@@ -216,6 +218,8 @@ Rapid page help is mapped to vendor-neutral labels: `Prepare & Configure`, `Run 
 
 `CLEAN TRAD` is row-level. Established Sentiment and Tagging cascade their resolved fields by canonical Group ID. Rapid does the same with a one-row-per-Group-ID resolver adapter and a left merge.
 
+Its grouping metadata remains adjacent for inspection: `Group ID`, `SyndicationId`, `Grouping Source`, and `Grouping Warning`.
+
 Default Rapid fields in `CLEAN TRAD` are:
 
 - `Final Rapid Relevance`
@@ -253,8 +257,8 @@ Tests are organized by behavior in `tests/`, including grouping, Analysis Contex
 
 Current milestone verification (September 2026):
 
-- `python -m unittest discover -s tests`: 194 passing tests.
-- `PYTHONPATH=. pytest tests`: 194 passing tests.
+- `python -m unittest discover -s tests`: 203 passing tests.
+- `PYTHONPATH=. pytest tests`: 203 passing tests.
 - `PYTHONPATH=visual_checker_handoff/drop_in_visual_checker pytest visual_checker_handoff/drop_in_visual_checker/tests`: 4 passing tests.
 - `python -m compileall` over app source, pages, processing, UI, utilities, tests, and the visual-checker handoff: passed.
 - `git diff --check`: passed.

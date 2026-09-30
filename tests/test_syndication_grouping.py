@@ -4,8 +4,10 @@ import unittest
 from types import SimpleNamespace
 
 import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 from processing.data_quality import build_data_quality_warnings
+from processing.download_exports import order_clean_trad_grouping_columns
 from processing.effective_reach import apply_effective_reach_traditional
 from processing.story_grouping import build_unique_story_table, cluster_by_media_type, mark_prime_examples
 from processing.ai_sentiment import call_ai_sentiment as call_ai_sentiment_first_pass
@@ -16,6 +18,29 @@ from utils.io import build_upload_quality_report, normalize_uploaded_dataframe
 
 
 class SyndicationGroupingTests(unittest.TestCase):
+    @staticmethod
+    def _grouping_frame(
+        headlines: list[str],
+        snippets: list[str],
+        syndication_ids: list[str],
+        media_types: list[str] | None = None,
+    ) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "Date": pd.to_datetime(["2026-09-01"] * len(headlines)),
+                "Type": media_types or ["ONLINE"] * len(headlines),
+                "Headline": headlines,
+                "Snippet": snippets,
+                "Outlet": [f"Example {index}" for index in range(len(headlines))],
+                "SyndicationId": syndication_ids,
+            }
+        )
+
+    @staticmethod
+    def _pairwise_cosine(left: str, right: str) -> float:
+        matrix = TfidfVectorizer().fit_transform([left, right])
+        return float((matrix * matrix.T).toarray()[0, 1])
+
     def test_tagging_accepts_modern_tool_call_response(self) -> None:
         response = SimpleNamespace(
             usage=SimpleNamespace(prompt_tokens=12, completion_tokens=8),
@@ -159,6 +184,45 @@ class SyndicationGroupingTests(unittest.TestCase):
         self.assertEqual(grouped["Group ID"].nunique(), 1)
         self.assertEqual(set(grouped["Grouping Source"]), {"SyndicationId"})
 
+    def test_singleton_group_has_no_grouping_source_or_warning(self) -> None:
+        df = pd.DataFrame(
+            {
+                "Date": pd.to_datetime(["2026-09-01"]),
+                "Type": ["ONLINE"],
+                "Headline": ["Standalone school story"],
+                "Snippet": ["A distinct report with no matching coverage."],
+                "Outlet": ["Example A"],
+                "SyndicationId": ["standalone-id"],
+            }
+        )
+
+        grouped = cluster_by_media_type(df, similarity_threshold=0.99)
+
+        self.assertEqual(grouped["Group ID"].nunique(), 1)
+        self.assertEqual(grouped.loc[0, "Grouping Source"], "")
+        self.assertEqual(grouped.loc[0, "Grouping Warning"], "")
+
+    def test_text_similarity_group_retains_source_without_syndication_id(self) -> None:
+        df = pd.DataFrame(
+            {
+                "Date": pd.to_datetime(["2026-09-01", "2026-09-01"]),
+                "Type": ["ONLINE", "ONLINE"],
+                "Headline": ["Students recognized by national program", "Students recognized by national program"],
+                "Snippet": [
+                    "Students were recognized by the national program for academic achievement and college readiness.",
+                    "Students were recognized by the national program for academic achievement and college readiness.",
+                ],
+                "Outlet": ["Example A", "Example B"],
+                "SyndicationId": ["", ""],
+            }
+        )
+
+        grouped = cluster_by_media_type(df, similarity_threshold=0.99)
+
+        self.assertEqual(grouped["Group ID"].nunique(), 1)
+        self.assertEqual(set(grouped["Grouping Source"]), {"Text Similarity"})
+        self.assertEqual(set(grouped["Grouping Warning"]), {""})
+
     def test_text_similarity_still_merges_different_syndication_ids(self) -> None:
         df = pd.DataFrame(
             {
@@ -182,6 +246,137 @@ class SyndicationGroupingTests(unittest.TestCase):
         self.assertEqual(grouped["Group ID"].nunique(), 1)
         self.assertEqual(set(grouped["Grouping Source"]), {"SyndicationId + Text Similarity"})
         self.assertEqual(set(grouped["Grouping Warning"]), {"Multiple SyndicationIds in group"})
+
+    def test_rich_text_pair_between_normal_and_weak_thresholds_still_groups(self) -> None:
+        shared_details = " ".join(f"detail{number}" for number in range(34))
+        snippets = [f"{shared_details} alpha", f"{shared_details} beta"]
+        combined = [f"Shared report {snippet}" for snippet in snippets]
+
+        similarity = self._pairwise_cosine(*combined)
+        grouped = cluster_by_media_type(
+            self._grouping_frame(
+                ["Shared report", "Shared report"],
+                snippets,
+                ["platform-a", "platform-b"],
+            )
+        )
+
+        self.assertGreaterEqual(similarity, 0.935)
+        self.assertLess(similarity, 0.95)
+        self.assertEqual(grouped["Group ID"].nunique(), 1)
+        self.assertEqual(set(grouped["Grouping Source"]), {"SyndicationId + Text Similarity"})
+
+    def test_weak_pair_between_normal_and_weak_thresholds_does_not_group(self) -> None:
+        headline = "Regional public school officials announce expanded support program for students and families across the district"
+        snippets = [
+            "following detailed review at the regular board meeting with information posted online for families next week.",
+            "following detailed review at the special board meeting with information posted online for families next week.",
+        ]
+        combined = [f"{headline} {snippet}" for snippet in snippets]
+
+        similarity = self._pairwise_cosine(*combined)
+        grouped = cluster_by_media_type(
+            self._grouping_frame(
+                [headline, headline],
+                snippets,
+                ["platform-a", "platform-b"],
+            )
+        )
+
+        self.assertGreaterEqual(similarity, 0.935)
+        self.assertLess(similarity, 0.95)
+        self.assertEqual(grouped["Group ID"].nunique(), 2)
+        self.assertEqual(set(grouped["Grouping Source"]), {""})
+        self.assertEqual(set(grouped["Grouping Warning"]), {""})
+
+    def test_exact_normalized_sparse_duplicate_still_groups(self) -> None:
+        headline = "College Board announces expanded AP computer science course"
+        grouped = cluster_by_media_type(
+            self._grouping_frame(
+                [headline, headline],
+                [
+                    ">> Students can register online through their schools beginning next week.",
+                    "  Students   can register online through their schools beginning next week.  ",
+                ],
+                ["platform-a", "platform-b"],
+            )
+        )
+
+        self.assertEqual(grouped["Group ID"].nunique(), 1)
+        self.assertEqual(set(grouped["Grouping Source"]), {"SyndicationId + Text Similarity"})
+        self.assertEqual(set(grouped["Grouping Warning"]), {"Multiple SyndicationIds in group"})
+
+    def test_blank_snippet_is_weak_evidence(self) -> None:
+        shared_headline = " ".join(f"headline{number}" for number in range(34))
+        headlines = [f"{shared_headline} alpha", f"{shared_headline} beta"]
+
+        similarity = self._pairwise_cosine(*headlines)
+        grouped = cluster_by_media_type(
+            self._grouping_frame(headlines, ["", ""], ["platform-a", "platform-b"])
+        )
+
+        self.assertGreaterEqual(similarity, 0.935)
+        self.assertLess(similarity, 0.95)
+        self.assertEqual(grouped["Group ID"].nunique(), 2)
+
+    def test_rejected_weak_edges_cannot_form_a_transitive_bridge(self) -> None:
+        headline = " ".join(f"headline{number}" for number in range(45))
+        snippets = ["alpha", "beta", "gamma"]
+        matrix = TfidfVectorizer().fit_transform([f"{headline} {snippet}" for snippet in snippets])
+        similarities = (matrix * matrix.T).toarray()
+        grouped = cluster_by_media_type(
+            self._grouping_frame(
+                [headline, headline, headline],
+                snippets,
+                ["platform-a", "platform-b", "platform-c"],
+            )
+        )
+
+        self.assertTrue((similarities[0, 1:] >= 0.935).all())
+        self.assertTrue((similarities[0, 1:] < 0.95).all())
+        self.assertEqual(grouped["Group ID"].nunique(), 3)
+
+    def test_text_similarity_does_not_cross_media_type_boundaries(self) -> None:
+        headline = "College Board announces expanded AP computer science course"
+        snippet = "Students can register online through their schools beginning next week."
+        grouped = cluster_by_media_type(
+            self._grouping_frame(
+                [headline, headline],
+                [snippet, snippet],
+                ["platform-a", "platform-b"],
+                media_types=["ONLINE", "TV"],
+            )
+        )
+
+        self.assertEqual(grouped["Group ID"].nunique(), 2)
+
+    def test_clean_trad_grouping_columns_are_adjacent(self) -> None:
+        df = pd.DataFrame(
+            {
+                "Headline": ["Story"],
+                "Group ID": [1],
+                "Outlet": ["Example"],
+                "Grouping Warning": [""],
+                "SyndicationId": ["shared-id"],
+                "Grouping Source": ["SyndicationId"],
+                "Impressions": [100],
+            }
+        )
+
+        ordered = order_clean_trad_grouping_columns(df)
+
+        self.assertEqual(
+            list(ordered.columns),
+            [
+                "Headline",
+                "Group ID",
+                "SyndicationId",
+                "Grouping Source",
+                "Grouping Warning",
+                "Outlet",
+                "Impressions",
+            ],
+        )
 
     def test_prime_example_prefers_fuller_snippet_for_ai_representative(self) -> None:
         full_snippet = " ".join(["full article text"] * 80)

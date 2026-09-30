@@ -10,6 +10,7 @@ from processing.effective_reach import (
 )
 
 from processing.story_grouping import (
+    NORMAL_TEXT_SIMILARITY_THRESHOLD,
     cluster_by_media_type,
     build_unique_story_table,
     mark_prime_examples,
@@ -22,7 +23,7 @@ def run_basic_cleaning_pipeline(
     merge_online: bool = True,
     drop_dupes: bool = True,
     add_coverage_flags: bool = True,
-    similarity_threshold: float = 0.935,
+    similarity_threshold: float = NORMAL_TEXT_SIMILARITY_THRESHOLD,
     max_batch_size: int = 1800,
 ) -> dict:
     cleaning_results = run_standard_cleaning(

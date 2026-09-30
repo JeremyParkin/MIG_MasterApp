@@ -128,6 +128,13 @@ JEV_REQUEST_METADATA_COLUMNS = [
     "Jev Raw Response",
 ]
 
+CLEAN_TRAD_GROUPING_COLUMNS = [
+    "Group ID",
+    "SyndicationId",
+    "Grouping Source",
+    "Grouping Warning",
+]
+
 RAPID_CORE_EXPORT_COLUMNS = [
     "Final Rapid Relevance",
     "Final Rapid Sentiment 3-Way",
@@ -291,6 +298,22 @@ def remove_inactive_workflow_columns(
         out = out.drop(columns=rapid_all_cols, errors="ignore")
 
     return out
+
+
+def order_clean_trad_grouping_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep canonical grouping metadata adjacent without disturbing other export columns."""
+    if df is None or "Group ID" not in df.columns:
+        return pd.DataFrame() if df is None else df.copy()
+
+    grouping_columns = [column for column in CLEAN_TRAD_GROUPING_COLUMNS if column in df.columns]
+    if len(grouping_columns) <= 1:
+        return df.copy()
+
+    group_id_position = df.columns.get_loc("Group ID")
+    remaining_columns = [column for column in df.columns if column not in grouping_columns]
+    insert_at = sum(column not in grouping_columns for column in df.columns[:group_id_position])
+    ordered_columns = remaining_columns[:insert_at] + grouping_columns + remaining_columns[insert_at:]
+    return df.loc[:, ordered_columns].copy()
 
 
 def build_scoped_traditional_export_bundle(session_state) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -2086,6 +2109,7 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
                 session_state,
                 include_labeling_audit_columns=include_labeling_audit_columns,
             )
+            trad_export = order_clean_trad_grouping_columns(trad_export)
             if "Impressions" in trad_export.columns:
                 trad_export = trad_export.sort_values(by=["Impressions"], ascending=False)
             trad_export.to_excel(writer, sheet_name="CLEAN TRAD", startrow=1, header=False, index=False)

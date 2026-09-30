@@ -9,6 +9,7 @@ import string
 import time
 from typing import List
 
+import numpy as np
 import pandas as pd
 from scipy import sparse
 from scipy.sparse import csgraph
@@ -21,6 +22,9 @@ CLUSTER_SOURCE_ID_COL = "__cluster_source_row__"
 GROUPING_SOURCE_COL = "Grouping Source"
 GROUPING_WARNING_COL = "Grouping Warning"
 SYNDICATION_ID_COL = "SyndicationId"
+NORMAL_TEXT_SIMILARITY_THRESHOLD = 0.935
+WEAK_EVIDENCE_SIMILARITY_THRESHOLD = 0.95
+WEAK_SNIPPET_TOKEN_BOUNDARY = 20
 
 
 def _normalized_column_key(column: object) -> str:
@@ -185,7 +189,19 @@ def cluster_similar_stories(df: pd.DataFrame, similarity_threshold: float) -> pd
     radius = max(1.0 - similarity_threshold, 0.0)
     nn = NearestNeighbors(metric="cosine", radius=radius, algorithm="brute", n_jobs=-1)
     nn.fit(tfidf_matrix)
-    graph = nn.radius_neighbors_graph(tfidf_matrix, radius=radius, mode="connectivity")
+    graph = nn.radius_neighbors_graph(tfidf_matrix, radius=radius, mode="distance")
+
+    snippet_token_counts = df["Normalized Snippet"].str.split().str.len().to_numpy(dtype=np.int32)
+    weak_snippet_rows = snippet_token_counts < WEAK_SNIPPET_TOKEN_BOUNDARY
+    source_weakness = np.repeat(weak_snippet_rows, np.diff(graph.indptr))
+    edge_has_weak_evidence = source_weakness | weak_snippet_rows[graph.indices]
+    weak_distance_threshold = max(1.0 - WEAK_EVIDENCE_SIMILARITY_THRESHOLD, 0.0)
+
+    # Less text evidence requires stronger similarity to reduce false canonical merges.
+    keep_edge = ~edge_has_weak_evidence | (graph.data <= min(radius, weak_distance_threshold))
+    graph.data = keep_edge.astype(np.int8, copy=False)
+    graph.eliminate_zeros()
+    graph.data.fill(1)
     graph = graph + sparse.eye(graph.shape[0], format="csr")
 
     _, labels = csgraph.connected_components(graph, directed=False)
@@ -324,6 +340,7 @@ def _apply_hybrid_group_metadata(df: pd.DataFrame) -> pd.DataFrame:
     )
     group_has_syndication = has_syndication.groupby(out["Group ID"]).transform("any")
     group_has_blank_syndication = (~has_syndication).groupby(out["Group ID"]).transform("any")
+    group_sizes = out.groupby("Group ID")["Group ID"].transform("size")
 
     out[GROUPING_SOURCE_COL] = "Text Similarity"
     out.loc[group_has_syndication & syndication_count.eq(1) & ~group_has_blank_syndication, GROUPING_SOURCE_COL] = "SyndicationId"
@@ -331,21 +348,22 @@ def _apply_hybrid_group_metadata(df: pd.DataFrame) -> pd.DataFrame:
         group_has_syndication & (syndication_count.gt(1) | group_has_blank_syndication),
         GROUPING_SOURCE_COL,
     ] = "SyndicationId + Text Similarity"
+    # A singleton was not grouped with another row, regardless of its clustering path.
+    out.loc[group_sizes.eq(1), GROUPING_SOURCE_COL] = ""
 
     warning_parts = pd.Series("", index=out.index, dtype="object")
     warning_parts = warning_parts.mask(syndication_count.gt(1), "Multiple SyndicationIds in group")
-    group_sizes = out.groupby("Group ID")["Group ID"].transform("size")
     warning_parts = warning_parts.mask(
         group_sizes.gt(50),
         warning_parts.where(warning_parts.eq(""), warning_parts + "; ") + "Large group",
     )
-    out[GROUPING_WARNING_COL] = warning_parts.fillna("")
+    out[GROUPING_WARNING_COL] = warning_parts.mask(group_sizes.eq(1), "").fillna("")
     return out
 
 
 def cluster_by_media_type_legacy(
     df: pd.DataFrame,
-    similarity_threshold: float = 0.935,
+    similarity_threshold: float = NORMAL_TEXT_SIMILARITY_THRESHOLD,
     max_batch_size: int = 1800,
 ) -> pd.DataFrame:
     type_column = "Media Type" if "Media Type" in df.columns else "Type"
@@ -402,7 +420,7 @@ def _canonical_cluster_signature(df: pd.DataFrame) -> list[tuple[int, ...]]:
 
 def cluster_by_media_type(
     df: pd.DataFrame,
-    similarity_threshold: float = 0.935,
+    similarity_threshold: float = NORMAL_TEXT_SIMILARITY_THRESHOLD,
     max_batch_size: int = 1800,
     use_syndication_id: bool = True,
 ) -> pd.DataFrame:
@@ -486,7 +504,7 @@ def cluster_by_media_type(
 
 def cluster_by_media_type_with_timings(
     df: pd.DataFrame,
-    similarity_threshold: float = 0.935,
+    similarity_threshold: float = NORMAL_TEXT_SIMILARITY_THRESHOLD,
     max_batch_size: int = 1800,
     validate: bool = False,
     use_syndication_id: bool = True,

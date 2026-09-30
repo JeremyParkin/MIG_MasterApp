@@ -18,6 +18,7 @@ from processing.effective_reach import (
 )
 
 from processing.story_grouping import (
+    NORMAL_TEXT_SIMILARITY_THRESHOLD,
     cluster_by_media_type,
     build_unique_story_table,
     mark_prime_examples,
@@ -162,7 +163,7 @@ def run_basic_cleaning_stage_3() -> None:
     start = time.time()
     df_ai_grouped = cluster_by_media_type(
         df=st.session_state.df_traditional,
-        similarity_threshold=0.935,
+        similarity_threshold=NORMAL_TEXT_SIMILARITY_THRESHOLD,
         max_batch_size=1800,
     )
     df_ai_grouped = mark_prime_examples(df_ai_grouped)
