@@ -50,6 +50,7 @@ from processing.jev_sentiment import (
     run_jev_sentiment_batch,
 )
 from processing.rapid_second_opinion import (
+    RAPID_REVIEW_DEFAULT_BATCH_SIZE,
     RAPID_REVIEW_MAX_WORKERS,
     RAPID_REVIEW_MODEL,
     build_rapid_review_candidates,
@@ -57,7 +58,7 @@ from processing.rapid_second_opinion import (
     ensure_rapid_review_columns,
     get_openai_api_key,
     normalize_first_pass_sentiment,
-    resolve_rapid_review_recommendation,
+    resolve_rapid_review_batch_size,
     run_rapid_review_batch,
 )
 from processing.rapid_resolution import (
@@ -153,6 +154,8 @@ def init_jev_sentiment_state() -> None:
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+    for obsolete_suffix in ("target_batch", "target_source_count"):
+        st.session_state.pop(f"rapid_review_{obsolete_suffix}", None)
 
 
 def reset_jev_sentiment_state() -> None:
@@ -180,6 +183,8 @@ def reset_jev_sentiment_state() -> None:
         "rapid_tag_observation_fingerprint",
         "rapid_tag_observation_mode",
         "rapid_tag_observation_include_other",
+        "rapid_review_batch_size",
+        "rapid_review_batch_size_input",
     ]:
         st.session_state.pop(key, None)
     init_jev_sentiment_state()
@@ -197,8 +202,6 @@ def reset_jev_results() -> None:
     st.session_state.df_jev_sentiment_unique = unique
     st.session_state.pop("__last_jev_sentiment_batch_summary__", None)
     st.session_state.pop("__last_rapid_review_batch_summary__", None)
-    st.session_state.pop("rapid_review_target_batch", None)
-    st.session_state.pop("rapid_review_target_source_count", None)
 
 
 def format_sample_mode(mode: str) -> str:
@@ -1165,8 +1168,6 @@ if st.session_state.jev_sentiment_section == "Prepare Sample":
         st.session_state.jev_sentiment_config_step = True
         st.session_state.pop("__last_jev_sentiment_batch_summary__", None)
         st.session_state.pop("__last_rapid_review_batch_summary__", None)
-        st.session_state.pop("rapid_review_target_batch", None)
-        st.session_state.pop("rapid_review_target_source_count", None)
         if previous_fingerprint and previous_fingerprint != next_fingerprint:
             st.toast("Rapid Tag configuration changed; previous Rapid results were reset.")
         st.session_state.jev_sentiment_section = "Run Jev Analysis"
@@ -1908,8 +1909,6 @@ if stored_analysis_fingerprint and stored_analysis_fingerprint != current_analys
     if status.ne("").any():
         st.session_state.df_jev_sentiment_unique = clear_rapid_review_columns(unique_df)
         st.session_state.pop("__last_rapid_review_batch_summary__", None)
-        st.session_state.pop("rapid_review_target_batch", None)
-        st.session_state.pop("rapid_review_target_source_count", None)
         st.warning("Analysis Context changed, so Rapid second-opinion results were cleared. Run second opinion again after confirming the current Rapid first-pass results are still appropriate.")
     st.session_state.jev_analysis_context_fingerprint = current_analysis_fingerprint
     unique_df = st.session_state.df_jev_sentiment_unique
@@ -1918,7 +1917,7 @@ eligible_count, sample_used, grouped_count, processed_count, error_count, remain
 
 if st.session_state.jev_sentiment_section == "AI Second Opinion":
     st.caption(
-        "Selectively rerun higher-value or higher-risk processed Rapid rows through one combined Luna review call."
+        "Run the remaining eligible Rapid rows through one combined Luna review call per story."
     )
 
     review_candidates = build_rapid_review_candidates(
@@ -1929,16 +1928,6 @@ if st.session_state.jev_sentiment_section == "AI Second Opinion":
     reviewed_count = int(review_status.str.upper().eq("COMPLETED").sum())
     review_error_count = int(review_status.str.upper().eq("ERROR").sum())
     remaining_review_count = len(review_candidates)
-    recommendation = resolve_rapid_review_recommendation(
-        stored_target=int(st.session_state.get("rapid_review_target_batch", 0) or 0),
-        stored_source_count=int(st.session_state.get("rapid_review_target_source_count", 0) or 0),
-        current_source_count=processed_count,
-        completed_count=reviewed_count,
-        eligible_count=remaining_review_count,
-    )
-    st.session_state.rapid_review_target_batch = int(recommendation["target"])
-    st.session_state.rapid_review_target_source_count = int(recommendation["source_count"])
-    recommended_review_batch = int(recommendation["recommended_batch"])
 
     review_metrics = st.columns(4)
     review_metrics[0].metric("Rapid-labeled stories", f"{processed_count:,}")
@@ -1971,23 +1960,28 @@ if st.session_state.jev_sentiment_section == "AI Second Opinion":
         review_batch_size = 0
         st.info("No Rapid rows are currently eligible for second opinion.")
     else:
-        default_manual_batch = min(10, remaining_review_count) if recommended_review_batch == 0 else recommended_review_batch
-        stored_review_batch_size = int(st.session_state.get("rapid_review_batch_size", default_manual_batch or 1) or 1)
-        batch_col, recommendation_col = st.columns([1.3, 1], gap="medium")
-        with recommendation_col:
-            st.metric("Recommended remaining batch", f"{recommended_review_batch:,}")
-            st.caption("Remaining available may be larger; priority rules order the pool, not eligibility.")
-        with batch_col:
-            review_batch_size = st.number_input(
-                "Second-opinion batch size",
-                min_value=1,
-                max_value=max(1, remaining_review_count),
-                value=max(1, min(stored_review_batch_size, remaining_review_count)),
-                step=1,
-                key="rapid_review_batch_size",
-            )
-        if recommended_review_batch == 0:
-            st.caption("The current recommended Rapid second-opinion coverage has already been reached. You can still run more manually if desired.")
+        stored_review_batch_size = st.session_state.get(
+            "rapid_review_batch_size",
+            RAPID_REVIEW_DEFAULT_BATCH_SIZE,
+        )
+        clamped_batch_size = resolve_rapid_review_batch_size(
+            stored_review_batch_size,
+            remaining_review_count,
+        )
+        st.session_state.rapid_review_batch_size_input = clamped_batch_size
+
+        def sync_rapid_review_batch_size() -> None:
+            st.session_state.rapid_review_batch_size = st.session_state.rapid_review_batch_size_input
+
+        review_batch_size = st.number_input(
+            "Second-opinion batch size",
+            min_value=1,
+            max_value=remaining_review_count,
+            value=clamped_batch_size,
+            step=1,
+            key="rapid_review_batch_size_input",
+            on_change=sync_rapid_review_batch_size,
+        )
 
     review_batch_df = review_candidates.head(int(review_batch_size or 0)).copy()
     run_review_clicked = st.button(
@@ -2249,6 +2243,12 @@ if run_clicked:
     summary["method"] = "Rapid Labeling"
     st.session_state.df_jev_sentiment_unique = updated
     st.session_state["__last_jev_sentiment_batch_summary__"] = summary
+    apply_usage_to_session(
+        summary.get("input_tokens", 0),
+        0,
+        DEFAULT_JEV_MODEL,
+        provider_cost_usd=summary.get("cost_usd", 0.0),
+    )
     st.rerun()
 
 with st.expander("Rapid request/state/question preview", expanded=False):

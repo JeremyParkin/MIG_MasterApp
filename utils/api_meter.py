@@ -85,16 +85,31 @@ def estimate_cost_usd(in_tokens: int, out_tokens: int, model_name: str) -> float
 # ----------------------------
 # Session application
 # ----------------------------
-def apply_usage_to_session(in_tokens: int, out_tokens: int, model_name: str) -> None:
+def apply_usage_to_session(
+    in_tokens: int,
+    out_tokens: int,
+    model_name: str,
+    *,
+    provider_cost_usd: float | None = None,
+) -> None:
     """
     Apply known token usage totals to the session meter.
+
+    When a provider returns an authoritative cost, use it instead of the
+    local model-price estimate.
     Call this on the main thread after a batch completes or after a single request.
     """
     init_api_meter()
 
     in_tokens = int(in_tokens or 0)
     out_tokens = int(out_tokens or 0)
-    total_cost = estimate_cost_usd(in_tokens, out_tokens, model_name)
+    if provider_cost_usd is None:
+        total_cost = estimate_cost_usd(in_tokens, out_tokens, model_name)
+    else:
+        try:
+            total_cost = max(0.0, float(provider_cost_usd))
+        except (TypeError, ValueError):
+            total_cost = estimate_cost_usd(in_tokens, out_tokens, model_name)
 
     meter = st.session_state.api_meter
     meter["in_tokens"] += in_tokens

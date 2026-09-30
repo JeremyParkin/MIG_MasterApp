@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import io
 import unittest
+from pathlib import Path
 
+import dill
 import pandas as pd
 
 from processing.ai_tagging import RESERVED_OTHER_TAG
@@ -17,10 +20,15 @@ from processing.rapid_second_opinion import (
     normalize_first_pass_sentiment,
     normalize_sentiment_outcome,
     parse_rapid_review_response,
-    recommend_rapid_review_batch_size,
-    resolve_rapid_review_recommendation,
+    resolve_rapid_review_batch_size,
     run_rapid_review_batch,
 )
+from utils.session_snapshot import build_serializable_session_payload, load_session_state_from_file
+
+
+class State(dict):
+    __getattr__ = dict.__getitem__
+    __setattr__ = dict.__setitem__
 
 
 class RapidSecondOpinionTests(unittest.TestCase):
@@ -259,19 +267,6 @@ class RapidSecondOpinionTests(unittest.TestCase):
         self.assertEqual(candidates["Group ID"].tolist(), [2, 1])
         self.assertEqual(len(candidates), 2)
 
-    def test_completed_recommendation_can_leave_available_pool(self) -> None:
-        df = pd.DataFrame([self.make_row(**{"Group ID": i}) for i in range(1, 39)])
-        candidates = build_rapid_review_candidates(df, tag_definitions=self.tags)
-        recommendation = resolve_rapid_review_recommendation(
-            stored_target=62,
-            stored_source_count=100,
-            current_source_count=100,
-            completed_count=62,
-            eligible_count=len(candidates),
-        )
-        self.assertEqual(len(candidates), 38)
-        self.assertEqual(recommendation["recommended_batch"], 0)
-
     def test_failed_and_unusable_first_pass_rows_excluded(self) -> None:
         df = pd.DataFrame(
             [
@@ -355,73 +350,133 @@ class RapidSecondOpinionTests(unittest.TestCase):
         self.assertEqual(updated.loc[0, "Rapid Review Status"], "Completed")
         self.assertEqual(updated.loc[1, "Rapid Review Status"], "Error")
 
-    def test_recommendation_target_initially_stored(self) -> None:
-        recommendation = resolve_rapid_review_recommendation(
-            stored_target=0,
-            stored_source_count=0,
-            current_source_count=100,
-            completed_count=0,
-            eligible_count=100,
+    def test_failed_second_opinion_row_remains_retryable(self) -> None:
+        df = pd.DataFrame(
+            [
+                self.make_row(**{"Group ID": 1}),
+                self.make_row(**{"Group ID": 2, "Headline": "Bad row"}),
+            ]
         )
-        self.assertEqual(recommendation["target"], recommend_rapid_review_batch_size(100))
-        self.assertEqual(recommendation["recommended_batch"], 35)
-        self.assertTrue(recommendation["reset"])
+        candidates = build_rapid_review_candidates(df, tag_definitions=self.tags)
 
-    def test_recommendation_partial_run_reduces_remaining(self) -> None:
-        recommendation = resolve_rapid_review_recommendation(
-            stored_target=34,
-            stored_source_count=96,
-            current_source_count=96,
-            completed_count=10,
-            eligible_count=86,
-        )
-        self.assertEqual(recommendation["target"], 34)
-        self.assertEqual(recommendation["recommended_batch"], 24)
-        self.assertFalse(recommendation["reset"])
+        def fake_call(prompt, api_key, *, model, tag_definitions):
+            if "Bad row" in prompt:
+                raise ValueError("boom")
+            return (
+                {
+                    "sentiment_outcome": "3",
+                    "sentiment_confidence": 80,
+                    "sentiment_rationale": "Favorable.",
+                    "best_tag": "Programs",
+                    "applicable_tags": ["Programs"],
+                    "tag_confidence": 70,
+                    "tag_rationale": "Program coverage.",
+                },
+                100,
+                20,
+                "{}",
+            )
 
-    def test_recommendation_completion_does_not_create_new_tranche(self) -> None:
-        recommendation = resolve_rapid_review_recommendation(
-            stored_target=34,
-            stored_source_count=96,
-            current_source_count=96,
-            completed_count=34,
-            eligible_count=62,
+        updated, _ = run_rapid_review_batch(
+            df,
+            candidates,
+            self.analysis_payload,
+            "test-key",
+            tag_definitions=self.tags,
+            limit=2,
+            max_workers=1,
+            call_fn=fake_call,
         )
-        self.assertEqual(recommendation["recommended_batch"], 0)
-        self.assertEqual(recommendation["remaining_recommended"], 0)
-        self.assertFalse(recommendation["reset"])
+        retry_candidates = build_rapid_review_candidates(updated, tag_definitions=self.tags)
+        self.assertEqual(retry_candidates["Group ID"].tolist(), [2])
 
-    def test_recommendation_remaining_eligible_available_without_auto_recommending(self) -> None:
-        recommendation = resolve_rapid_review_recommendation(
-            stored_target=12,
-            stored_source_count=20,
-            current_source_count=20,
-            completed_count=12,
-            eligible_count=8,
+    def test_successive_batches_exhaust_the_full_priority_sorted_pool(self) -> None:
+        df = pd.DataFrame(
+            [
+                self.make_row(**{"Group ID": 1, "Headline": "Routine one"}),
+                self.make_row(
+                    **{
+                        "Group ID": 2,
+                        "Headline": "Priority two",
+                        "Jev Sentiment": "POSITIVE",
+                        "Jev 5-Way Sentiment": "SOMEWHAT POSITIVE",
+                        "Jev Sentiment Score": -3,
+                    }
+                ),
+                self.make_row(**{"Group ID": 3, "Headline": "Routine three"}),
+            ]
         )
-        self.assertEqual(recommendation["recommended_batch"], 0)
-        self.assertEqual(recommendation["target"], 12)
+        calls: list[str] = []
 
-    def test_recommendation_resets_when_first_pass_population_changes(self) -> None:
-        recommendation = resolve_rapid_review_recommendation(
-            stored_target=12,
-            stored_source_count=20,
-            current_source_count=40,
-            completed_count=12,
-            eligible_count=28,
-        )
-        self.assertTrue(recommendation["reset"])
-        self.assertEqual(recommendation["target"], recommend_rapid_review_batch_size(28))
+        def fake_call(prompt, api_key, *, model, tag_definitions):
+            calls.append(prompt)
+            return (
+                {
+                    "sentiment_outcome": "3",
+                    "sentiment_confidence": 80,
+                    "sentiment_rationale": "Favorable.",
+                    "best_tag": "Programs",
+                    "applicable_tags": ["Programs"],
+                    "tag_confidence": 70,
+                    "tag_rationale": "Program coverage.",
+                },
+                100,
+                20,
+                "{}",
+            )
 
-    def test_failed_rows_do_not_count_toward_recommendation_target(self) -> None:
-        recommendation = resolve_rapid_review_recommendation(
-            stored_target=10,
-            stored_source_count=10,
-            current_source_count=10,
-            completed_count=7,
-            eligible_count=3,
+        first_candidates = build_rapid_review_candidates(df, tag_definitions=self.tags)
+        self.assertEqual(first_candidates["Group ID"].tolist(), [2, 1, 3])
+        updated, first_summary = run_rapid_review_batch(
+            df,
+            first_candidates,
+            self.analysis_payload,
+            "test-key",
+            tag_definitions=self.tags,
+            limit=2,
+            max_workers=1,
+            call_fn=fake_call,
         )
-        self.assertEqual(recommendation["recommended_batch"], 3)
+        self.assertEqual(first_summary["successful"], 2)
+        self.assertIn("Priority two", calls[0])
+        self.assertEqual(build_rapid_review_candidates(updated, tag_definitions=self.tags)["Group ID"].tolist(), [3])
+
+        updated, second_summary = run_rapid_review_batch(
+            updated,
+            build_rapid_review_candidates(updated, tag_definitions=self.tags),
+            self.analysis_payload,
+            "test-key",
+            tag_definitions=self.tags,
+            limit=2,
+            max_workers=1,
+            call_fn=fake_call,
+        )
+        self.assertEqual(second_summary["successful"], 1)
+        self.assertTrue(build_rapid_review_candidates(updated, tag_definitions=self.tags).empty)
+
+    def test_batch_size_defaults_to_fifty_and_clamps_to_remaining(self) -> None:
+        self.assertEqual(resolve_rapid_review_batch_size(None, 120), 50)
+        self.assertEqual(resolve_rapid_review_batch_size(50, 12), 12)
+        self.assertEqual(resolve_rapid_review_batch_size(100, 75), 75)
+        self.assertEqual(resolve_rapid_review_batch_size(0, 75), 50)
+        self.assertEqual(resolve_rapid_review_batch_size(100, 0), 0)
+
+    def test_manual_batch_size_persists_through_snapshot_round_trip(self) -> None:
+        state = State(rapid_review_batch_size=100)
+        payload, skipped = build_serializable_session_payload(state)
+        self.assertEqual(skipped, [])
+        restored = State()
+        load_session_state_from_file(restored, io.BytesIO(dill.dumps(payload)))
+        self.assertEqual(restored.rapid_review_batch_size, 100)
+        self.assertEqual(resolve_rapid_review_batch_size(restored.rapid_review_batch_size, 120), 100)
+
+    def test_recommendation_helpers_and_ui_are_removed(self) -> None:
+        import processing.rapid_second_opinion as rapid_review
+
+        self.assertFalse(hasattr(rapid_review, "recommend_rapid_review_batch_size"))
+        self.assertFalse(hasattr(rapid_review, "resolve_rapid_review_recommendation"))
+        page_source = (Path(__file__).resolve().parents[1] / "pages" / "Jev_Sentiment_Experimental.py").read_text()
+        self.assertNotIn("Recommended remaining batch", page_source)
 
 
 if __name__ == "__main__":

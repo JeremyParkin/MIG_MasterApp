@@ -23,6 +23,7 @@ from utils.api_meter import estimate_cost_usd, extract_usage_tokens
 RAPID_REVIEW_MODEL = "gpt-5.6-luna"
 RAPID_REVIEW_MAX_RETRIES = 2
 RAPID_REVIEW_MAX_WORKERS = 4
+RAPID_REVIEW_DEFAULT_BATCH_SIZE = 50
 RAPID_REVIEW_CONFIDENCE_LOW = 0.60
 RAPID_REVIEW_PROBABILITY_LOW = 0.60
 RAPID_REVIEW_CLOSE_MARGIN = 0.15
@@ -30,7 +31,6 @@ RAPID_REVIEW_HIGH_MIXTURE = 2.0
 RAPID_REVIEW_MANY_TAGS = 4
 RAPID_REVIEW_RELEVANCE_STRONG = 0.75
 RAPID_REVIEW_RELEVANCE_WEAK = 0.25
-RAPID_REVIEW_RECOMMENDATION_CAP = 50
 
 ANCHOR_OUTCOMES = ("NOT_RELEVANT", "-7", "-5", "-3", "-1", "0", "1", "3", "5", "7")
 ANCHOR_SCORES = {-7, -5, -3, -1, 0, 1, 3, 5, 7}
@@ -97,46 +97,23 @@ def clear_rapid_review_columns(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def recommend_rapid_review_batch_size(
-    eligible_count: int,
+def resolve_rapid_review_batch_size(
+    stored_batch_size: Any,
+    remaining_eligible_count: int,
     *,
-    cap: int = RAPID_REVIEW_RECOMMENDATION_CAP,
+    default: int = RAPID_REVIEW_DEFAULT_BATCH_SIZE,
 ) -> int:
-    eligible_count = max(0, int(eligible_count or 0))
-    if eligible_count == 0:
+    """Return the practical execution chunk size for the remaining review pool."""
+    remaining = max(0, int(remaining_eligible_count or 0))
+    if remaining == 0:
         return 0
-    if eligible_count <= 12:
-        return eligible_count
-    if eligible_count <= 40:
-        return min(cap, eligible_count, max(12, round(eligible_count * 0.6)))
-    return min(cap, eligible_count, max(20, round(eligible_count * 0.35)))
-
-
-def resolve_rapid_review_recommendation(
-    *,
-    stored_target: int,
-    stored_source_count: int,
-    current_source_count: int,
-    completed_count: int,
-    eligible_count: int,
-) -> dict[str, int | bool]:
-    stored_target = max(0, int(stored_target or 0))
-    stored_source_count = max(0, int(stored_source_count or 0))
-    current_source_count = max(0, int(current_source_count or 0))
-    completed_count = max(0, int(completed_count or 0))
-    eligible_count = max(0, int(eligible_count or 0))
-
-    reset_target = stored_target <= 0 or stored_source_count != current_source_count
-    target = recommend_rapid_review_batch_size(eligible_count) if reset_target else stored_target
-    remaining_recommended = max(0, target - completed_count)
-    recommended_batch = min(eligible_count, remaining_recommended)
-    return {
-        "target": target,
-        "source_count": current_source_count,
-        "remaining_recommended": remaining_recommended,
-        "recommended_batch": recommended_batch,
-        "reset": reset_target,
-    }
+    try:
+        selected = int(stored_batch_size)
+    except (TypeError, ValueError):
+        selected = default
+    if selected < 1:
+        selected = default
+    return min(selected, remaining)
 
 
 def _clean_label(value: Any) -> str:

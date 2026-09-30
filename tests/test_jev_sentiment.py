@@ -49,6 +49,7 @@ from processing.download_exports import (
     merge_full_scope_ai_columns_into_clean_trad,
     remove_inactive_workflow_columns,
 )
+from utils import api_meter
 
 
 class JevSentimentTests(unittest.TestCase):
@@ -563,6 +564,28 @@ class JevSentimentTests(unittest.TestCase):
         self.assertEqual(parsed["methods"]["mixture"]["label"], "MOSTLY CONSISTENT")
         self.assertEqual(parsed["methods"]["mixture"]["score"], 1.2)
         self.assertEqual(parsed["methods"]["mixture"]["confidence"], 0.76)
+
+    def test_openrouter_provider_cost_updates_the_session_meter_exactly(self) -> None:
+        class SessionState(dict):
+            __getattr__ = dict.__getitem__
+            __setattr__ = dict.__setitem__
+
+        session_state = SessionState()
+        with patch.object(api_meter.st, "session_state", session_state):
+            api_meter.apply_usage_to_session(
+                1_200,
+                0,
+                DEFAULT_JEV_MODEL,
+                provider_cost_usd=0.0000504,
+            )
+
+        self.assertEqual(session_state["api_meter"]["in_tokens"], 1_200)
+        self.assertEqual(session_state["api_meter"]["out_tokens"], 0)
+        self.assertAlmostEqual(session_state["api_meter"]["cost_usd"], 0.0000504)
+        self.assertAlmostEqual(
+            session_state["api_meter"]["by_model"][DEFAULT_JEV_MODEL]["cost_usd"],
+            0.0000504,
+        )
 
     def test_tag_response_parsing_and_assignment_modes(self) -> None:
         tag_definitions = parse_jev_tag_definitions("Access: Availability\nAffordability: Costs")
