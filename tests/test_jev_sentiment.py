@@ -1422,6 +1422,8 @@ class JevSentimentTests(unittest.TestCase):
                 {
                     "Group ID": [1],
                     "Jev Sentiment": ["POSITIVE"],
+                    "Jev Input Tokens": [1200],
+                    "Jev Cost USD": [0.00009],
                     "Jev Raw Response": ['{"answers": {}}'],
                 }
             )
@@ -1438,14 +1440,19 @@ class JevSentimentTests(unittest.TestCase):
 
         self.assertEqual(value_by_field["Rapid Labeling Sample Sheet"], "RAPID LABELING SAMPLE")
         self.assertEqual(value_by_field["Rapid Labeling Sampled Article Rows"], 1)
-        self.assertEqual(value_by_field["Rapid Labeling Grouped Results Sheet"], "RAPID LABELING GROUPED RESULTS")
-        self.assertEqual(value_by_field["Rapid Labeling Grouped Results Rows"], 1)
-        self.assertEqual(value_by_field["Rapid Labeling Usage/Cost Source"], "RAPID LABELING GROUPED RESULTS")
+        self.assertEqual(value_by_field["Rapid Labeling Grouped Usage Records"], 1)
+        self.assertEqual(value_by_field["Rapid Labeling Input Tokens"], 1200)
+        self.assertAlmostEqual(value_by_field["Rapid Labeling Cost USD"], 0.00009)
+        self.assertEqual(
+            value_by_field["Rapid Labeling Usage/Cost Basis"],
+            "Internal grouped records (one per Group ID)",
+        )
         self.assertNotIn("Jev Experimental Sample Sheet", value_by_field)
+        self.assertNotIn("Rapid Labeling Grouped Results Sheet", value_by_field)
 
         workbook = pd.ExcelFile(io.BytesIO(build_clean_workbook_bytes(state)))
         self.assertIn("RAPID LABELING SAMPLE", workbook.sheet_names)
-        self.assertIn("RAPID LABELING GROUPED RESULTS", workbook.sheet_names)
+        self.assertNotIn("RAPID LABELING GROUPED RESULTS", workbook.sheet_names)
 
     def test_sentiment_export_preserves_raw_first_pass_and_review_fields(self) -> None:
         sentiment_rows = pd.DataFrame(

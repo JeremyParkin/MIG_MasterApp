@@ -27,7 +27,6 @@ from processing.ai_sentiment import (
 )
 from processing.jev_sentiment import (
     JEV_SHARED_RESULT_COLUMNS,
-    RAPID_LABELING_GROUPED_RESULTS_SHEET_NAME,
     RAPID_LABELING_SAMPLE_SHEET_NAME,
     rapid_labeling_column_name,
     rename_jev_columns_to_rapid,
@@ -1401,7 +1400,16 @@ def build_export_metadata_sheet(
     tagging_sample_rows = shared_sample_rows if tagging_sample_sheet == "SAMPLED AI RESULTS" else len(build_tagging_sample_export(session_state))
     sentiment_sample_rows = shared_sample_rows if sentiment_sample_sheet == "SAMPLED AI RESULTS" else len(build_sentiment_sample_export(session_state))
     rapid_sample_rows = len(build_rapid_labeling_sample_export(session_state))
-    rapid_grouped_result_rows = len(build_jev_sentiment_sample_export(session_state))
+    rapid_grouped_results = build_jev_sentiment_sample_export(session_state, include_audit=True)
+    rapid_grouped_result_rows = len(rapid_grouped_results)
+    rapid_input_tokens = pd.to_numeric(
+        rapid_grouped_results.get("Rapid Labeling Input Tokens", pd.Series(dtype="float")),
+        errors="coerce",
+    ).fillna(0).sum()
+    rapid_cost_usd = pd.to_numeric(
+        rapid_grouped_results.get("Rapid Labeling Cost USD", pd.Series(dtype="float")),
+        errors="coerce",
+    ).fillna(0).sum()
     session_started = format_session_started(session_state)
     session_duration = format_session_duration(get_current_session_duration_seconds(session_state))
 
@@ -1450,9 +1458,10 @@ def build_export_metadata_sheet(
         ("Rapid Labeling Processed Groups", jev_processed_groups),
         ("Rapid Labeling Sample Sheet", RAPID_LABELING_SAMPLE_SHEET_NAME if rapid_sample_rows else "No"),
         ("Rapid Labeling Sampled Article Rows", rapid_sample_rows),
-        ("Rapid Labeling Grouped Results Sheet", RAPID_LABELING_GROUPED_RESULTS_SHEET_NAME if rapid_grouped_result_rows else "No"),
-        ("Rapid Labeling Grouped Results Rows", rapid_grouped_result_rows),
-        ("Rapid Labeling Usage/Cost Source", RAPID_LABELING_GROUPED_RESULTS_SHEET_NAME if rapid_grouped_result_rows else "No"),
+        ("Rapid Labeling Grouped Usage Records", rapid_grouped_result_rows),
+        ("Rapid Labeling Input Tokens", int(rapid_input_tokens)),
+        ("Rapid Labeling Cost USD", float(rapid_cost_usd)),
+        ("Rapid Labeling Usage/Cost Basis", "Internal grouped records (one per Group ID)" if rapid_grouped_result_rows else "No"),
     ]
 
     if not excluded_counts_df.empty:
@@ -2258,22 +2267,6 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
             ws = writer.sheets[RAPID_LABELING_SAMPLE_SHEET_NAME]
             ws.set_tab_color("#9b59b6")
             cleaned_exports.append((RAPID_LABELING_SAMPLE_SHEET_NAME, rapid_sample_export, ws))
-
-        # RAPID LABELING GROUPED RESULTS: one row per request, including usage and debug metadata.
-        rapid_grouped_export = rename_ave(
-            build_jev_sentiment_sample_export(session_state, include_audit=include_labeling_audit_columns),
-            original_ave_col=original_ave_col,
-        )
-        if not rapid_grouped_export.empty:
-            rapid_grouped_export.to_excel(
-                writer,
-                sheet_name=RAPID_LABELING_GROUPED_RESULTS_SHEET_NAME,
-                header=True,
-                index=False,
-            )
-            ws = writer.sheets[RAPID_LABELING_GROUPED_RESULTS_SHEET_NAME]
-            ws.set_tab_color("#9b59b6")
-            cleaned_exports.append((RAPID_LABELING_GROUPED_RESULTS_SHEET_NAME, rapid_grouped_export, ws))
 
         # AUTHORS
         authors = build_author_insights_export_table(session_state, df_traditional=traditional)
