@@ -12,6 +12,7 @@ from processing.coverage_flags import add_coverage_flags
 
 SOCIAL_TYPES = ["FACEBOOK", "TWITTER", "X", "INSTAGRAM", "REDDIT", "YOUTUBE", "TIKTOK", "LINKEDIN", "BLUESKY"]
 BROADCAST_TYPES = ["RADIO", "TV"]
+MAX_UNDATED_FUZZY_DEDUPE_GROUP_SIZE = 250
 CANONICAL_MEDIA_TYPES = {
     "ONLINE",
     "ONLINE NEWS",
@@ -379,6 +380,9 @@ def dedupe_non_broadcast_by_fields(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.D
 
     if "Snippet" not in working.columns:
         working["Snippet"] = ""
+    working["_snippet_norm"] = working["Snippet"].map(normalize_snippet_for_compare)
+    working["_snippet_prefix_tokens"] = working["_snippet_norm"].map(_leading_token_tuple)
+    working["_snippet_len"] = working["_snippet_norm"].str.len()
 
     duplicate_indices = set()
 
@@ -386,30 +390,67 @@ def dedupe_non_broadcast_by_fields(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.D
         if len(group) <= 1:
             continue
 
-        group = group.copy()
+        group = group.sort_values(["_date_dt"], na_position="last", kind="mergesort").copy()
 
         indices = group.index.tolist()
         adjacency = {idx: set() for idx in indices}
 
+        for _, snippet_group in group.groupby("_snippet_norm", dropna=False):
+            if len(snippet_group) <= 1:
+                continue
+            snippet_norm = str(snippet_group["_snippet_norm"].iloc[0] or "")
+            if not snippet_norm:
+                continue
+            snippet_indices = snippet_group.index.tolist()
+            first_idx = snippet_indices[0]
+            for idx in snippet_indices[1:]:
+                adjacency[first_idx].add(idx)
+                adjacency[idx].add(first_idx)
+
         for i, idx_i in enumerate(indices):
             row_i = group.loc[idx_i]
             date_i = row_i["_date_dt"]
-            snippet_i = row_i.get("Snippet", "")
+            snippet_i = row_i["_snippet_norm"]
+            prefix_i = row_i["_snippet_prefix_tokens"]
 
             for idx_j in indices[i + 1:]:
                 row_j = group.loc[idx_j]
                 date_j = row_j["_date_dt"]
-                snippet_j = row_j.get("Snippet", "")
 
                 within_48h = False
                 if pd.notna(date_i) and pd.notna(date_j):
                     hours_diff = abs((date_j - date_i).total_seconds()) / 3600
                     within_48h = hours_diff <= 48
+                    if hours_diff > 48:
+                        break
 
-                sim = snippet_similarity(snippet_i, snippet_j)
-                snippet_match = sim >= 0.90
+                if within_48h:
+                    adjacency[idx_i].add(idx_j)
+                    adjacency[idx_j].add(idx_i)
+                    continue
 
-                if within_48h or snippet_match:
+                if pd.notna(date_i) and pd.notna(date_j):
+                    continue
+
+                if len(group) > MAX_UNDATED_FUZZY_DEDUPE_GROUP_SIZE:
+                    continue
+
+                snippet_j = row_j["_snippet_norm"]
+                if not snippet_i or not snippet_j:
+                    continue
+
+                if not lengths_are_similar_enough(row_i["_snippet_len"], row_j["_snippet_len"]):
+                    continue
+
+                if not _cheap_broadcast_similarity_gate(
+                    prefix_i,
+                    row_j["_snippet_prefix_tokens"],
+                    min_overlap_ratio=0.60,
+                    min_shared_tokens=3,
+                ):
+                    continue
+
+                if SequenceMatcher(None, snippet_i, snippet_j).ratio() >= 0.90:
                     adjacency[idx_i].add(idx_j)
                     adjacency[idx_j].add(idx_i)
 
@@ -439,8 +480,15 @@ def dedupe_non_broadcast_by_fields(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.D
     dupe_cols = working.loc[list(duplicate_indices)].copy() if duplicate_indices else pd.DataFrame()
     deduped = working.drop(index=list(duplicate_indices)).copy() if duplicate_indices else working.copy()
 
-    deduped.drop(columns=["_dedupe_key", "_date_dt"], inplace=True, errors="ignore")
-    dupe_cols.drop(columns=["_dedupe_key", "_date_dt"], inplace=True, errors="ignore")
+    helper_cols = [
+        "_dedupe_key",
+        "_date_dt",
+        "_snippet_norm",
+        "_snippet_prefix_tokens",
+        "_snippet_len",
+    ]
+    deduped.drop(columns=helper_cols, inplace=True, errors="ignore")
+    dupe_cols.drop(columns=helper_cols, inplace=True, errors="ignore")
 
     deduped = pd.concat([deduped, blank_set], ignore_index=True)
     return deduped, dupe_cols

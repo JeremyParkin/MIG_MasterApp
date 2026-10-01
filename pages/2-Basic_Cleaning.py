@@ -30,6 +30,7 @@ from utils.io import normalize_uploaded_dataframe
 warnings.filterwarnings("ignore")
 
 STAGED_BASIC_CLEANING_THRESHOLD = 10_000
+STAGED_BASIC_CLEANING_MEMORY_THRESHOLD_BYTES = 50 * 1024 * 1024
 
 st.title("Basic Cleaning")
 st.caption("Standardize the raw export, remove duplicates, calculate effective reach, and group similar coverage into unique stories.")
@@ -203,7 +204,15 @@ def should_use_staged_basic_cleaning() -> bool:
         return True
 
     source_df = get_pre_standard_source_df()
-    return len(source_df) >= STAGED_BASIC_CLEANING_THRESHOLD
+    if len(source_df) >= STAGED_BASIC_CLEANING_THRESHOLD:
+        return True
+
+    try:
+        memory_bytes = int(source_df.memory_usage(index=True, deep=True).sum())
+    except Exception:
+        memory_bytes = 0
+
+    return memory_bytes >= STAGED_BASIC_CLEANING_MEMORY_THRESHOLD_BYTES
 
 
 def render_preview_dataframe(df: pd.DataFrame, preview_rows: int = 1000) -> None:
