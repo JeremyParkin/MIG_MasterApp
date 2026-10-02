@@ -255,6 +255,8 @@ Large AI workflows can emit checkpoint reminders using `utils/ai_checkpoints.py`
 
 Tests are organized by behavior in `tests/`, including grouping, Analysis Context, legacy Sentiment/Tagging state, second-opinion batching, Top Stories validation, Authors, Rapid request/parsing/resolution/insights, report-copy coexistence, and export behavior.
 
+`tests/fixtures/agility/` contains the canonical durable Agility fixture family for the phased automated-testing build-out. `agility_golden_corpus.csv` is the primary normal-upload corpus. `agility_malformed_inputs.csv` is the focused bad-input/robustness corpus. `agility_golden_cleaned_workbook.xlsx` is generated from the golden corpus through the app's real normalization, Basic Cleaning, grouping, and clean-workbook export path. `agility_golden_multisheet_upload.xlsx` exercises the existing worksheet-selection path, with `Agility Export` as the intended data sheet. `MANIFEST.md` owns stable case IDs and fixture rationale without adding test-only IDs to production-facing data.
+
 Current milestone verification (September 2026):
 
 - `python -m unittest discover -s tests`: 203 passing tests.
