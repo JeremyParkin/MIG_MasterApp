@@ -259,6 +259,8 @@ Tests are organized by behavior in `tests/`, including grouping, Analysis Contex
 
 `tests/test_agility_fixture_spine.py` provides fixture-driven headless regression coverage for the deterministic workflow spine. The golden fixture verifies upload normalization, Basic Cleaning reconciliation, duplicate routing, semantic story grouping, Prime Example invariants, and 44 unique traditional stories. Clean workbook generation is verified semantically rather than by binary equality, and cleaned workbook sheets are validated as acceptable headless re-entry inputs. Multi-sheet workbook structure and discovery are covered headlessly, while actual Streamlit worksheet-selection interaction remains an E2E responsibility. Malformed-input coverage verifies warning classification and that deterministic processing terminates without crash or hang. The current full `tests/` suite passes at 233 tests.
 
+`e2e/` contains the Playwright/pytest browser E2E harness and is intentionally separate from the fast headless `tests/` suite. The harness launches Streamlit in the active Python environment on a dynamic local port, verifies readiness before testing, and isolates browser sessions per test. Current browser coverage verifies golden CSV upload through Basic Cleaning, malformed CSV warnings plus deterministic invalid-date remediation, multi-sheet XLSX selection of `Agility Export`, and the cleaned-workbook `CLEAN TRAD` re-entry boundary. Failure diagnostics include screenshots, Playwright traces, and the Streamlit server log. The current E2E suite passes at 4 tests, and the headless `tests/` suite passes at 233 tests.
+
 Current milestone verification (September 2026):
 
 - `python -m unittest discover -s tests`: 203 passing tests.

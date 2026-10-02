@@ -25,6 +25,8 @@ python-docx = "*"
 
 [dev-packages]
 pytest = "*"
+pytest-playwright = "*"
+playwright = "*"
 
 [requires]
 python_version = "3.13"
