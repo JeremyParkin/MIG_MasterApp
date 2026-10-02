@@ -257,6 +257,8 @@ Tests are organized by behavior in `tests/`, including grouping, Analysis Contex
 
 `tests/fixtures/agility/` contains the canonical durable Agility fixture family for the phased automated-testing build-out. `agility_golden_corpus.csv` is the primary normal-upload corpus. `agility_malformed_inputs.csv` is the focused bad-input/robustness corpus. `agility_golden_cleaned_workbook.xlsx` is generated from the golden corpus through the app's real normalization, Basic Cleaning, grouping, and clean-workbook export path. `agility_golden_multisheet_upload.xlsx` exercises the existing worksheet-selection path, with `Agility Export` as the intended data sheet. `MANIFEST.md` owns stable case IDs and fixture rationale without adding test-only IDs to production-facing data.
 
+`tests/test_agility_fixture_spine.py` provides fixture-driven headless regression coverage for the deterministic workflow spine. The golden fixture verifies upload normalization, Basic Cleaning reconciliation, duplicate routing, semantic story grouping, Prime Example invariants, and 44 unique traditional stories. Clean workbook generation is verified semantically rather than by binary equality, and cleaned workbook sheets are validated as acceptable headless re-entry inputs. Multi-sheet workbook structure and discovery are covered headlessly, while actual Streamlit worksheet-selection interaction remains an E2E responsibility. Malformed-input coverage verifies warning classification and that deterministic processing terminates without crash or hang. The current full `tests/` suite passes at 233 tests.
+
 Current milestone verification (September 2026):
 
 - `python -m unittest discover -s tests`: 203 passing tests.
