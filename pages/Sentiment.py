@@ -98,6 +98,10 @@ init_api_meter()
 st.session_state.setdefault("sentiment_observation_output", {})
 st.session_state.setdefault("sentiment_observation_include_nr", True)
 
+sentiment_reset_toast_message = st.session_state.pop("sentiment_reset_toast_message", None)
+if sentiment_reset_toast_message:
+    st.toast(sentiment_reset_toast_message, icon="✅")
+
 _last = st.session_state.get("__last_sentiment_batch_summary__")
 if _last and st.session_state.get("sentiment_section") == "Run":
     st.success(f"Completed AI sentiment for {_last['done']} grouped storie(s) in {_last['elapsed']:.1f}s.")
@@ -604,7 +608,7 @@ if st.session_state.sentiment_section == "Run":
         st.session_state.df_sentiment_rows = grouped.copy()
         reset_sentiment_processing_state(st.session_state)
         reset_workflow_checkpoints(st.session_state, "sentiment")
-        st.success("Reset AI sentiment results for the prepared dataset.")
+        st.session_state.sentiment_reset_toast_message = "Reset AI sentiment results for the prepared dataset."
         st.rerun()
 
     if run_clicked:

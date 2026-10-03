@@ -149,6 +149,9 @@ class TaggingModeStateTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn('st.button("Reset Processed Rows")', page_source)
+        self.assertIn('st.session_state.tagging_reset_toast_message = "Reset AI tagging results."', page_source)
+        self.assertIn('st.toast(tagging_reset_toast_message, icon="✅")', page_source)
+        self.assertNotIn('st.success("Reset AI tagging results.")', page_source)
         self.assertNotIn("Reset Tagging Dataset", page_source)
 
 

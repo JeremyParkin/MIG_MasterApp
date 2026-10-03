@@ -151,6 +151,12 @@ class SentimentProcessingResetTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn('st.button("Reset Processed Rows")', page_source)
+        self.assertIn(
+            'st.session_state.sentiment_reset_toast_message = "Reset AI sentiment results for the prepared dataset."',
+            page_source,
+        )
+        self.assertIn('st.toast(sentiment_reset_toast_message, icon="✅")', page_source)
+        self.assertNotIn('st.success("Reset AI sentiment results for the prepared dataset.")', page_source)
         self.assertNotIn("Reset Sentiment Dataset", page_source)
         self.assertIn('st.button("Prepare Sentiment Dataset", type="primary")', page_source)
 

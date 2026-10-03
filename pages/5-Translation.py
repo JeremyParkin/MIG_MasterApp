@@ -128,7 +128,6 @@ if go_clicked:
             st.session_state.df_traditional = trad
             st.session_state.df_social = social
             st.session_state.translated_headline = True
-            st.success("Done translating headlines!")
 
     if snippet_to_english and not snippet_done:
         with st.spinner("Translating snippets..."):
@@ -139,6 +138,5 @@ if go_clicked:
             st.session_state.df_traditional = trad
             st.session_state.df_social = social
             st.session_state.translated_snippet = True
-            st.success("Done translating snippets!")
 
     st.rerun()

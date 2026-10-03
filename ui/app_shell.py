@@ -107,7 +107,7 @@ def build_pages() -> list:
         st.Page("pages/7-Regions.py", title="Regions", icon=":material/public:"),
         st.Page("pages/Sentiment.py", title="Sentiment", icon=":material/auto_awesome:"),
         st.Page("pages/8-Tagging.py", title="Tagging", icon=":material/sell:"),
-        st.Page("pages/Jev_Sentiment_Experimental.py", title="Rapid Labeling", icon=":material/experiment:"),
+        st.Page("pages/Jev_Sentiment_Experimental.py", title="Rapid Labeling", icon=":material/experiment:", url_path="Rapid_Labeling"),
         st.Page("pages/11-Download.py", title="Download", icon=":material/download:"),
         st.Page("pages/12-Save_Load.py", title="Save & Load", icon=":material/save:"),
     ]

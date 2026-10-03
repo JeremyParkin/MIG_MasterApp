@@ -80,6 +80,10 @@ init_tagging_config_state(st.session_state)
 init_ai_tagging_state(st.session_state)
 init_api_meter()
 
+tagging_reset_toast_message = st.session_state.pop("tagging_reset_toast_message", None)
+if tagging_reset_toast_message:
+    st.toast(tagging_reset_toast_message, icon="✅")
+
 client_name = st.session_state.get("client_name", "")
 if not st.session_state.tags_text.strip():
     st.session_state.tags_text = build_default_tags_text(client_name)
@@ -534,7 +538,7 @@ if st.session_state.tagging_section == "Run":
         st.session_state.pop("tagging_second_opinion_target_batch", None)
         st.session_state.pop("tagging_second_opinion_target_source_count", None)
         reset_workflow_checkpoints(st.session_state, "tagging")
-        st.success("Reset AI tagging results.")
+        st.session_state.tagging_reset_toast_message = "Reset AI tagging results."
         st.rerun()
 
     if apply_clicked:

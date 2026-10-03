@@ -275,7 +275,7 @@ def render_authors_page() -> None:
 
         status_message = st.session_state.pop("authors_missing_status_message", None)
         if status_message:
-            st.toast(status_message)
+            st.toast(status_message, icon="✅")
 
         headline_table = build_fixable_headline_table(author_working_df)
         obvious_acceptance_table = build_obvious_author_acceptance_table(author_working_df)
@@ -547,6 +547,10 @@ def render_authors_page() -> None:
 
     def render_author_outlets_tab() -> None:
         st.session_state.authors_section = "Outlets"
+        authors_outlets_toast_message = st.session_state.pop("authors_outlets_toast_message", None)
+        if authors_outlets_toast_message:
+            st.toast(authors_outlets_toast_message, icon="✅")
+
         hide_table_row_index = """
             <style>
             tbody th {display:none}
@@ -589,7 +593,9 @@ def render_authors_page() -> None:
         prefetch_summary = prefetch_author_outlet_matches(auth_outlet_todo, auto_assign=auto_assign_requested)
 
         if prefetch_summary.get("auto_assigned_now", 0) > 0:
-            st.success(f"Auto-assigned {prefetch_summary['auto_assigned_now']} perfect match(es) from the prefetched author set.")
+            st.session_state.authors_outlets_toast_message = (
+                f"Auto-assigned {prefetch_summary['auto_assigned_now']} perfect match(es) from the prefetched author set."
+            )
             st.rerun()
 
         auto_assigned_rows = st.session_state.get("author_outlet_auto_assigned_rows", [])

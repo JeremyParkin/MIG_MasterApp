@@ -272,7 +272,10 @@ with st.container(border=True):
                 st.rerun()
 
         if st.session_state.get("analysis_context_suggestion_success"):
-            st.success("AI context suggestions were added to the fields below. You can edit them directly or expand the rationale if needed.")
+            st.toast(
+                "AI context suggestions were added to the fields below. You can edit them directly or expand the rationale if needed.",
+                icon="✅",
+            )
             st.session_state.analysis_context_suggestion_success = False
 
     st.markdown('<div class="entity-card-gap"></div>', unsafe_allow_html=True)
