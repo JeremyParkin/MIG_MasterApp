@@ -42,6 +42,12 @@ def standard_sidebar(target=None, *, key_suffix: str = "default") -> None:
                 padding-bottom: 0.22rem !important;
                 min-height: 0 !important;
             }
+            section[data-testid="stSidebar"] [class*="st-key-sidebar_page_help_open_"] button {
+                height: 2.5rem !important;
+                min-height: 2.5rem !important;
+                padding-top: 0.25rem !important;
+                padding-bottom: 0.25rem !important;
+            }
             section[data-testid="stSidebar"] [data-testid="stImage"] {
                 margin-bottom: 0.35rem;
             }
