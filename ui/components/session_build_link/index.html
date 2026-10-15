@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <style>
+      body { margin: 0; padding: 2px; background: transparent; font-family: sans-serif; }
+      a {
+        display: inline-block;
+        padding: 0.5rem 0.75rem;
+        border: 1px solid rgba(128, 128, 128, 0.5);
+        border-radius: 0.5rem;
+        color: inherit;
+        font-size: 16px;
+        font-weight: 400;
+        line-height: 1.6;
+        text-decoration: none;
+      }
+      a:hover { color: var(--control-primary, #AB26EF); border-color: currentColor; }
+      a:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+      a[aria-disabled="true"] { opacity: 0.55; pointer-events: none; }
+    </style>
+  </head>
+  <body>
+    <a id="build" href="#">Build session file</a>
+    <script>
+      const link = document.getElementById("build");
+      let lastClick = 0;
+      let pending = false;
+      const send = (type, payload = {}) => window.parent.postMessage(
+        { isStreamlitMessage: true, type, ...payload }, "*"
+      );
+
+      window.addEventListener("message", (event) => {
+        if (event.source !== window.parent || event.data?.type !== "streamlit:render") return;
+        link.textContent = event.data.args.label;
+        pending = Boolean(event.data.disabled);
+        link.setAttribute("aria-disabled", String(Boolean(event.data.disabled)));
+        if (event.data.theme?.font) document.body.style.fontFamily = event.data.theme.font;
+        if (event.data.theme?.textColor) document.body.style.color = event.data.theme.textColor;
+        if (event.data.theme?.primaryColor) {
+          document.body.style.setProperty("--control-primary", event.data.theme.primaryColor);
+        }
+        send("streamlit:setFrameHeight", { height: document.body.scrollHeight });
+      });
+
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        if (pending || link.getAttribute("aria-disabled") === "true") return;
+        pending = true;
+        link.setAttribute("aria-disabled", "true");
+        link.textContent = "Building session file…";
+        lastClick = Math.max(Date.now(), lastClick + 1);
+        send("streamlit:setComponentValue", { value: lastClick, dataType: "json" });
+      });
+
+      send("streamlit:componentReady", { apiVersion: 1 });
+      send("streamlit:setFrameHeight", { height: document.body.scrollHeight });
+    </script>
+  </body>
+</html>

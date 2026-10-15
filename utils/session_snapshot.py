@@ -19,32 +19,45 @@ EXCLUDED_SESSION_KEYS = {
     "notebooklm_zip_bytes",
     "notebooklm_info",
     "notebooklm_built_at",
+    # Transient button values cannot be assigned back to live Streamlit widgets.
+    "build_session_file",
+    "sidebar_page_help_open_pre",
+    "sidebar_page_help_open_post",
 }
 
 
-def build_serializable_session_payload(session_state) -> tuple[dict[str, Any], list[str]]:
+def _collect_session_payload(session_state) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "_snapshot_version": SNAPSHOT_VERSION,
         "_saved_at": current_timestamp_storage_string(),
     }
-    skipped: list[str] = []
-    dataframe_keys = sorted(
-        key for key, value in session_state.items() if isinstance(value, pd.DataFrame)
-    )
-    payload["df_names"] = dataframe_keys
-
     for key, value in session_state.items():
         if key.startswith("_") or key in EXCLUDED_SESSION_KEYS:
             continue
+        payload[key] = value
+    payload["df_names"] = sorted(
+        key for key, value in payload.items() if isinstance(value, pd.DataFrame)
+    )
+    payload.update(build_session_timing_snapshot_fields(session_state))
+    return payload
+
+
+def _filter_serializable_values(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    serializable: dict[str, Any] = {}
+    skipped: list[str] = []
+    for key, value in payload.items():
         try:
             dill.dumps(value)
         except Exception:
             skipped.append(key)
             continue
-        payload[key] = value
+        serializable[key] = value
+    serializable["df_names"] = [key for key in payload["df_names"] if key in serializable]
+    return serializable, skipped
 
-    payload.update(build_session_timing_snapshot_fields(session_state))
-    return payload, skipped
+
+def build_serializable_session_payload(session_state) -> tuple[dict[str, Any], list[str]]:
+    return _filter_serializable_values(_collect_session_payload(session_state))
 
 
 def build_session_snapshot_bytes(
@@ -52,10 +65,15 @@ def build_session_snapshot_bytes(
     *,
     payload_overrides: dict[str, Any] | None = None,
 ) -> tuple[bytes, list[str]]:
-    payload, skipped = build_serializable_session_payload(session_state)
+    payload = _collect_session_payload(session_state)
     if payload_overrides:
         payload.update(payload_overrides)
-    return dill.dumps(payload), skipped
+    try:
+        # Most sessions are fully serializable. Avoid serializing each dataframe twice.
+        return dill.dumps(payload), []
+    except Exception:
+        payload, skipped = _filter_serializable_values(payload)
+        return dill.dumps(payload), skipped
 
 
 def build_session_snapshot_filename(session_state) -> str:
@@ -102,7 +120,11 @@ def load_session_state_from_file(session_state, uploaded_file) -> None:
         restored_df_names.append(df_name)
 
     for key, value in session_data.items():
-        if key in restored_df_names or key in {"df_names", "_snapshot_version", "_saved_at"}:
+        if (
+            key in restored_df_names
+            or key in EXCLUDED_SESSION_KEYS
+            or key in {"df_names", "_snapshot_version", "_saved_at"}
+        ):
             continue
         session_state[key] = value
 

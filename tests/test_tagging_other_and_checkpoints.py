@@ -156,6 +156,31 @@ class TaggingModeStateTests(unittest.TestCase):
 
 
 class CheckpointAndSnapshotTests(unittest.TestCase):
+    def test_snapshot_excludes_prepared_files_and_discards_legacy_button_state(self) -> None:
+        transient_buttons = {
+            "build_session_file": True,
+            "sidebar_page_help_open_pre": False,
+            "sidebar_page_help_open_post": False,
+        }
+        state = State(
+            client_name="Example",
+            _prepared_session_file={"data": b"previous file", "encoded_data": "encoded file"},
+            **transient_buttons,
+        )
+        payload, skipped = build_serializable_session_payload(state)
+        self.assertEqual(skipped, [])
+        self.assertNotIn("_prepared_session_file", payload)
+        for key in transient_buttons:
+            self.assertNotIn(key, payload)
+
+        # Older files can contain button values that Streamlit refuses to restore.
+        payload.update(transient_buttons)
+        restored = State()
+        load_session_state_from_file(restored, io.BytesIO(dill.dumps(payload)))
+        self.assertEqual(restored.client_name, "Example")
+        for key in transient_buttons:
+            self.assertNotIn(key, restored)
+
     def test_checkpoint_progress_acknowledgement_and_reset(self) -> None:
         state = State()
         record_checkpoint_progress(state, workflow="tagging", stage="first", successful_results=1200, interval=1000)

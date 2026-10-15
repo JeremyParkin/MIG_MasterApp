@@ -1096,27 +1096,28 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
         },
         ("Save & Load", ""): {
             "title": "Save & Load",
-            "intro": "Save the current app session to a snapshot file and restore it later so you can resume the workflow without rebuilding everything by hand.",
+            "intro": "Build and download a session file to resume your work later, or restore a previously saved session. Files are created only when you click Build or Rebuild.",
             "sections": [
                 {
                     "heading": "What this page does",
                     "bullets": [
-                        "Creates a downloadable session snapshot containing the current working state of the app.",
-                        "Loads a previously saved snapshot back into session state so you can continue from where you left off.",
+                        "Build session file prepares a .pkl file containing your current work; download it once it is ready.",
+                        "Build and Download use independent HTML controls so they do not depend on the native button scripts.",
+                        "Loads a previously saved session so you can continue from where you left off.",
                     ],
                 },
                 {
-                    "heading": "What the app does automatically",
+                    "heading": "What happens when you build or load",
                     "bullets": [
                         "Discovers dataframe keys dynamically and serializes most session-state content that can be safely stored.",
-                        "Excludes generated download artifacts so the snapshot stays cleaner and smaller.",
+                        "Excludes generated download files because they can be rebuilt after loading.",
                         "Restores saved dataframes and supporting state back into the app in one pass when you load a snapshot.",
                     ],
                 },
                 {
                     "heading": "What to review manually",
                     "bullets": [
-                        "Save after major workflow milestones if you want a reliable return point before making more changes.",
+                        "Rebuild and download the session file after further work to include your latest changes. The displayed time belongs to the prepared file.",
                         "After loading, spot-check the key workflow pages you care about most to confirm the restored session still looks as expected.",
                     ],
                 },
