@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from contextlib import ExitStack
 import pandas as pd
 import streamlit as st
 from processing.standard_cleaning import (
@@ -50,8 +51,6 @@ def normalize_uploaded_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     Normalize uploaded CSV/XLSX data into a consistent internal schema
     regardless of whether the file is raw, app-produced, or partially transformed.
     """
-    df = df.copy()
-
     # Drop near-empty rows early
     df = df.dropna(thresh=3).copy()
 
@@ -171,8 +170,9 @@ def build_upload_quality_report(df_raw: pd.DataFrame, df_normalized: pd.DataFram
     if df_raw is None or df_raw.empty:
         return report
 
-    raw = df_raw.copy()
-    normalized = df_normalized.copy() if isinstance(df_normalized, pd.DataFrame) else pd.DataFrame()
+    # These inputs are inspected only; copying whole uploads adds no isolation.
+    raw = df_raw
+    normalized = df_normalized if isinstance(df_normalized, pd.DataFrame) else pd.DataFrame()
 
     def _non_blank_text(series: pd.Series) -> pd.Series:
         return series.fillna("").astype(str).str.strip()
@@ -327,30 +327,58 @@ def build_upload_quality_report(df_raw: pd.DataFrame, df_normalized: pd.DataFram
     return report
 
 
-def read_uploaded_file(uploaded_file) -> pd.DataFrame:
+def read_uploaded_file(uploaded_file, *, session_state=None) -> pd.DataFrame:
     """
-    Read uploaded CSV or XLSX into a dataframe.
+    Read CSV/XLSX with the existing parser, reusing the current upload on reruns.
+
+    Cache only file/sheet metadata; df_untouched remains the single raw dataframe.
+    File IDs come from Streamlit, so replacing even a same-named file reloads it.
     """
     if uploaded_file is None:
         return pd.DataFrame()
 
     file_name = uploaded_file.name.lower()
+    file_id = getattr(uploaded_file, "file_id", None)
+    can_reuse = session_state is not None and file_id is not None
 
-    if file_name.endswith(".xlsx"):
-        excel_file = pd.ExcelFile(uploaded_file)
-        sheet_names = excel_file.sheet_names
+    with ExitStack() as stack:
+        excel_file = None
+        sheet = None
+        if file_name.endswith(".xlsx"):
+            metadata = session_state.get("_upload_sheet_metadata", {}) if can_reuse else {}
+            if metadata.get("file_id") == file_id and "sheet_names" in metadata:
+                sheet_names = metadata["sheet_names"]
+            else:
+                uploaded_file.seek(0)
+                excel_file = stack.enter_context(pd.ExcelFile(uploaded_file))
+                sheet_names = excel_file.sheet_names
+                if can_reuse:
+                    session_state["_upload_sheet_metadata"] = {
+                        "file_id": file_id,
+                        "sheet_names": sheet_names,
+                    }
+            sheet = st.selectbox("Select a sheet:", sheet_names) if len(sheet_names) > 1 else sheet_names[0]
+        elif not file_name.endswith(".csv"):
+            return pd.DataFrame()
 
-        if len(sheet_names) > 1:
-            sheet = st.selectbox("Select a sheet:", sheet_names)
+        upload_key = (file_id, file_name, sheet)
+        if can_reuse and session_state.get("_parsed_upload_key") == upload_key:
+            existing = session_state.get("df_untouched")
+            if isinstance(existing, pd.DataFrame):
+                return existing
+
+        if file_name.endswith(".xlsx"):
+            if excel_file is None:
+                uploaded_file.seek(0)
+                excel_file = stack.enter_context(pd.ExcelFile(uploaded_file))
+            parsed = pd.read_excel(excel_file, sheet_name=sheet)
         else:
-            sheet = sheet_names[0]
+            uploaded_file.seek(0)
+            # Preserve per-chunk type inference, including mixed-type columns.
+            with pd.read_csv(uploaded_file, chunksize=5000) as reader:
+                parsed = pd.concat(list(reader), ignore_index=True)
 
-        return pd.read_excel(excel_file, sheet_name=sheet)
-
-    if file_name.endswith(".csv"):
-        chunk_list = []
-        for chunk in pd.read_csv(uploaded_file, chunksize=5000):
-            chunk_list.append(chunk)
-        return pd.concat(chunk_list, ignore_index=True)
-
-    return pd.DataFrame()
+        if can_reuse:
+            session_state["_parsed_upload_key"] = upload_key
+            session_state.pop("_basic_cleaning_source_summary", None)
+        return parsed

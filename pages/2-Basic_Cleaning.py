@@ -198,21 +198,41 @@ def render_stage_progress() -> None:
         st.info(f"Part 2 of 3 complete{duration_text}. Click Continue to finish.")
 
 
-def should_use_staged_basic_cleaning() -> bool:
+def get_basic_cleaning_source_summary() -> dict:
+    """Reuse small source statistics without retaining a normalized dataframe."""
+    source = st.session_state.get("df_untouched")
+    if not isinstance(source, pd.DataFrame) or source.empty:
+        source = st.session_state.get("df_traditional")
+    if not isinstance(source, pd.DataFrame):
+        source = None
+
+    # The app replaces raw dataframes when uploading or dropping source rows.
+    # Session restore/reset clears this private, non-persisted summary as well.
+    source_key = (id(source), source.shape if source is not None else None)
+    cached = st.session_state.get("_basic_cleaning_source_summary")
+    if cached is not None and cached["source_key"] == source_key:
+        return cached
+
+    source_df = get_pre_standard_source_df()
+    summary = {
+        "source_key": source_key,
+        "row_count": len(source_df),
+        "memory_bytes": int(source_df.memory_usage(index=True, deep=True).sum()),
+        "warnings": build_data_quality_warnings(source_df),
+    }
+    st.session_state._basic_cleaning_source_summary = summary
+    return summary
+
+
+def should_use_staged_basic_cleaning(source_summary: dict) -> bool:
     current_stage = int(st.session_state.get("basic_cleaning_stage", 0))
     if current_stage > 0:
         return True
 
-    source_df = get_pre_standard_source_df()
-    if len(source_df) >= STAGED_BASIC_CLEANING_THRESHOLD:
-        return True
-
-    try:
-        memory_bytes = int(source_df.memory_usage(index=True, deep=True).sum())
-    except Exception:
-        memory_bytes = 0
-
-    return memory_bytes >= STAGED_BASIC_CLEANING_MEMORY_THRESHOLD_BYTES
+    return (
+        source_summary["row_count"] >= STAGED_BASIC_CLEANING_THRESHOLD
+        or source_summary["memory_bytes"] >= STAGED_BASIC_CLEANING_MEMORY_THRESHOLD_BYTES
+    )
 
 
 def render_preview_dataframe(df: pd.DataFrame, preview_rows: int = 1000) -> None:
@@ -345,8 +365,7 @@ def render_dataset_expander(
         render_preview_dataframe(df, preview_rows=preview_rows)
 
 
-def render_data_quality_checks(df: pd.DataFrame) -> None:
-    warnings_list = build_data_quality_warnings(df)
+def render_data_quality_checks(warnings_list: list[str]) -> None:
     with st.expander(f"Data Quality Checks ({len(warnings_list)} warning{'s' if len(warnings_list) != 1 else ''})", expanded=bool(warnings_list)):
         st.caption("Flags possible data concerns in columns like media type, headline, outlet, date, impressions, engagements, geography, and URL before cleaning continues.")
         if not warnings_list:
@@ -363,12 +382,12 @@ if not st.session_state.get("upload_step", False):
     st.error("Please upload a CSV/XLSX before trying this step.")
     st.stop()
 
-source_df_for_page = get_pre_standard_source_df()
-if source_df_for_page.empty:
+source_summary = get_basic_cleaning_source_summary()
+if source_summary["row_count"] == 0:
     st.error("Uploaded data is missing or empty. Please return to Getting Started.")
     st.stop()
 
-render_data_quality_checks(source_df_for_page)
+render_data_quality_checks(source_summary["warnings"])
 
 
 if st.session_state.standard_step:
@@ -443,8 +462,8 @@ if st.session_state.standard_step:
     )
 else:
     current_stage = int(st.session_state.get("basic_cleaning_stage", 0))
-    staged_mode = should_use_staged_basic_cleaning()
-    source_rows = len(source_df_for_page)
+    staged_mode = should_use_staged_basic_cleaning(source_summary)
+    source_rows = source_summary["row_count"]
 
     if staged_mode:
         st.info(

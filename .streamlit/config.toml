@@ -4,7 +4,8 @@ primaryColor="#AB26EF"
 
 
 [runner]
-enforceSerializableSessionState = true
+# Session-file serialization is checked explicitly when a snapshot is built.
+enforceSerializableSessionState = false
 
 [server]
 address='127.0.0.1'

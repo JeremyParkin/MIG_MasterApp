@@ -39,7 +39,9 @@ if not st.session_state.upload_step:
     )
 
     if uploaded_file is not None:
-        st.session_state.df_untouched = read_uploaded_file(uploaded_file)
+        st.session_state.df_untouched = read_uploaded_file(
+            uploaded_file, session_state=st.session_state
+        )
         st.session_state.uploaded_filename = uploaded_file.name
 
     client = st.text_input(
