@@ -99,6 +99,22 @@ DEFAULT_PLATFORM_PARAMS = {
         "GATE_FOLLOWERS_ANCHOR": 40_000,
         "MAX_VISIBILITY": 0.22,
     },
+    # Provisional: Agility does not ingest Threads, so rows are analyst snapshots
+    # whose engagement fields are often blank or partial. PERF_FLOOR == PERF_CAP
+    # pins the engagement adjustment at 1.0 so engagement never moves the result.
+    # BENCHMARK_VIS is X x 1.33 (Buffer 2026 per-view engagement ratio), pending
+    # direct views-per-follower evidence.
+    "threads": {
+        "MID_FOLLOWERS": 25_000,
+        "HIGH_FOLLOWERS": 2_000_000,
+        "BENCHMARK_VIS": 0.020,
+        "EXPECTED_ENG_RATE": 0.002,
+        "PERF_EXPONENT": 0.50,
+        "PERF_FLOOR": 1.0,
+        "PERF_CAP": 1.0,
+        "GATE_FOLLOWERS_ANCHOR": 70_000,
+        "MAX_VISIBILITY": 0.20,
+    },
     "instagram": {
         "MID_FOLLOWERS": 497_900,
         "HIGH_FOLLOWERS": 10_000_000,

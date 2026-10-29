@@ -107,6 +107,7 @@ def _page_help_content() -> dict[tuple[str, str], dict[str, Any]]:
                         "Large datasets run in 3 parts for stability, while smaller datasets complete in one pass.",
                         "Broadcast duplicate handling uses more conservative logic than ordinary URL and field-based dedupe.",
                         "Effective reach is calculated after cleaning, using different logic for traditional and social datasets.",
+                        "Threads effective reach is a provisional estimate from follower count only. Threads posts are added by hand rather than collected automatically, so their engagement data is ignored.",
                     ],
                 },
                 {
