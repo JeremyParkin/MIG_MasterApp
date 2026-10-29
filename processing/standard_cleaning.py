@@ -421,6 +421,15 @@ def dedupe_non_broadcast_by_fields(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.D
         indices = group.index.tolist()
         adjacency = {idx: set() for idx in indices}
 
+        # This cutoff controls cache setup only, never duplicate eligibility.
+        # Tiny groups keep the original indexer; non-unique labels also retain
+        # its behavior. Larger groups read comparison values just once.
+        comparison_rows = group.loc
+        if len(group) >= 8 and group.index.is_unique:
+            comparison_rows = group[
+                ["_date_dt", "_snippet_norm", "_snippet_prefix_tokens", "_snippet_len"]
+            ].to_dict("index")
+
         for _, snippet_group in group.groupby("_snippet_norm", dropna=False):
             if len(snippet_group) <= 1:
                 continue
@@ -434,13 +443,13 @@ def dedupe_non_broadcast_by_fields(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.D
                 adjacency[idx].add(first_idx)
 
         for i, idx_i in enumerate(indices):
-            row_i = group.loc[idx_i]
+            row_i = comparison_rows[idx_i]
             date_i = row_i["_date_dt"]
             snippet_i = row_i["_snippet_norm"]
             prefix_i = row_i["_snippet_prefix_tokens"]
 
             for idx_j in indices[i + 1:]:
-                row_j = group.loc[idx_j]
+                row_j = comparison_rows[idx_j]
                 date_j = row_j["_date_dt"]
 
                 within_48h = False

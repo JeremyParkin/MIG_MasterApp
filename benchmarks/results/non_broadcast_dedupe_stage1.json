@@ -1,0 +1,460 @@
+{
+  "python": "3.13.5",
+  "pandas": "2.3.3",
+  "platform": "macOS-15.7.4-arm64-arm-64bit-Mach-O",
+  "reference_revision": "Frozen pre-optimization reference from c1c3a5614878d842151590f9fd5aadf5c02fdd9f.",
+  "repeats": 3,
+  "method": "Exact dataframe parity before timing; alternate run order; gc.collect before each run; medians of wall-clock seconds; no application startup or I/O in timed region.",
+  "results": [
+    {
+      "distribution": "agility_golden_corpus.csv",
+      "rows": 84,
+      "columns": 40,
+      "original_seconds": 0.003961707931011915,
+      "optimized_seconds": 0.003663708921521902,
+      "speedup": 1.0813380691188275,
+      "original_samples": [
+        0.003961707931011915,
+        0.0042113339295610785,
+        0.0035211669746786356
+      ],
+      "optimized_samples": [
+        0.0038898750208318233,
+        0.003663708921521902,
+        0.003316375077702105
+      ]
+    },
+    {
+      "distribution": "agility_malformed_inputs.csv",
+      "rows": 13,
+      "columns": 40,
+      "original_seconds": 0.003060125047340989,
+      "optimized_seconds": 0.0029962080297991633,
+      "speedup": 1.0213326367549018,
+      "original_samples": [
+        0.003060125047340989,
+        0.0029436249751597643,
+        0.005099125090055168
+      ],
+      "optimized_samples": [
+        0.0029962080297991633,
+        0.0029646250186488032,
+        0.007226084009744227
+      ]
+    },
+    {
+      "distribution": "unique",
+      "rows": 250,
+      "columns": 40,
+      "original_seconds": 0.006593166966922581,
+      "optimized_seconds": 0.007284209015779197,
+      "speedup": 0.905131490960835,
+      "original_samples": [
+        0.006593166966922581,
+        0.007523957989178598,
+        0.006039083003997803
+      ],
+      "optimized_samples": [
+        0.007558249984867871,
+        0.007176666986197233,
+        0.007284209015779197
+      ]
+    },
+    {
+      "distribution": "unique",
+      "rows": 1000,
+      "columns": 40,
+      "original_seconds": 0.014650165918283165,
+      "optimized_seconds": 0.015183249954134226,
+      "speedup": 0.9648899914404749,
+      "original_samples": [
+        0.0173818749608472,
+        0.014650165918283165,
+        0.013799458043649793
+      ],
+      "optimized_samples": [
+        0.016195750096812844,
+        0.015183249954134226,
+        0.01344162505120039
+      ]
+    },
+    {
+      "distribution": "unique",
+      "rows": 5000,
+      "columns": 40,
+      "original_seconds": 0.05948295793496072,
+      "optimized_seconds": 0.05813329096417874,
+      "speedup": 1.0232167652716175,
+      "original_samples": [
+        0.057323292014189065,
+        0.07090870791580528,
+        0.05948295793496072
+      ],
+      "optimized_samples": [
+        0.05813329096417874,
+        0.05675304203759879,
+        0.059319250052794814
+      ]
+    },
+    {
+      "distribution": "pairs",
+      "rows": 250,
+      "columns": 40,
+      "original_seconds": 0.12132529192604125,
+      "optimized_seconds": 0.12088408297859132,
+      "speedup": 1.0036498514657886,
+      "original_samples": [
+        0.11862129089422524,
+        0.12132529192604125,
+        0.12213874992448837
+      ],
+      "optimized_samples": [
+        0.12088408297859132,
+        0.12041924998629838,
+        0.12132975005079061
+      ]
+    },
+    {
+      "distribution": "pairs",
+      "rows": 1000,
+      "columns": 40,
+      "original_seconds": 0.4810139159671962,
+      "optimized_seconds": 0.46853733307216316,
+      "speedup": 1.0266287913776797,
+      "original_samples": [
+        0.5093344999477267,
+        0.4718551249243319,
+        0.4810139159671962
+      ],
+      "optimized_samples": [
+        0.46853733307216316,
+        0.4680197089910507,
+        0.5229246659437194
+      ]
+    },
+    {
+      "distribution": "pairs",
+      "rows": 5000,
+      "columns": 40,
+      "original_seconds": 2.3177447919733822,
+      "optimized_seconds": 2.364346915972419,
+      "speedup": 0.980289642063855,
+      "original_samples": [
+        2.363281416008249,
+        2.282076417002827,
+        2.3177447919733822
+      ],
+      "optimized_samples": [
+        2.364346915972419,
+        2.3629985420266166,
+        2.4674129170598462
+      ]
+    },
+    {
+      "distribution": "small_groups",
+      "rows": 250,
+      "columns": 40,
+      "original_seconds": 0.05238183296751231,
+      "optimized_seconds": 0.03153308399487287,
+      "speedup": 1.6611706287919492,
+      "original_samples": [
+        0.05249458400066942,
+        0.052305417018942535,
+        0.05238183296751231
+      ],
+      "optimized_samples": [
+        0.031512957997620106,
+        0.03153308399487287,
+        0.03156179189682007
+      ]
+    },
+    {
+      "distribution": "small_groups",
+      "rows": 1000,
+      "columns": 40,
+      "original_seconds": 0.21207237499766052,
+      "optimized_seconds": 0.12327641691081226,
+      "speedup": 1.7202996348530324,
+      "original_samples": [
+        0.20898883300833404,
+        0.21207237499766052,
+        0.2170695000095293
+      ],
+      "optimized_samples": [
+        0.12327641691081226,
+        0.12187337502837181,
+        0.12420575006399304
+      ]
+    },
+    {
+      "distribution": "small_groups",
+      "rows": 5000,
+      "columns": 40,
+      "original_seconds": 1.013811207958497,
+      "optimized_seconds": 0.6032514590770006,
+      "speedup": 1.6805781282479941,
+      "original_samples": [
+        1.010778791969642,
+        1.1543674999848008,
+        1.013811207958497
+      ],
+      "optimized_samples": [
+        0.5856236250838265,
+        0.6619196669198573,
+        0.6032514590770006
+      ]
+    },
+    {
+      "distribution": "mixed",
+      "rows": 250,
+      "columns": 40,
+      "original_seconds": 0.03510570805519819,
+      "optimized_seconds": 0.029558041016571224,
+      "speedup": 1.1876872366310325,
+      "original_samples": [
+        0.03412104200106114,
+        0.03526250005234033,
+        0.03510570805519819
+      ],
+      "optimized_samples": [
+        0.030827541020698845,
+        0.029558041016571224,
+        0.02931725000962615
+      ]
+    },
+    {
+      "distribution": "mixed",
+      "rows": 1000,
+      "columns": 40,
+      "original_seconds": 0.1354347919113934,
+      "optimized_seconds": 0.10827379196416587,
+      "speedup": 1.2508547955558507,
+      "original_samples": [
+        0.12878091703169048,
+        0.13730379205662757,
+        0.1354347919113934
+      ],
+      "optimized_samples": [
+        0.10662450001109391,
+        0.10827379196416587,
+        0.10947091598063707
+      ]
+    },
+    {
+      "distribution": "mixed",
+      "rows": 5000,
+      "columns": 40,
+      "original_seconds": 0.6595453750342131,
+      "optimized_seconds": 0.5545814579818398,
+      "speedup": 1.189266906676513,
+      "original_samples": [
+        0.6520351670915261,
+        0.6950670829974115,
+        0.6595453750342131
+      ],
+      "optimized_samples": [
+        0.5356563749955967,
+        1.0729612079448998,
+        0.5545814579818398
+      ]
+    },
+    {
+      "distribution": "dense",
+      "rows": 200,
+      "columns": 40,
+      "original_seconds": 0.3895049999700859,
+      "optimized_seconds": 0.02364212495740503,
+      "speedup": 16.475041929261426,
+      "original_samples": [
+        0.3765259999781847,
+        0.3909015420358628,
+        0.3895049999700859
+      ],
+      "optimized_samples": [
+        0.023442583973519504,
+        0.02364212495740503,
+        0.02364754199516028
+      ]
+    },
+    {
+      "distribution": "dense",
+      "rows": 800,
+      "columns": 40,
+      "original_seconds": 6.027779916068539,
+      "optimized_seconds": 0.29510112502612174,
+      "speedup": 20.42615024098933,
+      "original_samples": [
+        6.045173250022344,
+        6.027779916068539,
+        6.008097333018668
+      ],
+      "optimized_samples": [
+        0.29468241706490517,
+        0.29510112502612174,
+        0.2959744590334594
+      ]
+    },
+    {
+      "distribution": "dense",
+      "rows": 1200,
+      "columns": 40,
+      "original_seconds": 13.67232608399354,
+      "optimized_seconds": 0.6606977500487119,
+      "speedup": 20.69376819125766,
+      "original_samples": [
+        13.661039583035745,
+        14.386161208036356,
+        13.67232608399354
+      ],
+      "optimized_samples": [
+        0.6606977500487119,
+        0.7015466659795493,
+        0.6597822500625625
+      ]
+    },
+    {
+      "distribution": "spread_dates",
+      "rows": 200,
+      "columns": 40,
+      "original_seconds": 0.01199199992697686,
+      "optimized_seconds": 0.004848832963034511,
+      "speedup": 2.473172414558078,
+      "original_samples": [
+        0.01199199992697686,
+        0.011892291950061917,
+        0.012167250039055943
+      ],
+      "optimized_samples": [
+        0.004868500051088631,
+        0.004848832963034511,
+        0.004829332930967212
+      ]
+    },
+    {
+      "distribution": "spread_dates",
+      "rows": 800,
+      "columns": 40,
+      "original_seconds": 0.04175987502094358,
+      "optimized_seconds": 0.01183412503451109,
+      "speedup": 3.528767433093868,
+      "original_samples": [
+        0.04221700003836304,
+        0.04175987502094358,
+        0.04134450003039092
+      ],
+      "optimized_samples": [
+        0.01182216708548367,
+        0.012048957985825837,
+        0.01183412503451109
+      ]
+    },
+    {
+      "distribution": "spread_dates",
+      "rows": 1200,
+      "columns": 40,
+      "original_seconds": 0.0613873329712078,
+      "optimized_seconds": 0.016539958072826266,
+      "speedup": 3.7114563834392014,
+      "original_samples": [
+        0.0613873329712078,
+        0.06138604204170406,
+        0.06166925001889467
+      ],
+      "optimized_samples": [
+        0.016492958064191043,
+        0.016539958072826266,
+        0.016625917050987482
+      ]
+    },
+    {
+      "distribution": "undated",
+      "rows": 200,
+      "columns": 40,
+      "original_seconds": 1.3011670829728246,
+      "optimized_seconds": 0.8476664999034256,
+      "speedup": 1.5349988269219867,
+      "original_samples": [
+        1.2950414579827338,
+        1.3061505409423262,
+        1.3011670829728246
+      ],
+      "optimized_samples": [
+        0.8477382080163807,
+        0.8463131670141593,
+        0.8476664999034256
+      ]
+    },
+    {
+      "distribution": "undated",
+      "rows": 800,
+      "columns": 40,
+      "original_seconds": 5.597424958948977,
+      "optimized_seconds": 0.13443233305588365,
+      "speedup": 41.63749026524834,
+      "original_samples": [
+        5.597424958948977,
+        5.454894916038029,
+        6.832434708951041
+      ],
+      "optimized_samples": [
+        0.13852087501436472,
+        0.13443233305588365,
+        0.13200700003653765
+      ]
+    },
+    {
+      "distribution": "undated",
+      "rows": 1200,
+      "columns": 40,
+      "original_seconds": 12.402250541024841,
+      "optimized_seconds": 0.2867131249513477,
+      "speedup": 43.25665434091787,
+      "original_samples": [
+        12.402250541024841,
+        12.695649750065058,
+        12.34535437496379
+      ],
+      "optimized_samples": [
+        0.2876925830496475,
+        0.2867131249513477,
+        0.28629800002090633
+      ]
+    },
+    {
+      "distribution": "fuzzy",
+      "rows": 60,
+      "columns": 40,
+      "original_seconds": 0.1259282500250265,
+      "optimized_seconds": 0.08626908296719193,
+      "speedup": 1.4597147169504157,
+      "original_samples": [
+        0.12634508404880762,
+        0.12584479211363941,
+        0.1259282500250265
+      ],
+      "optimized_samples": [
+        0.08635150000918657,
+        0.08625870803371072,
+        0.08626908296719193
+      ]
+    },
+    {
+      "distribution": "fuzzy",
+      "rows": 180,
+      "columns": 40,
+      "original_seconds": 1.380689707933925,
+      "optimized_seconds": 0.7680665830848739,
+      "speedup": 1.7976172096805758,
+      "original_samples": [
+        1.1184249999932945,
+        1.6364243329735473,
+        1.380689707933925
+      ],
+      "optimized_samples": [
+        0.783230209024623,
+        0.7680665830848739,
+        0.7583534999284893
+      ]
+    }
+  ]
+}
