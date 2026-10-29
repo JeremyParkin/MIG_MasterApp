@@ -191,7 +191,13 @@ def cluster_similar_stories(df: pd.DataFrame, similarity_threshold: float) -> pd
     nn.fit(tfidf_matrix)
     graph = nn.radius_neighbors_graph(tfidf_matrix, radius=radius, mode="distance")
 
-    snippet_token_counts = df["Normalized Snippet"].str.split().str.len().to_numpy(dtype=np.int32)
+    # Only the <20 predicate matters; leave any remaining text in one tail.
+    snippet_token_counts = (
+        df["Normalized Snippet"]
+        .str.split(n=WEAK_SNIPPET_TOKEN_BOUNDARY - 1)
+        .str.len()
+        .to_numpy(dtype=np.int32)
+    )
     weak_snippet_rows = snippet_token_counts < WEAK_SNIPPET_TOKEN_BOUNDARY
     source_weakness = np.repeat(weak_snippet_rows, np.diff(graph.indptr))
     edge_has_weak_evidence = source_weakness | weak_snippet_rows[graph.indices]

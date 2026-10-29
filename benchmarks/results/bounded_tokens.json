@@ -1,0 +1,1461 @@
+{
+  "file": "INOD-Mentions - 2026-10-01_09-49.csv",
+  "file_bytes": 70103980,
+  "file_sha256": "c10d1b29c6b9dd99d19e046346b845fd555c453bed20528d024d361c1222524a",
+  "reference_revision": "58bd526e8f8562d7232fecd1abfb4c008d970aff",
+  "method": "Fresh sequential processes; alternating AB/BA order; 5ms own-process RSS sampling; OS high-water before snapshot; exact dataframe parity for every run; unchanged neighbors/thread settings; retained upload buffer.",
+  "samples": [
+    {
+      "implementation": "original",
+      "python": "3.13.5",
+      "pandas": "2.3.3",
+      "sklearn": "1.8.0",
+      "platform": "macOS-15.7.4-arm64-arm-64bit-Mach-O",
+      "logical_cpus": 10,
+      "threadpools": [
+        {
+          "user_api": "openmp",
+          "internal_api": "openmp",
+          "num_threads": 10,
+          "prefix": "libomp",
+          "filepath": "/Users/jeremyparkin/.local/share/virtualenvs/MIG_MasterApp-5g_3NMR3/lib/python3.13/site-packages/sklearn/.dylibs/libomp.dylib",
+          "version": null
+        }
+      ],
+      "import_rss_mib": 207.375,
+      "end_rss_mib": 762.515625,
+      "os_high_water_mib": 995.4375,
+      "peak_pipeline_rss_mib": 988.4375,
+      "cleaning_seconds": 7.412834707065485,
+      "stages": [
+        {
+          "stage": "upload_buffer",
+          "start_rss_mib": 207.421875,
+          "peak_rss_mib": 273.203125,
+          "seconds": 0.010136500000953674,
+          "end_rss_mib": 273.203125
+        },
+        {
+          "stage": "csv_read",
+          "start_rss_mib": 273.203125,
+          "peak_rss_mib": 417.21875,
+          "seconds": 0.33912145800422877,
+          "end_rss_mib": 352.53125
+        },
+        {
+          "stage": "upload_normalization",
+          "start_rss_mib": 352.53125,
+          "peak_rss_mib": 356.296875,
+          "seconds": 0.051417583017610013,
+          "end_rss_mib": 356.296875
+        },
+        {
+          "stage": "upload_quality",
+          "start_rss_mib": 356.296875,
+          "peak_rss_mib": 356.671875,
+          "seconds": 0.008497999981045723,
+          "end_rss_mib": 356.671875
+        },
+        {
+          "stage": "page_summary",
+          "start_rss_mib": 356.671875,
+          "peak_rss_mib": 357.6875,
+          "seconds": 0.05851329199504107,
+          "end_rss_mib": 357.6875
+        },
+        {
+          "stage": "stage1",
+          "start_rss_mib": 357.6875,
+          "peak_rss_mib": 504.375,
+          "seconds": 2.818271041032858,
+          "end_rss_mib": 504.375
+        },
+        {
+          "stage": "stage1_gc",
+          "start_rss_mib": 504.375,
+          "peak_rss_mib": 504.375,
+          "seconds": 0.027975582983344793,
+          "end_rss_mib": 489.09375
+        },
+        {
+          "stage": "stage2",
+          "start_rss_mib": 489.09375,
+          "peak_rss_mib": 489.921875,
+          "seconds": 0.8808667910052463,
+          "end_rss_mib": 488.890625
+        },
+        {
+          "stage": "stage2_gc",
+          "start_rss_mib": 488.890625,
+          "peak_rss_mib": 488.890625,
+          "seconds": 0.022353249951265752,
+          "end_rss_mib": 488.890625
+        },
+        {
+          "stage": "canonical_grouping",
+          "start_rss_mib": 488.890625,
+          "peak_rss_mib": 988.4375,
+          "seconds": 2.9839784170035273,
+          "end_rss_mib": 770.890625
+        },
+        {
+          "stage": "stage3",
+          "start_rss_mib": 488.890625,
+          "peak_rss_mib": 988.4375,
+          "seconds": 3.713696875027381,
+          "end_rss_mib": 786.515625
+        },
+        {
+          "stage": "stage3_gc",
+          "start_rss_mib": 786.515625,
+          "peak_rss_mib": 786.515625,
+          "seconds": 0.027822542004287243,
+          "end_rss_mib": 762.515625
+        }
+      ],
+      "row_counts": {
+        "df_untouched": 4828,
+        "df_traditional": 3799,
+        "df_social": 0,
+        "df_dupes": 1029,
+        "df_ai_grouped": 3799,
+        "df_ai_unique": 1130
+      },
+      "grouped_aliases_traditional": true,
+      "repeat": 1,
+      "exact_output_equivalence": true
+    },
+    {
+      "implementation": "bounded",
+      "python": "3.13.5",
+      "pandas": "2.3.3",
+      "sklearn": "1.8.0",
+      "platform": "macOS-15.7.4-arm64-arm-64bit-Mach-O",
+      "logical_cpus": 10,
+      "threadpools": [
+        {
+          "user_api": "openmp",
+          "internal_api": "openmp",
+          "num_threads": 10,
+          "prefix": "libomp",
+          "filepath": "/Users/jeremyparkin/.local/share/virtualenvs/MIG_MasterApp-5g_3NMR3/lib/python3.13/site-packages/sklearn/.dylibs/libomp.dylib",
+          "version": null
+        }
+      ],
+      "import_rss_mib": 213.921875,
+      "end_rss_mib": 752.703125,
+      "os_high_water_mib": 823.546875,
+      "peak_pipeline_rss_mib": 823.390625,
+      "cleaning_seconds": 7.28453362500295,
+      "stages": [
+        {
+          "stage": "upload_buffer",
+          "start_rss_mib": 213.953125,
+          "peak_rss_mib": 280.828125,
+          "seconds": 0.006626499933190644,
+          "end_rss_mib": 280.828125
+        },
+        {
+          "stage": "csv_read",
+          "start_rss_mib": 280.828125,
+          "peak_rss_mib": 422.6875,
+          "seconds": 0.30935300001874566,
+          "end_rss_mib": 422.6875
+        },
+        {
+          "stage": "upload_normalization",
+          "start_rss_mib": 422.6875,
+          "peak_rss_mib": 424.75,
+          "seconds": 0.0489761249627918,
+          "end_rss_mib": 424.75
+        },
+        {
+          "stage": "upload_quality",
+          "start_rss_mib": 424.75,
+          "peak_rss_mib": 425.046875,
+          "seconds": 0.008552958024665713,
+          "end_rss_mib": 425.046875
+        },
+        {
+          "stage": "page_summary",
+          "start_rss_mib": 425.046875,
+          "peak_rss_mib": 425.640625,
+          "seconds": 0.05639866599813104,
+          "end_rss_mib": 425.640625
+        },
+        {
+          "stage": "stage1",
+          "start_rss_mib": 425.640625,
+          "peak_rss_mib": 592.03125,
+          "seconds": 2.5732917089480907,
+          "end_rss_mib": 592.03125
+        },
+        {
+          "stage": "stage1_gc",
+          "start_rss_mib": 592.03125,
+          "peak_rss_mib": 592.03125,
+          "seconds": 0.0251612919382751,
+          "end_rss_mib": 576.03125
+        },
+        {
+          "stage": "stage2",
+          "start_rss_mib": 576.03125,
+          "peak_rss_mib": 576.25,
+          "seconds": 0.89225858298596,
+          "end_rss_mib": 576.25
+        },
+        {
+          "stage": "stage2_gc",
+          "start_rss_mib": 576.25,
+          "peak_rss_mib": 576.25,
+          "seconds": 0.02825012500397861,
+          "end_rss_mib": 576.25
+        },
+        {
+          "stage": "canonical_grouping",
+          "start_rss_mib": 576.25,
+          "peak_rss_mib": 823.390625,
+          "seconds": 3.0770203339634463,
+          "end_rss_mib": 745.8125
+        },
+        {
+          "stage": "stage3",
+          "start_rss_mib": 576.25,
+          "peak_rss_mib": 823.390625,
+          "seconds": 3.8189833330689,
+          "end_rss_mib": 760.703125
+        },
+        {
+          "stage": "stage3_gc",
+          "start_rss_mib": 760.703125,
+          "peak_rss_mib": 760.703125,
+          "seconds": 0.027135625015944242,
+          "end_rss_mib": 752.703125
+        }
+      ],
+      "row_counts": {
+        "df_untouched": 4828,
+        "df_traditional": 3799,
+        "df_social": 0,
+        "df_dupes": 1029,
+        "df_ai_grouped": 3799,
+        "df_ai_unique": 1130
+      },
+      "grouped_aliases_traditional": true,
+      "repeat": 1,
+      "exact_output_equivalence": true
+    },
+    {
+      "implementation": "bounded",
+      "python": "3.13.5",
+      "pandas": "2.3.3",
+      "sklearn": "1.8.0",
+      "platform": "macOS-15.7.4-arm64-arm-64bit-Mach-O",
+      "logical_cpus": 10,
+      "threadpools": [
+        {
+          "user_api": "openmp",
+          "internal_api": "openmp",
+          "num_threads": 10,
+          "prefix": "libomp",
+          "filepath": "/Users/jeremyparkin/.local/share/virtualenvs/MIG_MasterApp-5g_3NMR3/lib/python3.13/site-packages/sklearn/.dylibs/libomp.dylib",
+          "version": null
+        }
+      ],
+      "import_rss_mib": 214.53125,
+      "end_rss_mib": 633.359375,
+      "os_high_water_mib": 641.359375,
+      "peak_pipeline_rss_mib": 633.359375,
+      "cleaning_seconds": 7.627229749923572,
+      "stages": [
+        {
+          "stage": "upload_buffer",
+          "start_rss_mib": 214.578125,
+          "peak_rss_mib": 281.453125,
+          "seconds": 0.006559667061083019,
+          "end_rss_mib": 281.453125
+        },
+        {
+          "stage": "csv_read",
+          "start_rss_mib": 281.453125,
+          "peak_rss_mib": 447.15625,
+          "seconds": 0.29524533299263567,
+          "end_rss_mib": 384.90625
+        },
+        {
+          "stage": "upload_normalization",
+          "start_rss_mib": 384.90625,
+          "peak_rss_mib": 386.59375,
+          "seconds": 0.04782220802735537,
+          "end_rss_mib": 386.59375
+        },
+        {
+          "stage": "upload_quality",
+          "start_rss_mib": 386.59375,
+          "peak_rss_mib": 386.953125,
+          "seconds": 0.008449999964796007,
+          "end_rss_mib": 386.953125
+        },
+        {
+          "stage": "page_summary",
+          "start_rss_mib": 386.953125,
+          "peak_rss_mib": 388.453125,
+          "seconds": 0.05676662502810359,
+          "end_rss_mib": 388.453125
+        },
+        {
+          "stage": "stage1",
+          "start_rss_mib": 388.453125,
+          "peak_rss_mib": 546.765625,
+          "seconds": 2.5824912500102073,
+          "end_rss_mib": 546.765625
+        },
+        {
+          "stage": "stage1_gc",
+          "start_rss_mib": 546.765625,
+          "peak_rss_mib": 546.765625,
+          "seconds": 0.02860341698396951,
+          "end_rss_mib": 522.765625
+        },
+        {
+          "stage": "stage2",
+          "start_rss_mib": 522.765625,
+          "peak_rss_mib": 524.203125,
+          "seconds": 0.878063999931328,
+          "end_rss_mib": 524.203125
+        },
+        {
+          "stage": "stage2_gc",
+          "start_rss_mib": 524.203125,
+          "peak_rss_mib": 524.203125,
+          "seconds": 0.022075333981774747,
+          "end_rss_mib": 524.203125
+        },
+        {
+          "stage": "canonical_grouping",
+          "start_rss_mib": 524.203125,
+          "peak_rss_mib": 632.3125,
+          "seconds": 3.437277666060254,
+          "end_rss_mib": 554.453125
+        },
+        {
+          "stage": "stage3",
+          "start_rss_mib": 524.203125,
+          "peak_rss_mib": 632.3125,
+          "seconds": 4.166674499982037,
+          "end_rss_mib": 570.296875
+        },
+        {
+          "stage": "stage3_gc",
+          "start_rss_mib": 570.3125,
+          "peak_rss_mib": 633.359375,
+          "seconds": 0.05510424997191876,
+          "end_rss_mib": 633.359375
+        }
+      ],
+      "row_counts": {
+        "df_untouched": 4828,
+        "df_traditional": 3799,
+        "df_social": 0,
+        "df_dupes": 1029,
+        "df_ai_grouped": 3799,
+        "df_ai_unique": 1130
+      },
+      "grouped_aliases_traditional": true,
+      "repeat": 2,
+      "exact_output_equivalence": true
+    },
+    {
+      "implementation": "original",
+      "python": "3.13.5",
+      "pandas": "2.3.3",
+      "sklearn": "1.8.0",
+      "platform": "macOS-15.7.4-arm64-arm-64bit-Mach-O",
+      "logical_cpus": 10,
+      "threadpools": [
+        {
+          "user_api": "openmp",
+          "internal_api": "openmp",
+          "num_threads": 10,
+          "prefix": "libomp",
+          "filepath": "/Users/jeremyparkin/.local/share/virtualenvs/MIG_MasterApp-5g_3NMR3/lib/python3.13/site-packages/sklearn/.dylibs/libomp.dylib",
+          "version": null
+        }
+      ],
+      "import_rss_mib": 213.96875,
+      "end_rss_mib": 737.203125,
+      "os_high_water_mib": 981.265625,
+      "peak_pipeline_rss_mib": 969.125,
+      "cleaning_seconds": 7.738895041984506,
+      "stages": [
+        {
+          "stage": "upload_buffer",
+          "start_rss_mib": 214.0,
+          "peak_rss_mib": 280.875,
+          "seconds": 0.006837416091002524,
+          "end_rss_mib": 280.875
+        },
+        {
+          "stage": "csv_read",
+          "start_rss_mib": 280.875,
+          "peak_rss_mib": 444.359375,
+          "seconds": 0.30223612498957664,
+          "end_rss_mib": 379.015625
+        },
+        {
+          "stage": "upload_normalization",
+          "start_rss_mib": 379.015625,
+          "peak_rss_mib": 381.078125,
+          "seconds": 0.04791737499181181,
+          "end_rss_mib": 381.078125
+        },
+        {
+          "stage": "upload_quality",
+          "start_rss_mib": 381.078125,
+          "peak_rss_mib": 381.453125,
+          "seconds": 0.008937958045862615,
+          "end_rss_mib": 381.453125
+        },
+        {
+          "stage": "page_summary",
+          "start_rss_mib": 381.453125,
+          "peak_rss_mib": 382.015625,
+          "seconds": 0.05802079092245549,
+          "end_rss_mib": 382.015625
+        },
+        {
+          "stage": "stage1",
+          "start_rss_mib": 382.015625,
+          "peak_rss_mib": 484.484375,
+          "seconds": 3.0313437919830903,
+          "end_rss_mib": 484.484375
+        },
+        {
+          "stage": "stage1_gc",
+          "start_rss_mib": 484.515625,
+          "peak_rss_mib": 484.515625,
+          "seconds": 0.028020791010931134,
+          "end_rss_mib": 472.53125
+        },
+        {
+          "stage": "stage2",
+          "start_rss_mib": 472.53125,
+          "peak_rss_mib": 473.640625,
+          "seconds": 0.898124041967094,
+          "end_rss_mib": 466.1875
+        },
+        {
+          "stage": "stage2_gc",
+          "start_rss_mib": 466.1875,
+          "peak_rss_mib": 466.1875,
+          "seconds": 0.02629545796662569,
+          "end_rss_mib": 466.1875
+        },
+        {
+          "stage": "canonical_grouping",
+          "start_rss_mib": 466.1875,
+          "peak_rss_mib": 969.125,
+          "seconds": 3.0454520829953253,
+          "end_rss_mib": 779.515625
+        },
+        {
+          "stage": "stage3",
+          "start_rss_mib": 466.1875,
+          "peak_rss_mib": 969.125,
+          "seconds": 3.8094272080343217,
+          "end_rss_mib": 753.203125
+        },
+        {
+          "stage": "stage3_gc",
+          "start_rss_mib": 753.203125,
+          "peak_rss_mib": 753.203125,
+          "seconds": 0.030166334006935358,
+          "end_rss_mib": 737.203125
+        }
+      ],
+      "row_counts": {
+        "df_untouched": 4828,
+        "df_traditional": 3799,
+        "df_social": 0,
+        "df_dupes": 1029,
+        "df_ai_grouped": 3799,
+        "df_ai_unique": 1130
+      },
+      "grouped_aliases_traditional": true,
+      "repeat": 2,
+      "exact_output_equivalence": true
+    },
+    {
+      "implementation": "original",
+      "python": "3.13.5",
+      "pandas": "2.3.3",
+      "sklearn": "1.8.0",
+      "platform": "macOS-15.7.4-arm64-arm-64bit-Mach-O",
+      "logical_cpus": 10,
+      "threadpools": [
+        {
+          "user_api": "openmp",
+          "internal_api": "openmp",
+          "num_threads": 10,
+          "prefix": "libomp",
+          "filepath": "/Users/jeremyparkin/.local/share/virtualenvs/MIG_MasterApp-5g_3NMR3/lib/python3.13/site-packages/sklearn/.dylibs/libomp.dylib",
+          "version": null
+        }
+      ],
+      "import_rss_mib": 213.859375,
+      "end_rss_mib": 604.6875,
+      "os_high_water_mib": 947.9375,
+      "peak_pipeline_rss_mib": 940.03125,
+      "cleaning_seconds": 7.676317499019206,
+      "stages": [
+        {
+          "stage": "upload_buffer",
+          "start_rss_mib": 213.890625,
+          "peak_rss_mib": 280.765625,
+          "seconds": 0.006591000012122095,
+          "end_rss_mib": 280.765625
+        },
+        {
+          "stage": "csv_read",
+          "start_rss_mib": 280.765625,
+          "peak_rss_mib": 444.1875,
+          "seconds": 0.3004357909085229,
+          "end_rss_mib": 382.375
+        },
+        {
+          "stage": "upload_normalization",
+          "start_rss_mib": 382.375,
+          "peak_rss_mib": 385.34375,
+          "seconds": 0.047505624941550195,
+          "end_rss_mib": 385.34375
+        },
+        {
+          "stage": "upload_quality",
+          "start_rss_mib": 385.34375,
+          "peak_rss_mib": 385.6875,
+          "seconds": 0.008521291078068316,
+          "end_rss_mib": 385.6875
+        },
+        {
+          "stage": "page_summary",
+          "start_rss_mib": 385.6875,
+          "peak_rss_mib": 386.15625,
+          "seconds": 0.05579400004353374,
+          "end_rss_mib": 386.15625
+        },
+        {
+          "stage": "stage1",
+          "start_rss_mib": 386.15625,
+          "peak_rss_mib": 533.375,
+          "seconds": 2.8826678750338033,
+          "end_rss_mib": 474.1875
+        },
+        {
+          "stage": "stage1_gc",
+          "start_rss_mib": 474.1875,
+          "peak_rss_mib": 474.1875,
+          "seconds": 0.0330826670397073,
+          "end_rss_mib": 454.0
+        },
+        {
+          "stage": "stage2",
+          "start_rss_mib": 454.0,
+          "peak_rss_mib": 454.140625,
+          "seconds": 0.902424416039139,
+          "end_rss_mib": 446.921875
+        },
+        {
+          "stage": "stage2_gc",
+          "start_rss_mib": 446.921875,
+          "peak_rss_mib": 446.921875,
+          "seconds": 0.02370258409064263,
+          "end_rss_mib": 446.921875
+        },
+        {
+          "stage": "canonical_grouping",
+          "start_rss_mib": 446.921875,
+          "peak_rss_mib": 940.03125,
+          "seconds": 3.11698399996385,
+          "end_rss_mib": 767.453125
+        },
+        {
+          "stage": "stage3",
+          "start_rss_mib": 446.921875,
+          "peak_rss_mib": 940.03125,
+          "seconds": 3.8912252079462633,
+          "end_rss_mib": 604.390625
+        },
+        {
+          "stage": "stage3_gc",
+          "start_rss_mib": 604.390625,
+          "peak_rss_mib": 604.6875,
+          "seconds": 0.034466707962565124,
+          "end_rss_mib": 604.6875
+        }
+      ],
+      "row_counts": {
+        "df_untouched": 4828,
+        "df_traditional": 3799,
+        "df_social": 0,
+        "df_dupes": 1029,
+        "df_ai_grouped": 3799,
+        "df_ai_unique": 1130
+      },
+      "grouped_aliases_traditional": true,
+      "repeat": 3,
+      "exact_output_equivalence": true
+    },
+    {
+      "implementation": "bounded",
+      "python": "3.13.5",
+      "pandas": "2.3.3",
+      "sklearn": "1.8.0",
+      "platform": "macOS-15.7.4-arm64-arm-64bit-Mach-O",
+      "logical_cpus": 10,
+      "threadpools": [
+        {
+          "user_api": "openmp",
+          "internal_api": "openmp",
+          "num_threads": 10,
+          "prefix": "libomp",
+          "filepath": "/Users/jeremyparkin/.local/share/virtualenvs/MIG_MasterApp-5g_3NMR3/lib/python3.13/site-packages/sklearn/.dylibs/libomp.dylib",
+          "version": null
+        }
+      ],
+      "import_rss_mib": 215.078125,
+      "end_rss_mib": 744.328125,
+      "os_high_water_mib": 833.5,
+      "peak_pipeline_rss_mib": 829.59375,
+      "cleaning_seconds": 7.212834582896903,
+      "stages": [
+        {
+          "stage": "upload_buffer",
+          "start_rss_mib": 215.125,
+          "peak_rss_mib": 282.0,
+          "seconds": 0.007062499993480742,
+          "end_rss_mib": 282.0
+        },
+        {
+          "stage": "csv_read",
+          "start_rss_mib": 282.0,
+          "peak_rss_mib": 476.125,
+          "seconds": 0.309837874956429,
+          "end_rss_mib": 409.625
+        },
+        {
+          "stage": "upload_normalization",
+          "start_rss_mib": 409.625,
+          "peak_rss_mib": 411.3125,
+          "seconds": 0.04751358297653496,
+          "end_rss_mib": 411.3125
+        },
+        {
+          "stage": "upload_quality",
+          "start_rss_mib": 411.3125,
+          "peak_rss_mib": 411.6875,
+          "seconds": 0.00835716596338898,
+          "end_rss_mib": 411.6875
+        },
+        {
+          "stage": "page_summary",
+          "start_rss_mib": 411.6875,
+          "peak_rss_mib": 414.53125,
+          "seconds": 0.05571304203476757,
+          "end_rss_mib": 414.53125
+        },
+        {
+          "stage": "stage1",
+          "start_rss_mib": 414.53125,
+          "peak_rss_mib": 576.203125,
+          "seconds": 2.6167504999320954,
+          "end_rss_mib": 576.203125
+        },
+        {
+          "stage": "stage1_gc",
+          "start_rss_mib": 576.203125,
+          "peak_rss_mib": 576.203125,
+          "seconds": 0.028186584007926285,
+          "end_rss_mib": 559.203125
+        },
+        {
+          "stage": "stage2",
+          "start_rss_mib": 559.203125,
+          "peak_rss_mib": 560.421875,
+          "seconds": 0.8957228329963982,
+          "end_rss_mib": 559.3125
+        },
+        {
+          "stage": "stage2_gc",
+          "start_rss_mib": 559.3125,
+          "peak_rss_mib": 559.3125,
+          "seconds": 0.022915582987479866,
+          "end_rss_mib": 559.3125
+        },
+        {
+          "stage": "canonical_grouping",
+          "start_rss_mib": 559.3125,
+          "peak_rss_mib": 829.59375,
+          "seconds": 2.9571974580176175,
+          "end_rss_mib": 760.703125
+        },
+        {
+          "stage": "stage3",
+          "start_rss_mib": 559.3125,
+          "peak_rss_mib": 829.59375,
+          "seconds": 3.7003612499684095,
+          "end_rss_mib": 752.328125
+        },
+        {
+          "stage": "stage3_gc",
+          "start_rss_mib": 752.328125,
+          "peak_rss_mib": 752.328125,
+          "seconds": 0.02991783304605633,
+          "end_rss_mib": 744.328125
+        }
+      ],
+      "row_counts": {
+        "df_untouched": 4828,
+        "df_traditional": 3799,
+        "df_social": 0,
+        "df_dupes": 1029,
+        "df_ai_grouped": 3799,
+        "df_ai_unique": 1130
+      },
+      "grouped_aliases_traditional": true,
+      "repeat": 3,
+      "exact_output_equivalence": true
+    },
+    {
+      "implementation": "bounded",
+      "python": "3.13.5",
+      "pandas": "2.3.3",
+      "sklearn": "1.8.0",
+      "platform": "macOS-15.7.4-arm64-arm-64bit-Mach-O",
+      "logical_cpus": 10,
+      "threadpools": [
+        {
+          "user_api": "openmp",
+          "internal_api": "openmp",
+          "num_threads": 10,
+          "prefix": "libomp",
+          "filepath": "/Users/jeremyparkin/.local/share/virtualenvs/MIG_MasterApp-5g_3NMR3/lib/python3.13/site-packages/sklearn/.dylibs/libomp.dylib",
+          "version": null
+        }
+      ],
+      "import_rss_mib": 213.421875,
+      "end_rss_mib": 798.46875,
+      "os_high_water_mib": 832.875,
+      "peak_pipeline_rss_mib": 832.6875,
+      "cleaning_seconds": 7.218227750156075,
+      "stages": [
+        {
+          "stage": "upload_buffer",
+          "start_rss_mib": 213.453125,
+          "peak_rss_mib": 280.328125,
+          "seconds": 0.007080457988195121,
+          "end_rss_mib": 280.328125
+        },
+        {
+          "stage": "csv_read",
+          "start_rss_mib": 280.328125,
+          "peak_rss_mib": 475.6875,
+          "seconds": 0.3025104170665145,
+          "end_rss_mib": 412.40625
+        },
+        {
+          "stage": "upload_normalization",
+          "start_rss_mib": 412.40625,
+          "peak_rss_mib": 414.109375,
+          "seconds": 0.04670299997087568,
+          "end_rss_mib": 414.109375
+        },
+        {
+          "stage": "upload_quality",
+          "start_rss_mib": 414.109375,
+          "peak_rss_mib": 414.46875,
+          "seconds": 0.008236875059083104,
+          "end_rss_mib": 414.46875
+        },
+        {
+          "stage": "page_summary",
+          "start_rss_mib": 414.46875,
+          "peak_rss_mib": 417.046875,
+          "seconds": 0.056392209022305906,
+          "end_rss_mib": 417.046875
+        },
+        {
+          "stage": "stage1",
+          "start_rss_mib": 417.046875,
+          "peak_rss_mib": 570.6875,
+          "seconds": 2.592420917004347,
+          "end_rss_mib": 570.6875
+        },
+        {
+          "stage": "stage1_gc",
+          "start_rss_mib": 570.6875,
+          "peak_rss_mib": 570.6875,
+          "seconds": 0.02621183404698968,
+          "end_rss_mib": 554.6875
+        },
+        {
+          "stage": "stage2",
+          "start_rss_mib": 554.6875,
+          "peak_rss_mib": 554.90625,
+          "seconds": 0.893318833084777,
+          "end_rss_mib": 554.90625
+        },
+        {
+          "stage": "stage2_gc",
+          "start_rss_mib": 554.90625,
+          "peak_rss_mib": 554.90625,
+          "seconds": 0.023886749986559153,
+          "end_rss_mib": 554.90625
+        },
+        {
+          "stage": "canonical_grouping",
+          "start_rss_mib": 554.90625,
+          "peak_rss_mib": 832.6875,
+          "seconds": 2.9931398750049993,
+          "end_rss_mib": 771.484375
+        },
+        {
+          "stage": "stage3",
+          "start_rss_mib": 554.90625,
+          "peak_rss_mib": 832.6875,
+          "seconds": 3.732488000066951,
+          "end_rss_mib": 789.46875
+        },
+        {
+          "stage": "stage3_gc",
+          "start_rss_mib": 789.484375,
+          "peak_rss_mib": 798.46875,
+          "seconds": 0.036664457991719246,
+          "end_rss_mib": 798.46875
+        }
+      ],
+      "row_counts": {
+        "df_untouched": 4828,
+        "df_traditional": 3799,
+        "df_social": 0,
+        "df_dupes": 1029,
+        "df_ai_grouped": 3799,
+        "df_ai_unique": 1130
+      },
+      "grouped_aliases_traditional": true,
+      "repeat": 4,
+      "exact_output_equivalence": true
+    },
+    {
+      "implementation": "original",
+      "python": "3.13.5",
+      "pandas": "2.3.3",
+      "sklearn": "1.8.0",
+      "platform": "macOS-15.7.4-arm64-arm-64bit-Mach-O",
+      "logical_cpus": 10,
+      "threadpools": [
+        {
+          "user_api": "openmp",
+          "internal_api": "openmp",
+          "num_threads": 10,
+          "prefix": "libomp",
+          "filepath": "/Users/jeremyparkin/.local/share/virtualenvs/MIG_MasterApp-5g_3NMR3/lib/python3.13/site-packages/sklearn/.dylibs/libomp.dylib",
+          "version": null
+        }
+      ],
+      "import_rss_mib": 213.390625,
+      "end_rss_mib": 753.140625,
+      "os_high_water_mib": 940.265625,
+      "peak_pipeline_rss_mib": 940.140625,
+      "cleaning_seconds": 7.470977207180113,
+      "stages": [
+        {
+          "stage": "upload_buffer",
+          "start_rss_mib": 213.421875,
+          "peak_rss_mib": 280.296875,
+          "seconds": 0.00676645792555064,
+          "end_rss_mib": 280.296875
+        },
+        {
+          "stage": "csv_read",
+          "start_rss_mib": 280.296875,
+          "peak_rss_mib": 445.625,
+          "seconds": 0.29885541601106524,
+          "end_rss_mib": 384.046875
+        },
+        {
+          "stage": "upload_normalization",
+          "start_rss_mib": 384.046875,
+          "peak_rss_mib": 386.03125,
+          "seconds": 0.046986417029984295,
+          "end_rss_mib": 386.03125
+        },
+        {
+          "stage": "upload_quality",
+          "start_rss_mib": 386.03125,
+          "peak_rss_mib": 386.328125,
+          "seconds": 0.008305834024213254,
+          "end_rss_mib": 386.328125
+        },
+        {
+          "stage": "page_summary",
+          "start_rss_mib": 386.328125,
+          "peak_rss_mib": 388.71875,
+          "seconds": 0.05656633304897696,
+          "end_rss_mib": 388.71875
+        },
+        {
+          "stage": "stage1",
+          "start_rss_mib": 388.71875,
+          "peak_rss_mib": 546.734375,
+          "seconds": 2.809744791011326,
+          "end_rss_mib": 546.734375
+        },
+        {
+          "stage": "stage1_gc",
+          "start_rss_mib": 546.734375,
+          "peak_rss_mib": 546.734375,
+          "seconds": 0.026649583014659584,
+          "end_rss_mib": 522.734375
+        },
+        {
+          "stage": "stage2",
+          "start_rss_mib": 522.734375,
+          "peak_rss_mib": 523.46875,
+          "seconds": 0.8881291660945863,
+          "end_rss_mib": 523.46875
+        },
+        {
+          "stage": "stage2_gc",
+          "start_rss_mib": 523.46875,
+          "peak_rss_mib": 523.46875,
+          "seconds": 0.021806541015394032,
+          "end_rss_mib": 523.46875
+        },
+        {
+          "stage": "canonical_grouping",
+          "start_rss_mib": 523.46875,
+          "peak_rss_mib": 940.140625,
+          "seconds": 3.0357276659924537,
+          "end_rss_mib": 747.515625
+        },
+        {
+          "stage": "stage3",
+          "start_rss_mib": 523.46875,
+          "peak_rss_mib": 940.140625,
+          "seconds": 3.7731032500742003,
+          "end_rss_mib": 769.140625
+        },
+        {
+          "stage": "stage3_gc",
+          "start_rss_mib": 769.140625,
+          "peak_rss_mib": 769.140625,
+          "seconds": 0.02663962496444583,
+          "end_rss_mib": 753.140625
+        }
+      ],
+      "row_counts": {
+        "df_untouched": 4828,
+        "df_traditional": 3799,
+        "df_social": 0,
+        "df_dupes": 1029,
+        "df_ai_grouped": 3799,
+        "df_ai_unique": 1130
+      },
+      "grouped_aliases_traditional": true,
+      "repeat": 4,
+      "exact_output_equivalence": true
+    },
+    {
+      "implementation": "original",
+      "python": "3.13.5",
+      "pandas": "2.3.3",
+      "sklearn": "1.8.0",
+      "platform": "macOS-15.7.4-arm64-arm-64bit-Mach-O",
+      "logical_cpus": 10,
+      "threadpools": [
+        {
+          "user_api": "openmp",
+          "internal_api": "openmp",
+          "num_threads": 10,
+          "prefix": "libomp",
+          "filepath": "/Users/jeremyparkin/.local/share/virtualenvs/MIG_MasterApp-5g_3NMR3/lib/python3.13/site-packages/sklearn/.dylibs/libomp.dylib",
+          "version": null
+        }
+      ],
+      "import_rss_mib": 214.578125,
+      "end_rss_mib": 416.859375,
+      "os_high_water_mib": 931.828125,
+      "peak_pipeline_rss_mib": 928.78125,
+      "cleaning_seconds": 7.989605750073679,
+      "stages": [
+        {
+          "stage": "upload_buffer",
+          "start_rss_mib": 214.640625,
+          "peak_rss_mib": 281.515625,
+          "seconds": 0.00745979102794081,
+          "end_rss_mib": 281.515625
+        },
+        {
+          "stage": "csv_read",
+          "start_rss_mib": 281.515625,
+          "peak_rss_mib": 431.921875,
+          "seconds": 0.3107439579907805,
+          "end_rss_mib": 367.140625
+        },
+        {
+          "stage": "upload_normalization",
+          "start_rss_mib": 367.140625,
+          "peak_rss_mib": 369.9375,
+          "seconds": 0.04767745896242559,
+          "end_rss_mib": 369.9375
+        },
+        {
+          "stage": "upload_quality",
+          "start_rss_mib": 369.9375,
+          "peak_rss_mib": 370.28125,
+          "seconds": 0.008191167027689517,
+          "end_rss_mib": 370.28125
+        },
+        {
+          "stage": "page_summary",
+          "start_rss_mib": 370.28125,
+          "peak_rss_mib": 370.703125,
+          "seconds": 0.05626395903527737,
+          "end_rss_mib": 370.703125
+        },
+        {
+          "stage": "stage1",
+          "start_rss_mib": 370.703125,
+          "peak_rss_mib": 399.34375,
+          "seconds": 2.836864458047785,
+          "end_rss_mib": 399.34375
+        },
+        {
+          "stage": "stage1_gc",
+          "start_rss_mib": 399.390625,
+          "peak_rss_mib": 429.25,
+          "seconds": 0.04279579094145447,
+          "end_rss_mib": 429.25
+        },
+        {
+          "stage": "stage2",
+          "start_rss_mib": 429.25,
+          "peak_rss_mib": 429.375,
+          "seconds": 0.8783935829997063,
+          "end_rss_mib": 429.375
+        },
+        {
+          "stage": "stage2_gc",
+          "start_rss_mib": 429.375,
+          "peak_rss_mib": 429.375,
+          "seconds": 0.022626332938671112,
+          "end_rss_mib": 429.375
+        },
+        {
+          "stage": "canonical_grouping",
+          "start_rss_mib": 429.375,
+          "peak_rss_mib": 928.78125,
+          "seconds": 3.0156939160078764,
+          "end_rss_mib": 754.125
+        },
+        {
+          "stage": "stage3",
+          "start_rss_mib": 429.375,
+          "peak_rss_mib": 928.78125,
+          "seconds": 4.274347709026188,
+          "end_rss_mib": 345.5
+        },
+        {
+          "stage": "stage3_gc",
+          "start_rss_mib": 345.578125,
+          "peak_rss_mib": 416.859375,
+          "seconds": 0.0645309160463512,
+          "end_rss_mib": 416.859375
+        }
+      ],
+      "row_counts": {
+        "df_untouched": 4828,
+        "df_traditional": 3799,
+        "df_social": 0,
+        "df_dupes": 1029,
+        "df_ai_grouped": 3799,
+        "df_ai_unique": 1130
+      },
+      "grouped_aliases_traditional": true,
+      "repeat": 5,
+      "exact_output_equivalence": true
+    },
+    {
+      "implementation": "bounded",
+      "python": "3.13.5",
+      "pandas": "2.3.3",
+      "sklearn": "1.8.0",
+      "platform": "macOS-15.7.4-arm64-arm-64bit-Mach-O",
+      "logical_cpus": 10,
+      "threadpools": [
+        {
+          "user_api": "openmp",
+          "internal_api": "openmp",
+          "num_threads": 10,
+          "prefix": "libomp",
+          "filepath": "/Users/jeremyparkin/.local/share/virtualenvs/MIG_MasterApp-5g_3NMR3/lib/python3.13/site-packages/sklearn/.dylibs/libomp.dylib",
+          "version": null
+        }
+      ],
+      "import_rss_mib": 215.140625,
+      "end_rss_mib": 818.296875,
+      "os_high_water_mib": 890.421875,
+      "peak_pipeline_rss_mib": 890.15625,
+      "cleaning_seconds": 7.199568831943907,
+      "stages": [
+        {
+          "stage": "upload_buffer",
+          "start_rss_mib": 215.171875,
+          "peak_rss_mib": 282.046875,
+          "seconds": 0.028260709019377828,
+          "end_rss_mib": 282.046875
+        },
+        {
+          "stage": "csv_read",
+          "start_rss_mib": 282.046875,
+          "peak_rss_mib": 424.875,
+          "seconds": 0.3156007499201223,
+          "end_rss_mib": 424.875
+        },
+        {
+          "stage": "upload_normalization",
+          "start_rss_mib": 424.875,
+          "peak_rss_mib": 429.171875,
+          "seconds": 0.04772133310325444,
+          "end_rss_mib": 429.171875
+        },
+        {
+          "stage": "upload_quality",
+          "start_rss_mib": 429.171875,
+          "peak_rss_mib": 429.46875,
+          "seconds": 0.008466709055937827,
+          "end_rss_mib": 429.46875
+        },
+        {
+          "stage": "page_summary",
+          "start_rss_mib": 429.46875,
+          "peak_rss_mib": 431.453125,
+          "seconds": 0.05605933291371912,
+          "end_rss_mib": 431.453125
+        },
+        {
+          "stage": "stage1",
+          "start_rss_mib": 431.453125,
+          "peak_rss_mib": 500.859375,
+          "seconds": 2.611720332992263,
+          "end_rss_mib": 500.859375
+        },
+        {
+          "stage": "stage1_gc",
+          "start_rss_mib": 500.859375,
+          "peak_rss_mib": 500.859375,
+          "seconds": 0.025763834011740983,
+          "end_rss_mib": 469.3125
+        },
+        {
+          "stage": "stage2",
+          "start_rss_mib": 469.3125,
+          "peak_rss_mib": 469.453125,
+          "seconds": 0.8857274579349905,
+          "end_rss_mib": 469.453125
+        },
+        {
+          "stage": "stage2_gc",
+          "start_rss_mib": 469.453125,
+          "peak_rss_mib": 469.453125,
+          "seconds": 0.023076249985024333,
+          "end_rss_mib": 469.453125
+        },
+        {
+          "stage": "canonical_grouping",
+          "start_rss_mib": 469.453125,
+          "peak_rss_mib": 890.15625,
+          "seconds": 2.9549509159987792,
+          "end_rss_mib": 817.984375
+        },
+        {
+          "stage": "stage3",
+          "start_rss_mib": 469.453125,
+          "peak_rss_mib": 890.15625,
+          "seconds": 3.702121041016653,
+          "end_rss_mib": 826.234375
+        },
+        {
+          "stage": "stage3_gc",
+          "start_rss_mib": 826.234375,
+          "peak_rss_mib": 826.234375,
+          "seconds": 0.03296475007664412,
+          "end_rss_mib": 818.296875
+        }
+      ],
+      "row_counts": {
+        "df_untouched": 4828,
+        "df_traditional": 3799,
+        "df_social": 0,
+        "df_dupes": 1029,
+        "df_ai_grouped": 3799,
+        "df_ai_unique": 1130
+      },
+      "grouped_aliases_traditional": true,
+      "repeat": 5,
+      "exact_output_equivalence": true
+    },
+    {
+      "implementation": "bounded",
+      "python": "3.13.5",
+      "pandas": "2.3.3",
+      "sklearn": "1.8.0",
+      "platform": "macOS-15.7.4-arm64-arm-64bit-Mach-O",
+      "logical_cpus": 10,
+      "threadpools": [
+        {
+          "user_api": "openmp",
+          "internal_api": "openmp",
+          "num_threads": 10,
+          "prefix": "libomp",
+          "filepath": "/Users/jeremyparkin/.local/share/virtualenvs/MIG_MasterApp-5g_3NMR3/lib/python3.13/site-packages/sklearn/.dylibs/libomp.dylib",
+          "version": null
+        }
+      ],
+      "import_rss_mib": 216.421875,
+      "end_rss_mib": 754.03125,
+      "os_high_water_mib": 825.125,
+      "peak_pipeline_rss_mib": 824.984375,
+      "cleaning_seconds": 7.199246373958886,
+      "stages": [
+        {
+          "stage": "upload_buffer",
+          "start_rss_mib": 216.453125,
+          "peak_rss_mib": 283.328125,
+          "seconds": 0.008090832969173789,
+          "end_rss_mib": 283.328125
+        },
+        {
+          "stage": "csv_read",
+          "start_rss_mib": 283.328125,
+          "peak_rss_mib": 427.765625,
+          "seconds": 0.3111871250439435,
+          "end_rss_mib": 427.765625
+        },
+        {
+          "stage": "upload_normalization",
+          "start_rss_mib": 427.765625,
+          "peak_rss_mib": 432.4375,
+          "seconds": 0.050254291971214116,
+          "end_rss_mib": 432.4375
+        },
+        {
+          "stage": "upload_quality",
+          "start_rss_mib": 432.4375,
+          "peak_rss_mib": 432.796875,
+          "seconds": 0.008639417006634176,
+          "end_rss_mib": 432.796875
+        },
+        {
+          "stage": "page_summary",
+          "start_rss_mib": 432.796875,
+          "peak_rss_mib": 433.125,
+          "seconds": 0.05868820799514651,
+          "end_rss_mib": 433.125
+        },
+        {
+          "stage": "stage1",
+          "start_rss_mib": 433.125,
+          "peak_rss_mib": 583.390625,
+          "seconds": 2.6203175829723477,
+          "end_rss_mib": 583.390625
+        },
+        {
+          "stage": "stage1_gc",
+          "start_rss_mib": 583.390625,
+          "peak_rss_mib": 583.390625,
+          "seconds": 0.024219415965490043,
+          "end_rss_mib": 551.390625
+        },
+        {
+          "stage": "stage2",
+          "start_rss_mib": 551.390625,
+          "peak_rss_mib": 552.234375,
+          "seconds": 0.8841691249981523,
+          "end_rss_mib": 552.234375
+        },
+        {
+          "stage": "stage2_gc",
+          "start_rss_mib": 552.234375,
+          "peak_rss_mib": 552.234375,
+          "seconds": 0.022916457965038717,
+          "end_rss_mib": 552.234375
+        },
+        {
+          "stage": "canonical_grouping",
+          "start_rss_mib": 552.234375,
+          "peak_rss_mib": 824.984375,
+          "seconds": 2.958160375012085,
+          "end_rss_mib": 761.625
+        },
+        {
+          "stage": "stage3",
+          "start_rss_mib": 552.234375,
+          "peak_rss_mib": 824.984375,
+          "seconds": 3.6947596659883857,
+          "end_rss_mib": 770.03125
+        },
+        {
+          "stage": "stage3_gc",
+          "start_rss_mib": 770.03125,
+          "peak_rss_mib": 770.03125,
+          "seconds": 0.030280375038273633,
+          "end_rss_mib": 754.03125
+        }
+      ],
+      "row_counts": {
+        "df_untouched": 4828,
+        "df_traditional": 3799,
+        "df_social": 0,
+        "df_dupes": 1029,
+        "df_ai_grouped": 3799,
+        "df_ai_unique": 1130
+      },
+      "grouped_aliases_traditional": true,
+      "repeat": 6,
+      "exact_output_equivalence": true
+    },
+    {
+      "implementation": "original",
+      "python": "3.13.5",
+      "pandas": "2.3.3",
+      "sklearn": "1.8.0",
+      "platform": "macOS-15.7.4-arm64-arm-64bit-Mach-O",
+      "logical_cpus": 10,
+      "threadpools": [
+        {
+          "user_api": "openmp",
+          "internal_api": "openmp",
+          "num_threads": 10,
+          "prefix": "libomp",
+          "filepath": "/Users/jeremyparkin/.local/share/virtualenvs/MIG_MasterApp-5g_3NMR3/lib/python3.13/site-packages/sklearn/.dylibs/libomp.dylib",
+          "version": null
+        }
+      ],
+      "import_rss_mib": 212.90625,
+      "end_rss_mib": 760.5,
+      "os_high_water_mib": 963.40625,
+      "peak_pipeline_rss_mib": 951.421875,
+      "cleaning_seconds": 7.5846675001084805,
+      "stages": [
+        {
+          "stage": "upload_buffer",
+          "start_rss_mib": 212.9375,
+          "peak_rss_mib": 279.8125,
+          "seconds": 0.007270082947798073,
+          "end_rss_mib": 279.8125
+        },
+        {
+          "stage": "csv_read",
+          "start_rss_mib": 279.8125,
+          "peak_rss_mib": 444.328125,
+          "seconds": 0.30080087506212294,
+          "end_rss_mib": 385.859375
+        },
+        {
+          "stage": "upload_normalization",
+          "start_rss_mib": 385.859375,
+          "peak_rss_mib": 387.703125,
+          "seconds": 0.04726266604848206,
+          "end_rss_mib": 387.703125
+        },
+        {
+          "stage": "upload_quality",
+          "start_rss_mib": 387.703125,
+          "peak_rss_mib": 388.109375,
+          "seconds": 0.008280374924652278,
+          "end_rss_mib": 388.109375
+        },
+        {
+          "stage": "page_summary",
+          "start_rss_mib": 388.109375,
+          "peak_rss_mib": 391.0,
+          "seconds": 0.055862040957435966,
+          "end_rss_mib": 391.0
+        },
+        {
+          "stage": "stage1",
+          "start_rss_mib": 391.0,
+          "peak_rss_mib": 517.84375,
+          "seconds": 2.8119774169754237,
+          "end_rss_mib": 435.15625
+        },
+        {
+          "stage": "stage1_gc",
+          "start_rss_mib": 435.15625,
+          "peak_rss_mib": 451.03125,
+          "seconds": 0.09306516696233302,
+          "end_rss_mib": 451.03125
+        },
+        {
+          "stage": "stage2",
+          "start_rss_mib": 451.03125,
+          "peak_rss_mib": 453.265625,
+          "seconds": 0.9576426660642028,
+          "end_rss_mib": 451.421875
+        },
+        {
+          "stage": "stage2_gc",
+          "start_rss_mib": 451.421875,
+          "peak_rss_mib": 451.421875,
+          "seconds": 0.03134141699410975,
+          "end_rss_mib": 450.328125
+        },
+        {
+          "stage": "canonical_grouping",
+          "start_rss_mib": 450.265625,
+          "peak_rss_mib": 951.421875,
+          "seconds": 3.0846847500652075,
+          "end_rss_mib": 754.0
+        },
+        {
+          "stage": "stage3",
+          "start_rss_mib": 450.296875,
+          "peak_rss_mib": 951.421875,
+          "seconds": 3.815047417068854,
+          "end_rss_mib": 760.5
+        },
+        {
+          "stage": "stage3_gc",
+          "start_rss_mib": 760.5,
+          "peak_rss_mib": 760.5,
+          "seconds": 0.026072041946463287,
+          "end_rss_mib": 760.5
+        }
+      ],
+      "row_counts": {
+        "df_untouched": 4828,
+        "df_traditional": 3799,
+        "df_social": 0,
+        "df_dupes": 1029,
+        "df_ai_grouped": 3799,
+        "df_ai_unique": 1130
+      },
+      "grouped_aliases_traditional": true,
+      "repeat": 6,
+      "exact_output_equivalence": true
+    }
+  ],
+  "medians": {
+    "original": {
+      "cleaning_seconds": 7.630492499563843,
+      "peak_pipeline_rss_mib": 945.78125,
+      "os_high_water_mib": 955.671875
+    },
+    "bounded": {
+      "cleaning_seconds": 7.215531166526489,
+      "peak_pipeline_rss_mib": 827.2890625,
+      "os_high_water_mib": 829.0
+    }
+  }
+}

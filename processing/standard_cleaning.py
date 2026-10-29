@@ -110,7 +110,8 @@ def normalize_snippet_for_compare(text: str) -> str:
 def _leading_token_tuple(text: str, limit: int = 12) -> tuple[str, ...]:
     if not text:
         return ()
-    return tuple(text.split()[:limit])
+    # Leave the unused tail unsplit; retain Python's Unicode whitespace rules.
+    return tuple(text.split(maxsplit=limit)[:limit])
 
 
 def _cheap_broadcast_similarity_gate(
