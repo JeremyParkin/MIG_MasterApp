@@ -8,6 +8,7 @@ from typing import Literal
 
 import pandas as pd
 from processing.coverage_flags import has_effective_coverage_flag, split_coverage_flags
+from processing.standard_cleaning import SOCIAL_TYPES
 from utils.time_display import format_local_timestamp
 
 
@@ -149,9 +150,7 @@ def get_sentiment_source_rows(df_traditional: pd.DataFrame) -> pd.DataFrame:
 
     if "Type" in df.columns:
         df = df[
-            ~df["Type"].isin(
-                ["FACEBOOK", "INSTAGRAM", "X", "TWITTER", "LINKEDIN", "TIKTOK", "YOUTUBE", "REDDIT", "BLUESKY"]
-            )
+            ~df["Type"].isin(SOCIAL_TYPES)
         ].copy()
 
     return df.reset_index(drop=True)

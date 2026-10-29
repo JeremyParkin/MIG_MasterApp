@@ -7,6 +7,7 @@ from typing import Literal
 import pandas as pd
 from processing.ai_tagging import initialize_tagging_workflow_columns
 from processing.coverage_flags import has_effective_coverage_flag, split_coverage_flags
+from processing.standard_cleaning import SOCIAL_TYPES
 
 
 SampleMode = Literal["full", "representative", "custom", "reuse_other_sample"]
@@ -70,9 +71,7 @@ def get_tagging_source_rows(df_traditional: pd.DataFrame) -> pd.DataFrame:
 
     if "Type" in df.columns:
         df = df[
-            ~df["Type"].isin(
-                ["FACEBOOK", "INSTAGRAM", "X", "TWITTER", "LINKEDIN", "TIKTOK", "YOUTUBE", "REDDIT", "BLUESKY"]
-            )
+            ~df["Type"].isin(SOCIAL_TYPES)
         ].copy()
 
     return df.reset_index(drop=True)

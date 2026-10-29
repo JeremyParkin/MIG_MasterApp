@@ -55,6 +55,11 @@ def normalize_uploaded_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     # Drop near-empty rows early
     df = df.dropna(thresh=3).copy()
 
+    # Some exports carry both columns. Match the upload quality report and treat
+    # `Media Type` as the media type, keeping the other column for provenance.
+    if "Media Type" in df.columns and "Type" in df.columns:
+        df.rename(columns={"Type": "Source Type"}, inplace=True)
+
     # Standardize likely variant column names into one schema
     rename_map = {
         "Media Type": "Type",

@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import re
 from difflib import SequenceMatcher
+from urllib.parse import urlsplit
 
 import numpy as np
 import pandas as pd
 from titlecase import titlecase
 from processing.coverage_flags import add_coverage_flags
 
-SOCIAL_TYPES = ["FACEBOOK", "TWITTER", "X", "INSTAGRAM", "REDDIT", "YOUTUBE", "TIKTOK", "LINKEDIN", "BLUESKY"]
+SOCIAL_TYPES = ["FACEBOOK", "TWITTER", "X", "INSTAGRAM", "REDDIT", "YOUTUBE", "TIKTOK", "LINKEDIN", "BLUESKY", "THREADS"]
+# Exact hostnames only: Meta's outbound link shim (l.threads.com) wraps external
+# pages, so it must not classify the destination as a Threads post.
+THREADS_HOSTNAMES = {"threads.com", "threads.net"}
 BROADCAST_TYPES = ["RADIO", "TV"]
 MAX_UNDATED_FUZZY_DEDUPE_GROUP_SIZE = 250
 CANONICAL_MEDIA_TYPES = {
@@ -35,7 +39,7 @@ def normalize_media_type_value(value, *, merge_online: bool = True) -> str:
 
     key = re.sub(r"\s+", " ", raw.upper().replace("_", " ")).strip()
 
-    if key in {"FACEBOOK", "TWITTER", "X", "INSTAGRAM", "REDDIT", "YOUTUBE", "TIKTOK", "LINKEDIN", "BLUESKY"}:
+    if key in SOCIAL_TYPES:
         return "X" if key == "TWITTER" else key
 
     if key in {"ONLINE", "ONLINE NEWS", "PRESS RELEASE", "BLOGS"}:
@@ -61,6 +65,25 @@ def normalize_media_type_value(value, *, merge_online: bool = True) -> str:
         return key
 
     return key
+
+
+def url_hostname(value) -> str:
+    """Return the lowercase hostname of a URL, tolerating a missing scheme and a leading www."""
+    raw = "" if pd.isna(value) else str(value).strip()
+    if not raw:
+        return ""
+    if "://" not in raw:
+        raw = "//" + raw.lstrip("/")
+    try:
+        hostname = urlsplit(raw).hostname or ""
+    except ValueError:
+        return ""
+    hostname = hostname.rstrip(".")
+    return hostname[4:] if hostname.startswith("www.") else hostname
+
+
+def is_threads_url(value) -> bool:
+    return url_hostname(value) in THREADS_HOSTNAMES
 
 
 def get_unrecognized_media_types(series: pd.Series, *, merge_online: bool = True) -> list[str]:
@@ -181,6 +204,9 @@ def standardize_media_types(df: pd.DataFrame, merge_online: bool = True) -> pd.D
         df.loc[url_series.str.contains("youtube.com", na=False), "Type"] = "YOUTUBE"
         df.loc[url_series.str.contains("linkedin.com", na=False), "Type"] = "LINKEDIN"
         df.loc[url_series.str.contains("bsky.app", na=False), "Type"] = "BLUESKY"
+        # Hostname-aware so Threads mentioned in another site's path or query
+        # (e.g. forum "/threads/" URLs) is not misread as a Threads post.
+        df.loc[url_series.map(is_threads_url), "Type"] = "THREADS"
 
     if "Outlet" in df.columns and "URL" in df.columns:
         df.loc[

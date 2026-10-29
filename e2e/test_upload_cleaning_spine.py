@@ -71,7 +71,7 @@ def test_malformed_csv_upload_warnings_and_drop_invalid_date(e2e_page: Page) -> 
 
     date_warning = _upload_warning(page, re.compile(r"could not be converted into\s*Date"))
     missing_type_warning = _upload_warning(page, "have no media type value")
-    unrecognized_warning = _upload_warning(page, "does not currently normalize these media type value(s): THREADS")
+    unrecognized_warning = _upload_warning(page, "does not currently normalize these media type value(s): MASTODON")
 
     expect(date_warning).to_be_visible()
     expect(missing_type_warning).to_be_visible()

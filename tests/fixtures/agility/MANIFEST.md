@@ -10,6 +10,7 @@ The CSV fixtures preserve the source Agility column names. Long headline/snippet
 | --- | --- |
 | `agility_golden_corpus.csv` | Canonical 100-row raw Agility-style input corpus. |
 | `agility_malformed_inputs.csv` | Smaller malformed/robustness input corpus. |
+| `agility_threads_cases.csv` | Synthetic Threads classification corpus in the Agility export layout. |
 | `agility_golden_cleaned_workbook.xlsx` | Cleaned workbook generated through MIG normalization, Basic Cleaning, grouping, and export code using the golden corpus. |
 | `agility_golden_multisheet_upload.xlsx` | Multi-sheet upload fixture. Select worksheet `Agility Export` for the intended data. |
 
@@ -135,7 +136,7 @@ The CSV fixtures preserve the source Agility column names. Long headline/snippet
 | MF-005 | 88 | Blank headline and snippet on a social row. |
 | MF-006 | 110 | Unicode-heavy headline/snippet that should remain valid text. |
 | MF-007 | 198 | Extremely long synthetic headline/snippet without copyrighted article text. |
-| MF-008 | 381 | Unexpected media type value THREADS. |
+| MF-008 | 381 | Unexpected media type value MASTODON (no platform support yet). |
 | MF-009 | 790 | Missing published time on a TikTok row. |
 | MF-010 | 1169 | Missing SyndicationId in otherwise valid syndicated news row. |
 | MF-011 | 1398 | Near duplicate Facebook row with one date/time format. |
@@ -156,3 +157,28 @@ The CSV fixtures preserve the source Agility column names. Long headline/snippet
 - Source export rows: 4,427. Golden fixture rows: 100. Malformed fixture rows: 14.
 - Golden normalized upload warnings: 0.
 - Cleaned workbook traditional rows: 49; social rows: 47; duplicate rows: 4; unique story rows: 44.
+
+## Threads Classification Cases
+
+`agility_threads_cases.csv` is synthetic: every row reuses one golden X row as a column template, with invented accounts, URLs and text. It is kept separate from the golden corpus so golden row counts and the generated workbooks stay unchanged. Expected Basic Cleaning result: 4 traditional, 13 social, 1 deleted duplicate (18 rows).
+
+| Case ID | Source row | Media type | URL / identifying text | Testing reason |
+| --- | ---: | --- | --- | --- |
+| TH-001 | 2 | THREADS | `www.threads.com/@…/post/…` | Canonical Threads post on the current domain. |
+| TH-002 | 3 | THREADS | `www.threads.net/@…/post/…` | Legacy threads.net domain. |
+| TH-003 | 4 | THREADS | `www.threads.com/share/…` | Share-link path. |
+| TH-004 | 5 | Threads | `threads.net/@…/post/…` (no scheme) | Lowercase source type and scheme-less URL. |
+| TH-005 | 6 | ONLINE_NEWS | `www.threads.com/@…/post/…` | Source/URL disagreement; URL reclassifies to THREADS, Original Type keeps ONLINE NEWS. |
+| TH-006 | 7 | INSTAGRAM | `www.threads.net/@…/post/…` | Source labels Threads post as Instagram; URL reclassifies to THREADS. |
+| TH-007 | 8 | (blank) | `threads.com/@…/post/…` | Missing media type recovered from URL; upload still warns. |
+| TH-008 | 9 | THREADS | (blank URL) | Missing URL; source type alone routes to social. |
+| TH-009 | 10 | THREADS | `bsky.app/…` | Source says Threads but URL is Bluesky; URL precedence gives BLUESKY. |
+| TH-010 | 11 | ONLINE_NEWS | forum `/threads/` path | Substring "threads" in path must stay traditional. |
+| TH-011 | 12 | ONLINE_NEWS | `l.threads.com/?u=…` | Threads outbound link shim wraps an external page; stays traditional. |
+| TH-012 | 13 | ONLINE_NEWS | `?utm_source=threads.net` | Threads domain only in query string; stays traditional. |
+| TH-013 | 14 | THREADS | `…/post/DQa13Dupe` | Exact URL duplicate pair, kept copy. |
+| TH-014 | 15 | THREADS | `…/post/DQa13Dupe` | Exact URL duplicate pair, removed to deleted duplicates. |
+| TH-015 | 16 | THREADS | `…/post/DQa15Sparse` | Blank author, outlet, snippet, impressions and engagements. |
+| TH-016 | 17 | ONLINE_NEWS | redirect URL, Threads `Original URL` | Original URL is preferred before platform detection. |
+| TH-017 | 18 | X | `x.com/…/status/…` | X control row; behavior unchanged. |
+| TH-018 | 19 | ONLINE_NEWS | `example-news.com/story-eighteen` | Online news control row. |

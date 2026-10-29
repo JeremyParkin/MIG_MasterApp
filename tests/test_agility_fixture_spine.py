@@ -337,7 +337,7 @@ class AgilityFixtureSpineTests(unittest.TestCase):
         )
         self.assertEqual(report["date_issue_row_numbers"], [2])
         self.assertEqual(report["media_type_issue_row_numbers"], [3])
-        self.assertEqual(report["unrecognized_media_type_values"], ["THREADS"])
+        self.assertEqual(report["unrecognized_media_type_values"], ["MASTODON"])
 
         state = _run_basic_cleaning_like_page(raw)
         self.assertEqual(
