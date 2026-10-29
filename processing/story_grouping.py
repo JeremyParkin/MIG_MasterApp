@@ -187,7 +187,7 @@ def cluster_similar_stories(df: pd.DataFrame, similarity_threshold: float) -> pd
         return df
 
     radius = max(1.0 - similarity_threshold, 0.0)
-    nn = NearestNeighbors(metric="cosine", radius=radius, algorithm="brute", n_jobs=-1)
+    nn = NearestNeighbors(metric="cosine", radius=radius, algorithm="brute", n_jobs=1)
     nn.fit(tfidf_matrix)
     graph = nn.radius_neighbors_graph(tfidf_matrix, radius=radius, mode="distance")
 

@@ -43,6 +43,7 @@ def test_weak_snippet_edge_decision_and_vectorizer_input_match(monkeypatch, sepa
     }, index=pd.Index([8, 2], name="source"))
     before = frame.copy(deep=True)
     vectorizer_inputs = []
+    worker_settings = []
 
     class Vectorizer:
         def fit_transform(self, texts):
@@ -51,7 +52,8 @@ def test_weak_snippet_edge_decision_and_vectorizer_input_match(monkeypatch, sepa
 
     class Neighbors:
         def __init__(self, **kwargs):
-            assert kwargs == dict(metric="cosine", radius=1 - 0.935, algorithm="brute", n_jobs=-1)
+            worker_settings.append(kwargs.pop("n_jobs"))
+            assert kwargs == dict(metric="cosine", radius=1 - 0.935, algorithm="brute")
 
         def fit(self, matrix):
             pass
@@ -66,6 +68,7 @@ def test_weak_snippet_edge_decision_and_vectorizer_input_match(monkeypatch, sepa
         monkeypatch.setattr(module, "NearestNeighbors", Neighbors)
     expected = reference.cluster_similar_stories(frame, 0.935)
     actual = story_grouping.cluster_similar_stories(frame, 0.935)
+    assert worker_settings == [-1, 1]
     assert_frame_equal(actual, expected, check_exact=True)
     assert actual["Group ID"].nunique() == (2 if count < 20 else 1)
     pd.testing.assert_series_equal(vectorizer_inputs[0], vectorizer_inputs[1], check_exact=True)
