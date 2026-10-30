@@ -10,8 +10,8 @@ from processing.data_quality import build_data_quality_warnings
 from processing.download_exports import order_clean_trad_grouping_columns
 from processing.effective_reach import apply_effective_reach_traditional
 from processing.story_grouping import build_unique_story_table, cluster_by_media_type, mark_prime_examples
-from processing.ai_sentiment import call_ai_sentiment as call_ai_sentiment_first_pass
-from processing.ai_tagging import call_ai_tagging
+from processing.ai_sentiment import DEFAULT_SENTIMENT_MODEL, call_ai_sentiment as call_ai_sentiment_first_pass
+from processing.ai_tagging import DEFAULT_TAGGING_MODEL, call_ai_tagging
 from processing.sentiment_config import prepare_sentiment_datasets
 from processing.tagging_config import prepare_tagging_datasets
 from utils.io import build_upload_quality_report, normalize_uploaded_dataframe
@@ -71,11 +71,12 @@ class SyndicationGroupingTests(unittest.TestCase):
             pd.Series({"Headline": "A story", "Snippet": "Story text"}),
             {"Innovation": "New technology", "Other": "No substantive tag applies."},
             "Multiple applicable tags",
-            "gpt-5.6-luna",
+            DEFAULT_TAGGING_MODEL,
         )
 
         self.assertEqual(result["tag"], "Innovation")
         self.assertEqual((input_tokens, output_tokens), (12, 8))
+        self.assertEqual(completions.kwargs["model"], "gpt-6-luna")
         self.assertEqual(completions.kwargs["tool_choice"]["function"]["name"], "apply_multiple_tags")
         self.assertEqual(completions.kwargs["reasoning_effort"], "none")
 
@@ -107,7 +108,7 @@ class SyndicationGroupingTests(unittest.TestCase):
         result, input_tokens, output_tokens = call_ai_sentiment_first_pass(
             client,
             "Headline: College Board announces dates",
-            "gpt-5.6-luna",
+            DEFAULT_SENTIMENT_MODEL,
             [
                 {
                     "name": "analyze_sentiment",
@@ -120,6 +121,7 @@ class SyndicationGroupingTests(unittest.TestCase):
 
         self.assertEqual(result["sentiment"], "NEUTRAL")
         self.assertEqual((input_tokens, output_tokens), (10, 5))
+        self.assertEqual(completions.kwargs["model"], "gpt-6-luna")
         self.assertEqual(completions.kwargs["tool_choice"]["function"]["name"], "analyze_sentiment")
         self.assertEqual(completions.kwargs["reasoning_effort"], "none")
 

@@ -13,9 +13,9 @@ from processing.prominence import get_prominence_weight_series
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
-DEFAULT_TAGGING_MODEL = "gpt-5.6-luna"
-DEFAULT_TAGGING_OBSERVATION_MODEL = "gpt-5.6-luna"
-DEFAULT_TAGGING_REVIEW_MODEL = "gpt-5.6-luna"
+DEFAULT_TAGGING_MODEL = "gpt-6-luna"
+DEFAULT_TAGGING_OBSERVATION_MODEL = "gpt-6.1-terra"
+DEFAULT_TAGGING_REVIEW_MODEL = "gpt-6-luna"
 DEFAULT_TAGGING_MODE = "Single best tag"
 TAGGING_MODES = ("Single best tag", "Multiple applicable tags")
 FIRST_PASS_REASONING_EFFORT = "low"

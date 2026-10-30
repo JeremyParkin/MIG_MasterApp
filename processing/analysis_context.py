@@ -19,7 +19,7 @@ from processing.coverage_flags import effective_coverage_flags, has_effective_co
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
-DEFAULT_ANALYSIS_CONTEXT_MODEL = "gpt-5.6-luna"
+DEFAULT_ANALYSIS_CONTEXT_MODEL = "gpt-6.1-terra"
 AVAILABLE_JUNKY_COVERAGE_FLAGS = [
     "Press Release",
     "Advertorial",

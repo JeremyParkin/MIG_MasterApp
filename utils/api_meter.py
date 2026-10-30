@@ -8,8 +8,10 @@ import streamlit as st
 # Pricing
 # ----------------------------
 _OPENAI_PRICES = {
-    "gpt-5.6-luna": {"in": 0.20, "out": 1.20},
+    "gpt-6.1-terra": {"in": 1.00, "out": 5.00},
+    "gpt-6-luna": {"in": 0.10, "out": 0.50},
     # Retain legacy entries so historical/session data can still be priced.
+    "gpt-5.6-luna": {"in": 0.20, "out": 1.20},
     "gpt-5.4-nano": {"in": 0.20, "out": 1.25},
     "gpt-5.4-mini": {"in": 0.75, "out": 4.50},
     "gpt-5-mini": {"in": 0.25, "out": 2.00},

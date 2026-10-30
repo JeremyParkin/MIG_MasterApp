@@ -20,7 +20,7 @@ from processing.jev_sentiment import (
 from utils.api_meter import estimate_cost_usd, extract_usage_tokens
 
 
-RAPID_REVIEW_MODEL = "gpt-5.6-luna"
+RAPID_REVIEW_MODEL = "gpt-6-luna"
 RAPID_REVIEW_MAX_RETRIES = 2
 RAPID_REVIEW_MAX_WORKERS = 4
 RAPID_REVIEW_DEFAULT_BATCH_SIZE = 50

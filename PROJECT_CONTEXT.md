@@ -24,7 +24,13 @@ The app is traditional-media focused today, although Basic Cleaning and export s
 - Exports: openpyxl, XlsxWriter, python-docx, dill, Jinja2.
 - Other notable utilities: deep-translator, titlecase, unidecode.
 
-The standard OpenAI credential convention is `st.secrets["key"]`. Rapid Labeling uses `st.secrets["openrouter_key"]`, with `OPENROUTER_API_KEY` as its environment fallback. These are separate integrations. The normal model defaults are currently `gpt-5.6-luna`; Rapid first pass is pinned to `typesafe/jev-1.13` through OpenRouter's Decisions API.
+The standard OpenAI credential convention is `st.secrets["key"]`. Rapid Labeling uses `st.secrets["openrouter_key"]`, with `OPENROUTER_API_KEY` as its environment fallback. These are separate integrations. Current model assignments are:
+
+- `gpt-6.1-terra`: Top Stories individual outputs and cross-story observations; established Sentiment/Tagging narrative observations; Rapid Labeling sentiment/tag observations; Authors/Outlets summaries; Regions overviews, profiles, and insights; and Analysis Context entity/context discovery. Rapid observations inherit the established observation defaults. These workflows retain their existing Responses API calls, schemas, prompts, and reasoning efforts (`low`, or `medium` for Analysis Context).
+- `gpt-6-luna`: routine established Sentiment/Tagging classification and all existing second-opinion workflows, including Rapid Labeling review.
+- `typesafe/jev-1.13`: Rapid Labeling's first pass through OpenRouter's Decisions API.
+
+Saved sessions retain their configured models, completed results, and analyst decisions. Existing narrative outputs are not regenerated on load; explicit model arguments remain supported. The API meter includes Terra at $1.00/M input and $5.00/M output tokens and retains Luna and historical model entries. The separate visual-checker handoff keeps its own model configuration.
 
 ## Environments and Deployment
 
@@ -266,6 +272,13 @@ Large AI workflows can emit checkpoint reminders using `utils/ai_checkpoints.py`
 ## Testing and Verification
 
 Tests are organized by behavior in `tests/`, including grouping, Analysis Context, legacy Sentiment/Tagging state, second-opinion batching, Top Stories validation, Authors, Rapid request/parsing/resolution/insights, report-copy coexistence, and export behavior.
+
+GPT-6.1 Terra narrative refresh verification (October 29, 2026):
+
+- Focused regression: 219 tests and 20 subtests passed. Mocked HTTP tests exercise the installed OpenAI SDK's serialization/parsing for all eleven narrative generators, existing strict structured-output contracts, unchanged reasoning efforts, explicit model overrides, usage/pricing, and preserved saved narratives and analyst decisions. Luna classification/review tests remain passing.
+- Documented regression sequence: `python -m unittest discover -s tests` passed 249 tests; `PYTHONPATH=. pytest tests` passed 1,202 tests and 102 subtests; the separate visual-checker handoff suite passed all 4 tests. The full pytest run reported 46 existing date-parsing inference warnings in upload/cleaning fixtures.
+- Compilation over app source, pages, processing, UI, utilities, tests, and the visual handoff passed. `git diff --check`, Streamlit AppTest smoke checks for app startup and Analysis Context, and a headless Streamlit HTTP health check passed.
+- A comparison against the pre-Terra working tree verified that production changes are limited to eight narrative-default values across seven modules and the new Terra pricing entry. Classification, second opinions, Jev, prompts, schemas, reasoning, joins, exports, and the visual handoff were unchanged. No paid inference or comparative model-quality evaluation was run.
 
 `tests/fixtures/agility/` contains the canonical durable Agility fixture family for the phased automated-testing build-out. `agility_golden_corpus.csv` is the primary normal-upload corpus. `agility_malformed_inputs.csv` is the focused bad-input/robustness corpus. `agility_golden_cleaned_workbook.xlsx` is generated from the golden corpus through the app's real normalization, Basic Cleaning, grouping, and clean-workbook export path. `agility_golden_multisheet_upload.xlsx` exercises the existing worksheet-selection path, with `Agility Export` as the intended data sheet. `MANIFEST.md` owns stable case IDs and fixture rationale without adding test-only IDs to production-facing data.
 
