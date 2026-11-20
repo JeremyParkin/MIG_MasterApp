@@ -26,6 +26,8 @@ from processing.rapid_resolution import (
     STATUS_PARTIAL_AGREEMENT,
     STATUS_SECOND_OPINION_ERROR,
     apply_rapid_sentiment_human_selection,
+    clear_rapid_sentiment_human_selection,
+    rapid_sentiment_review_state,
     apply_rapid_tag_human_selection,
     build_effective_rapid_sentiment_frame,
     build_effective_rapid_tag_frame,
@@ -431,6 +433,38 @@ class RapidResolutionTests(unittest.TestCase):
         self.assertEqual(resolved["Final Rapid Sentiment 5-Way"], "SOMEWHAT POSITIVE")
         self.assertEqual(resolved["Final Rapid Sentiment Source"], SOURCE_HUMAN_ACCEPTED_MACHINE)
 
+    def test_clear_one_legacy_accepted_scale_retains_other_recorded_values(self) -> None:
+        original = pd.DataFrame([self.row(**{
+            "Jev Sentiment": "NEUTRAL",
+            "Jev 5-Way Sentiment": "NEUTRAL",
+            "Jev Sentiment Score": 0.0,
+            "Rapid Human Sentiment Review State": HUMAN_STATE_ACCEPTED,
+            "Rapid Accepted Machine Relevance": RELEVANCE_RELEVANT,
+            "Rapid Accepted Machine Sentiment 3-Way": "POSITIVE",
+            "Rapid Accepted Machine Sentiment 5-Way": "SOMEWHAT POSITIVE",
+            "Rapid Accepted Machine Sentiment Score": 2.0,
+        })])
+        for scale, expected in [("3-way", ("NEUTRAL", "SOMEWHAT POSITIVE")), ("5-way", ("POSITIVE", "NEUTRAL"))]:
+            with self.subTest(scale=scale):
+                updated = clear_rapid_sentiment_human_selection(original, 1, scale=scale)
+                resolved = resolve_final_rapid_sentiment_row(updated.iloc[0])
+                self.assertEqual(rapid_sentiment_review_state(updated.iloc[0], scale), "")
+                self.assertEqual(
+                    (resolved["Final Rapid Sentiment 3-Way"], resolved["Final Rapid Sentiment 5-Way"]), expected
+                )
+                self.assertEqual(resolved["Final Rapid Sentiment Score"], 2.0)
+
+    def test_clear_legacy_assignment_only_on_recorded_scale(self) -> None:
+        original = pd.DataFrame([self.row(**{
+            "Rapid Human Sentiment Review State": HUMAN_STATE_ASSIGNED,
+            "Rapid Human Sentiment Scale": HUMAN_SENTIMENT_SCALE_5_WAY,
+            "Rapid Human Sentiment": "VERY NEGATIVE",
+        })])
+        cleared_three = clear_rapid_sentiment_human_selection(original, 1, scale="3-way")
+        self.assertEqual(resolve_final_rapid_sentiment_row(cleared_three.iloc[0])["Final Rapid Sentiment 5-Way"], "VERY NEGATIVE")
+        cleared_five = clear_rapid_sentiment_human_selection(cleared_three, 1, scale="5-way")
+        self.assertEqual(resolve_final_rapid_sentiment_row(cleared_five.iloc[0])["Final Rapid Sentiment 5-Way"], "NEUTRAL")
+
     def test_clicking_current_3_way_machine_label_records_accepted_machine(self) -> None:
         df = pd.DataFrame([self.row(**{"Jev Sentiment": "NEGATIVE", "Jev 5-Way Sentiment": "SOMEWHAT NEGATIVE", "Jev Sentiment Score": -2.0})])
         updated = apply_rapid_sentiment_human_selection(
@@ -439,9 +473,23 @@ class RapidResolutionTests(unittest.TestCase):
             scale=HUMAN_SENTIMENT_SCALE_3_WAY,
             label="NEGATIVE",
         )
-        self.assertEqual(updated.loc[0, "Rapid Human Sentiment Review State"], HUMAN_STATE_ACCEPTED)
-        self.assertEqual(updated.loc[0, "Rapid Accepted Machine Sentiment 3-Way"], "NEGATIVE")
-        self.assertEqual(updated.loc[0, "Rapid Accepted Machine Sentiment 5-Way"], "SOMEWHAT NEGATIVE")
+        self.assertEqual(rapid_sentiment_review_state(updated.iloc[0], HUMAN_SENTIMENT_SCALE_3_WAY), HUMAN_STATE_ACCEPTED)
+        self.assertEqual(rapid_sentiment_review_state(updated.iloc[0], HUMAN_SENTIMENT_SCALE_5_WAY), "")
+
+    def test_new_acceptance_preserves_only_the_reviewed_label_across_a_machine_change(self) -> None:
+        original = pd.DataFrame([self.row(**{
+            "Jev Sentiment": "NEGATIVE",
+            "Jev 5-Way Sentiment": "SOMEWHAT NEGATIVE",
+            "Jev Sentiment Score": -2.0,
+        })])
+        updated = apply_rapid_sentiment_human_selection(original, 1, scale="3-way", label="NEGATIVE")
+        updated.loc[0, ["Jev Sentiment", "Jev 5-Way Sentiment", "Jev Sentiment Score"]] = [
+            "POSITIVE", "VERY POSITIVE", 5.0,
+        ]
+        final = resolve_final_rapid_sentiment_row(updated.iloc[0])
+        self.assertEqual(final["Final Rapid Sentiment 3-Way"], "NEGATIVE")
+        self.assertEqual(final["Final Rapid Sentiment 5-Way"], "VERY POSITIVE")
+        self.assertEqual(final["Final Rapid Sentiment Score"], 5.0)
 
     def test_clicking_different_3_way_label_records_assigned(self) -> None:
         df = pd.DataFrame([self.row(**{"Jev Sentiment": "NEGATIVE", "Jev 5-Way Sentiment": "SOMEWHAT NEGATIVE"})])
@@ -451,10 +499,8 @@ class RapidResolutionTests(unittest.TestCase):
             scale=HUMAN_SENTIMENT_SCALE_3_WAY,
             label="NEUTRAL",
         )
-        self.assertEqual(updated.loc[0, "Rapid Human Sentiment Review State"], HUMAN_STATE_ASSIGNED)
-        self.assertEqual(updated.loc[0, "Rapid Human Sentiment Scale"], HUMAN_SENTIMENT_SCALE_3_WAY)
-        self.assertEqual(updated.loc[0, "Rapid Human Sentiment"], "NEUTRAL")
-        self.assertTrue(pd.isna(updated.loc[0, "Rapid Accepted Machine Sentiment 3-Way"]))
+        self.assertEqual(rapid_sentiment_review_state(updated.iloc[0], HUMAN_SENTIMENT_SCALE_3_WAY), HUMAN_STATE_ASSIGNED)
+        self.assertEqual(resolve_final_rapid_sentiment_row(updated.iloc[0])["Final Rapid Sentiment 3-Way"], "NEUTRAL")
 
     def test_clicking_current_5_way_label_compares_against_5_way_machine_label(self) -> None:
         df = pd.DataFrame([self.row(**{"Jev Sentiment": "NEUTRAL", "Jev 5-Way Sentiment": "SOMEWHAT POSITIVE"})])
@@ -464,7 +510,8 @@ class RapidResolutionTests(unittest.TestCase):
             scale=HUMAN_SENTIMENT_SCALE_5_WAY,
             label="SOMEWHAT POSITIVE",
         )
-        self.assertEqual(updated.loc[0, "Rapid Human Sentiment Review State"], HUMAN_STATE_ACCEPTED)
+        self.assertEqual(rapid_sentiment_review_state(updated.iloc[0], HUMAN_SENTIMENT_SCALE_5_WAY), HUMAN_STATE_ACCEPTED)
+        self.assertEqual(rapid_sentiment_review_state(updated.iloc[0], HUMAN_SENTIMENT_SCALE_3_WAY), "")
 
     def test_clicking_label_without_machine_effective_label_records_assigned(self) -> None:
         df = pd.DataFrame([self.row(**{"Jev Sentiment": "NOT RELEVANT", "Jev 5-Way Sentiment": "NEUTRAL"})])
@@ -474,8 +521,8 @@ class RapidResolutionTests(unittest.TestCase):
             scale=HUMAN_SENTIMENT_SCALE_3_WAY,
             label="NEUTRAL",
         )
-        self.assertEqual(updated.loc[0, "Rapid Human Sentiment Review State"], HUMAN_STATE_ASSIGNED)
-        self.assertEqual(updated.loc[0, "Rapid Human Sentiment"], "NEUTRAL")
+        self.assertEqual(rapid_sentiment_review_state(updated.iloc[0], HUMAN_SENTIMENT_SCALE_3_WAY), HUMAN_STATE_ASSIGNED)
+        self.assertEqual(resolve_final_rapid_sentiment_row(updated.iloc[0])["Final Rapid Sentiment 3-Way"], "NEUTRAL")
 
     def test_unreviewed_has_no_skipped_state_and_uses_machine(self) -> None:
         row = ensure_rapid_human_review_columns(pd.DataFrame([self.row()])).iloc[0]

@@ -1090,7 +1090,8 @@ def recompute_jev_official_tag_assignments(
     tag_definitions: dict[str, str] | None,
     tagging_mode: str = DEFAULT_JEV_TAGGING_MODE,
 ) -> pd.DataFrame:
-    if df_unique is None or df_unique.empty or not build_jev_tag_question_map(tag_definitions):
+    questions = build_jev_tag_question_map(tag_definitions)
+    if df_unique is None or df_unique.empty or not questions:
         return pd.DataFrame() if df_unique is None else df_unique.copy()
 
     out = ensure_jev_sentiment_columns(df_unique, tag_definitions=tag_definitions)
@@ -1099,12 +1100,13 @@ def recompute_jev_official_tag_assignments(
         best_tag = _safe_text(row.get("Jev Best Tag", ""))
         if not best_tag:
             continue
-        independent = {}
-        for item in build_jev_tag_question_map(tag_definitions):
-            tag = item["tag"]
-            independent[tag] = {
-                "choice": _safe_text(row.get(f"Jev Tag [{tag}]", "")).upper(),
-            }
+        independent = {
+            item["tag"]: {"choice": _safe_text(row.get(f'Jev Tag [{item["tag"]}]', "")).upper()}
+            for item in questions
+        }
+        # Older rows may only have the stored tag list. Preserve it as review evidence.
+        if any(answer["choice"] not in {"YES", "NO"} for answer in independent.values()):
+            continue
         tags = compute_jev_official_tags(
             best_tag=best_tag,
             independent=independent,

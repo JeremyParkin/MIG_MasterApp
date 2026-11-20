@@ -36,17 +36,9 @@ Saved sessions retain their configured models, completed results, and analyst de
 
 Development is routinely done locally through Pipenv and Streamlit. GitHub is the primary repository, and Streamlit Community Cloud generally follows pushed GitHub state quickly. An AWS deployment may be managed independently and can lag behind GitHub or Community Cloud. Do not assume the three environments are on the same revision.
 
-Deploy the tested full pilot revision to AWS with Rapid disabled first. Enable Rapid on that same revision only after the established workflow passes its smoke check. The separate Python and deployment-switch commits remain available for independent releases.
+The staged rollout is documented in [AWS Rapid Labeling handoff](AWS_RAPID_HANDOFF.md). AWS starts on the full tested revision with Rapid disabled. The established-workflow and large-file checks gate the enabled-stage smoke on that same revision. The Python compatibility and deployment-switch commits remain independently releasable.
 
-- **Streamlit Community Cloud pilot.** Enable Rapid with `MIG_ENABLE_RAPID_LABELING=1` in the app process environment, or leave it unset for the enabled default. Use the Python 3.13 runtime and the existing OpenRouter and OpenAI secrets for an authorized live pilot. Smoke-test the Rapid route, both labeling passes on a small approved sample, Spot Checks, and Save & Load. Restore a scope-incompatible snapshot and confirm the warning and Rapid omissions in XLSX. Prepare a compatible sample, make a human correction, and rebuild the workbook. Inspect the corrected group in both sheets.
-- **AWS production, disabled stage.** Verify Python 3.13.1 and synchronize the lockfile, then deploy the full tested SHA with `MIG_ENABLE_RAPID_LABELING=0` in the Streamlit service environment. Restart and verify HTTP health, navigation, and that `/Rapid_Labeling` cannot render. Restore a snapshot containing Rapid and established results. Rebuild XLSX and Word, checking that established outputs remain and Rapid outputs are omitted. Confirm the snapshot still retains Rapid decisions. Run a representative large input through cleaning and export, record peak memory and CPU, confirm the worker stays up, and verify health again after restart.
-- **AWS production, enabled stage.** On the same SHA, set `MIG_ENABLE_RAPID_LABELING=1` and restart. Confirm health and the Rapid route. Use a small approved sample to verify Jev, Luna, Spot Checks, and rebuilt XLSX, including a saved human correction in the Rapid sample and matching in-scope `CLEAN TRAD` rows. If the pilot needs to stop, set `MIG_ENABLE_RAPID_LABELING=0`, restart, and recheck health, the direct route, and established exports. Host checks are pending.
-
-Proposed release sequence:
-
-1. **Python 3.13 compatibility.** Commit `Pipfile` and `Pipfile.lock` together. The runtime constraint and lock metadata change. The dependency entries are identical.
-2. **Deployment switch.** Isolate `utils/deployment.py`, navigation and direct-route gating, the workbook and report-copy export gates, and a focused restored-session regression. Stage only the switch-related hunks in the shared Rapid page, exporter, and test file. Keep this commit independent of the new sampler and workbook cache helper.
-3. **Rapid pilot.** Commit the remaining preparation, batch, review, prompt, translation, Insights, export, and cache changes with the corresponding regressions and pilot notes. Keep the unrelated social-reach benchmark files out of this sequence. The optional checkpoint-threshold parameter in the local diff has no remaining Rapid caller and can be left out of the pilot commit.
+The release baseline is `194d39f` (limited pilot), after `6fb5d0a` (Python 3.13) and `5501c64` (Rapid deployment switch). The workflow follow-on is a separate commit. The Pipenv runtime constraint is Python 3.13, and AWS uses Python 3.13.1. The follow-on leaves the lockfile unchanged.
 
 ## Application Structure
 
@@ -220,7 +212,7 @@ Rapid Labeling is an experimental but increasingly production-ready parallel wor
 4. Spot Checks
 5. Insights
 
-Preparation applies the Analysis Context dataset scope used by `CLEAN TRAD` before selecting stories, with the qualitative-exclusion policy applied afterward. This covers full, representative, custom, reused Sentiment, and reused Tagging samples. Reused samples contribute eligible article membership. Rapid takes representative text from canonical rows, preserving Group IDs and choosing an eligible representative if the original prime is excluded. Tag configuration is optional.
+Preparation applies the Analysis Context dataset scope used by `CLEAN TRAD` before selecting stories, with the qualitative-exclusion policy applied afterward. This covers full, representative, custom, reused Sentiment, and reused Tagging samples. Reused samples contribute eligible article membership. Rapid takes representative text from canonical rows, preserving Group IDs and choosing an eligible representative if the original prime is excluded. Tag configuration is optional. Prepare & Configure saves the primary sentiment scale (Three-way by default, Five-way optional) and the tagging formulation (Single best fit or All applicable when tags are configured). Save & Load preserves the choices. Spot Checks and Insights open with those defaults. Exploring another view leaves the report settings intact. Older snapshots without a primary scale open at Three-way and retain their saved tagging mode and decisions.
 
 Each first-pass grouped story receives one OpenRouter Decisions API request to Jev. The request shares one story state and asks five independent questions: 3-way sentiment with `NOT RELEVANT`, 5-way sentiment with `NOT RELEVANT`, ordered sentiment score, independent relevance, and sentiment mixture. When configured, the same request also carries best-fit and independent all-applicable tag questions. Bounded thread-based workers process independent stories; completed results are mapped back to Group ID by the main thread. Errors do not block later rows.
 
@@ -228,15 +220,14 @@ The Rapid first pass keeps the raw opinions separate. The resolver computes mach
 
 Rapid human review is formulation-specific:
 
-- Human 3-way sentiment changes only final/effective 3-way sentiment.
-- Human 5-way sentiment changes only final/effective 5-way sentiment.
+- Three-way and five-way labels and machine acceptances are saved independently. Clearing a decision restores the machine value for that scale. Older assignments retain their recorded scale, and earlier machine acceptances retain the recorded machine evidence.
 - Human best-fit tag and human applicable-tags decisions are independent.
-- Human `NOT RELEVANT` establishes non-relevance for downstream human-reviewed sentiment use and clears the final machine-derived score.
-- No human numeric score is fabricated; the score remains machine-derived supporting evidence.
+- A story-level Not Relevant decision suppresses both final tone labels and the final score while preserving both scale-specific decisions. Explicitly marking the story Relevant makes those decisions visible again.
+- Raw Jev and Luna evidence is preserved. The numeric score remains machine-derived.
 
 The analyst-facing Step 4 UI uses first/second opinion language rather than provider names. Raw responses remain stored for audit/debugging but are not part of normal analyst review. Step 2 shows results only after at least one first-pass result exists; its normal outputs are results, machine-effective provenance, and distributions rather than raw-response inspection.
 
-Rapid Step 5 reuses mature observation behavior through Rapid-specific adapters built from final/effective resolver outputs. Sentiment and tag observations are separate, retain linked examples, and use input fingerprints so they become stale only when data they actually consume changes. A second-opinion rerun does not by itself invalidate observations unless it changes an effective/final input. Human-resolved rows do not count as unresolved machine-disagreement warnings.
+Rapid Step 5 reuses mature observation behavior through Rapid-specific adapters built from final/effective resolver outputs. Sentiment and tag observations are separate, retain linked examples, and use input fingerprints so they become stale only when data they actually consume changes. A second-opinion rerun does not by itself invalidate observations unless it changes an effective/final input. Analyst decisions settle QA for the selected sentiment scale, while story-level non-relevance applies to both scales.
 
 Rapid page help is mapped to vendor-neutral labels: `Prepare & Configure`, `Run Rapid Labeling`, `AI Second Opinion`, `Spot Checks`, and `Insights`.
 
@@ -244,7 +235,7 @@ Both passes allow up to 500 eligible stories per batch, with a default of 50 and
 
 The three-way Sentiment and all-applicable Tagging review queues can clear intensity-only or best-tag-only flags when both passes agree on the active decision and no other material reason remains. Applicable tags are compared as an unordered set. Disputed relevance, three-way labels, and applicable tags remain reviewable. A failed or incomplete second opinion preserves the affected flag. A valid Neutral score of zero is eligible for Luna. Broader Spot Checks views remain available for reopening stories. A translation failure shows the original article and a retry message and preserves a valid saved translation.
 
-When a saved sample is incompatible with the current scope, Rapid blocks both AI passes, Spot Checks, and Insights. Analysts can save a copy, restore a compatible scope, or explicitly confirm replacement. Download uses the same scope check for XLSX and omits the incompatible sample, its labels and audit fields, and metadata that would imply inclusion. The session retains the previous sample and human decisions until explicit replacement. Download withholds stale XLSX bytes and asks for a rebuild after a scope change, sample replacement, saved review, Rapid AI batch, or Reset.
+When a saved sample is incompatible with the current scope, Rapid blocks both AI passes, Spot Checks, and Insights. Analysts can save a copy, restore a compatible scope, or explicitly confirm replacement. Download uses the same scope check for XLSX and omits the incompatible sample, its labels and audit fields, and metadata that would imply inclusion. The session retains the previous sample and human decisions until explicit replacement. Download withholds stale XLSX bytes and asks for a rebuild after a scope change, sample replacement, saved review, Rapid AI batch, Reset, report preference change, or audit-toggle change.
 
 Keep Rapid experimental until a matched-sample pilot compares it with the established workflows against analyst-reviewed labels. Measure relevance and missed high-impact negatives, agreement for best and applicable tags separately, unresolved results, analyst review time, total provider cost, and peak memory and CPU on the AWS VM. Agree on the reporting sentiment scale and the policy for conflicting signals before using a single Rapid sentiment label as the production output.
 
@@ -258,18 +249,18 @@ Keep Rapid experimental until a matched-sample pilot compares it with the establ
 
 Its grouping metadata remains adjacent for inspection: `Group ID`, `SyndicationId`, `Grouping Source`, and `Grouping Warning`.
 
-Default Rapid fields in `CLEAN TRAD` are:
+Both `CLEAN TRAD` and `RAPID LABELING SAMPLE` place a contiguous reporting block immediately after `Headline`.
 
 - `Final Rapid Relevance`
-- `Final Rapid Sentiment 3-Way`
-- `Final Rapid Sentiment 5-Way`
-- `Final Rapid Sentiment Score`
-- `Final Rapid Best Tag`
-- `Final Rapid Tags`
+- `Final Rapid Sentiment 3-Way` or `Final Rapid Sentiment 5-Way`, according to the saved primary scale
+- `Rapid Sentiment Spread`, derived from Jev's in-story sentiment mixture label
+- `Final Rapid Best Tag` or `Final Rapid Tags`, according to the saved tagging formulation when tags are configured
+
+`EXPORT METADATA` records the reporting scale and tag mode when Rapid results are included.
 
 Those fields are derived fresh through the Rapid human-over-machine resolver. Human assignments take precedence only within the formulation reviewed; machine-effective values are used otherwise. An intentionally unresolved state stays blank and is never replaced with a raw first-pass opinion just to fill the export.
 
-With audit enabled, `CLEAN TRAD` can include final sources, machine-effective values/sources, resolution statuses, score distance, analytical first/second-opinion evidence, and human-review evidence. Score-band agreement compares Jev's score-derived band with Luna's label for each scale. First-pass evidence appears once per row. The rebuilt workbook blanks recognized provider-error strings in legacy translation cells and preserves valid translations.
+Audit leaves the selected values in place in both sheets and includes alternate final outputs, the machine-derived numeric score, final sources, machine-effective values/sources, resolution statuses, score distance, analytical first/second-opinion evidence, and human-review evidence. Score-band agreement compares Jev's score-derived band with Luna's label for each scale. First-pass evidence appears once per row. The rebuilt workbook blanks recognized provider-error strings in legacy translation cells and preserves valid translations.
 
 Legacy and Rapid output families coexist without precedence or overwrite. Legacy `Final Sentiment`/`Final Tag` retain their own semantics; Rapid fields are explicitly named `Final Rapid ...`.
 
@@ -319,6 +310,12 @@ Rapid pilot milestone verification (November 20, 2026, local Python 3.13.1):
 - The standalone visual-checker handoff passed all four tests using `PYTHONPATH=visual_checker_handoff/drop_in_visual_checker python -m pytest visual_checker_handoff/drop_in_visual_checker/tests`. Repository-root collection still fails when the handoff tries to import `processing.visual_relevance` from the app package. Run the app and handoff suites separately.
 - The saved Air Canada Online-only scope test kept all 2,504 Online coverage rows and omitted incompatible Rapid results from XLSX. The snapshot retained 323 Rapid groups and three saved human sentiment reviews. After explicit replacement, both mocked passes completed for 12 Online stories. A human correction appeared in the Rapid sample and all 161 matching `CLEAN TRAD` rows after rebuild. Mocked 500-story batches also retained successful results and row-level errors. No live provider or deployed-host capacity test was run for this milestone.
 
+Rapid report workflow follow-on verification (November 20, 2026, local Python 3.13.1):
+
+- The configured-report AppTest prepared an Online story and one syndicated copy, set Five-way and All applicable, and ran both AI passes with mocked provider responses through the normal buttons. It recorded a three-way Negative and a five-way Very Positive on the same story, then saved Access and Programs as applicable tags. The saved session restored both sentiment decisions and retained the models' Neutral evidence.
+- Reopened Insights used Five-way and All applicable. The standard workbook showed Very Positive and Access; Programs on both copies in `CLEAN TRAD` and `RAPID LABELING SAMPLE`, with model-derived spread and saved choices in metadata. Regression cases cover Three-way with Single best fit, sentiment-only, unchanged selected values in audit, and workbook rebuilds after changing either preference.
+- Repository-root pytest collection has the existing visual-checker import collision. Run the primary app and standalone visual-checker checks separately. Local mocked checks cover workflow integrity. Live provider access, production resource use, and deployed-host behavior remain rollout checks.
+
 ## Integrity and Security Boundaries
 
 - Canonical Group ID is the sole story-family join key for downstream grouped results.
@@ -334,7 +331,7 @@ Rapid pilot milestone verification (November 20, 2026, local Python 3.13.1):
 
 - Regions still uses `consolidate_top_story_candidates()` for regional top-story context. Removing that remaining secondary-consolidation dependency is a follow-up.
 - Established Sentiment/Tagging and Rapid Labeling coexist. No replacement/deprecation decision has been made.
-- Rapid provides comparative 3-way, 5-way, score, relevance, mixture, and optional tagging evidence. Final reconciliation across sentiment formulations remains a product decision. The pilot still needs a matched analyst-reviewed comparison, review time and cost measurements, and audits for missed errors.
+- Rapid provides comparative 3-way, 5-way, score, relevance, mixture, and optional tagging evidence. Final reconciliation across sentiment formulations and how to use a secondary measure for coverage-quality scoring remain product decisions. The pilot still needs a matched analyst-reviewed comparison, review time and cost measurements, and audits for missed errors.
 - The Download page checks Rapid Word inputs and tells the analyst to resolve scope or Analysis Context issues, regenerate stale or unverified Rapid observations, or rebuild cached Word as appropriate. Freshness tracking for Word is specific to Rapid observations on Download. The direct document builder retains its legacy compatibility behavior, and changes to established narrative inputs are outside this check.
 - Reset clears human decisions without a confirmation prompt. Save a session checkpoint before resetting.
 - Jev and Luna received identical headline and snippet fields on the checked standard coverage export. Alternate input schemas with extra text fields can produce different body selection. Revisit this if a supported production export uses those fields.

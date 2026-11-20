@@ -32,6 +32,7 @@ from utils.deployment import rapid_labeling_enabled
 from processing.jev_sentiment import (
     JEV_SHARED_RESULT_COLUMNS,
     RAPID_LABELING_SAMPLE_SHEET_NAME,
+    build_jev_tag_question_map,
     rapid_labeling_column_name,
     rename_jev_columns_to_rapid,
 )
@@ -41,10 +42,16 @@ from processing.rapid_resolution import (
     FINAL_SENTIMENT_COLUMNS,
     FINAL_TAG_COLUMNS,
     RAPID_HUMAN_REVIEW_COLUMNS,
+    RAPID_HUMAN_SENTIMENT_DECISION_COLUMNS,
+    RAPID_SENTIMENT_SCALE_LABELS,
+    RAPID_TAG_REVIEW_MODE_APPLICABLE,
+    SENTIMENT_SCALE_SUFFIXES,
     build_effective_rapid_sentiment_frame,
     build_effective_rapid_tag_frame,
     build_final_rapid_sentiment_frame,
     build_final_rapid_tag_frame,
+    rapid_report_sentiment_scale,
+    rapid_tag_view_mode,
 )
 from processing.rapid_second_opinion import RAPID_REVIEW_COLUMNS
 from processing.rapid_sampling import rapid_sample_matches_scope
@@ -155,21 +162,8 @@ CLEAN_TRAD_PRESS_RELEASE_COLUMNS = [
 ]
 STORY_FAMILY_AUDIT_COLUMNS = ["Story Family Press Release Evidence"]
 
-RAPID_CORE_EXPORT_COLUMNS = [
-    "Final Rapid Relevance",
-    "Final Rapid Sentiment 3-Way",
-    "Final Rapid Sentiment 5-Way",
-    "Final Rapid Sentiment Score",
-    "Final Rapid Best Tag",
-    "Final Rapid Tags",
-]
+RAPID_SENTIMENT_SPREAD_COLUMN = "Rapid Sentiment Spread"
 
-RAPID_AUDIT_DERIVED_COLUMNS = [
-    "Final Rapid Sentiment Source",
-    "Final Rapid Tag Source",
-    *EFFECTIVE_SENTIMENT_COLUMNS,
-    *EFFECTIVE_TAG_COLUMNS,
-]
 
 RAPID_REVIEW_REQUEST_METADATA_COLUMNS = {
     "Rapid Review Error",
@@ -335,20 +329,13 @@ def remove_inactive_workflow_columns(
         out = out.drop(columns=tagging_keep_cols + tagging_detail_cols + binary_tag_cols, errors="ignore")
 
     out = out.drop(columns=list(RAPID_AUDIT_EXPORT_RENAMES), errors="ignore")
-    if not rapid_labeling_enabled() or not _rapid_workbook_scope_matches(session_state):
+    if not jev_sentiment_processed_complete_enough(session_state):
         return _omit_rapid_export_columns(out)
-
-    rapid_all_cols = _rapid_clean_export_column_names(session_state, include_audit=True)
-    rapid_audit_cols = [
-        column
-        for column in rapid_all_cols
-        if column not in RAPID_CORE_EXPORT_COLUMNS
-    ]
-    if jev_sentiment_processed_complete_enough(session_state):
-        if not include_labeling_audit_columns:
-            out = out.drop(columns=rapid_audit_cols, errors="ignore")
-    else:
-        out = out.drop(columns=rapid_all_cols, errors="ignore")
+    if not include_labeling_audit_columns:
+        report_columns = set(_rapid_reporting_columns(session_state))
+        context_columns = set(_omit_rapid_export_columns(out).columns)
+        keep = context_columns | report_columns
+        out = out.loc[:, [column for column in out.columns if column in keep]]
 
     return out
 
@@ -1016,32 +1003,66 @@ def _rapid_audit_source_columns(df: pd.DataFrame) -> list[str]:
     first_pass = [
         column
         for column in _jev_result_columns(df)
-        if column not in JEV_SHARED_RESULT_COLUMNS
+        if column not in JEV_SHARED_RESULT_COLUMNS and column != "Jev Mixture Label"
     ]
     review = [
         column
         for column in RAPID_REVIEW_COLUMNS
         if column in df.columns
         and column not in RAPID_REVIEW_REQUEST_METADATA_COLUMNS
-        and column not in RAPID_AUDIT_DERIVED_COLUMNS
     ]
-    human = [column for column in RAPID_HUMAN_REVIEW_COLUMNS if column in df.columns]
+    human = [
+        column for column in RAPID_HUMAN_REVIEW_COLUMNS + RAPID_HUMAN_SENTIMENT_DECISION_COLUMNS
+        if column in df.columns
+    ]
     return list(dict.fromkeys([*first_pass, *review, *human]))
 
 
+def _rapid_export_tag_mode(session_state) -> str | None:
+    if not build_jev_tag_question_map(session_state.get("jev_tag_definitions")):
+        return None
+    return rapid_tag_view_mode(session_state.get("jev_tagging_mode"))
+
+
+def _rapid_reporting_columns(session_state) -> list[str]:
+    scale = rapid_report_sentiment_scale(session_state)
+    columns = [
+        "Final Rapid Relevance",
+        f"Final Rapid Sentiment {SENTIMENT_SCALE_SUFFIXES[scale]}",
+        RAPID_SENTIMENT_SPREAD_COLUMN,
+    ]
+    tag_mode = _rapid_export_tag_mode(session_state)
+    if tag_mode:
+        columns.append("Final Rapid Tags" if tag_mode == RAPID_TAG_REVIEW_MODE_APPLICABLE else "Final Rapid Best Tag")
+    return columns
+
+
 def _rapid_clean_export_column_names(session_state, *, include_audit: bool) -> list[str]:
-    columns = list(RAPID_CORE_EXPORT_COLUMNS)
+    columns = _rapid_reporting_columns(session_state)
     if not include_audit:
         return columns
 
-    columns.extend(RAPID_AUDIT_DERIVED_COLUMNS)
-    rapid_unique = session_state.get("df_jev_sentiment_unique", pd.DataFrame())
+    columns.extend([*FINAL_SENTIMENT_COLUMNS, *EFFECTIVE_SENTIMENT_COLUMNS])
+    if _rapid_export_tag_mode(session_state):
+        columns.extend([*FINAL_TAG_COLUMNS, *EFFECTIVE_TAG_COLUMNS])
+    rapid_unique = session_state.get("df_jev_sentiment_unique")
     if isinstance(rapid_unique, pd.DataFrame):
         columns.extend(
             RAPID_AUDIT_EXPORT_RENAMES.get(column, rapid_labeling_column_name(column))
             for column in _rapid_audit_source_columns(rapid_unique)
         )
     return list(dict.fromkeys(columns))
+
+
+def _order_rapid_export_columns(df: pd.DataFrame, session_state, *, include_audit: bool) -> pd.DataFrame:
+    columns = _rapid_clean_export_column_names(session_state, include_audit=include_audit)
+    reporting_columns = [column for column in _rapid_reporting_columns(session_state) if column in df.columns]
+    if not reporting_columns:
+        return df
+    audit_columns = [column for column in columns if column in df.columns and column not in reporting_columns]
+    context = [column for column in df.columns if column not in columns]
+    position = context.index("Headline") + 1 if "Headline" in context else len(context)
+    return df.loc[:, context[:position] + reporting_columns + context[position:] + audit_columns]
 
 
 def build_rapid_clean_export_map(session_state, *, include_audit: bool = False) -> pd.DataFrame:
@@ -1053,37 +1074,30 @@ def build_rapid_clean_export_map(session_state, *, include_audit: bool = False) 
         or rapid_unique.empty
         or "Group ID" not in rapid_unique.columns
     ):
-        return pd.DataFrame(columns=["Group ID", *RAPID_CORE_EXPORT_COLUMNS])
+        return pd.DataFrame(columns=["Group ID", *_rapid_reporting_columns(session_state)])
 
     tag_definitions = session_state.get("jev_tag_definitions", {})
     final_sentiment = build_final_rapid_sentiment_frame(rapid_unique)
-    final_tags = build_final_rapid_tag_frame(rapid_unique, tag_definitions=tag_definitions)
-
-    # Attach resolver values to their canonical group before combining the two frames.
-    sentiment_map = rapid_unique[["Group ID"]].copy()
+    tag_mode = _rapid_export_tag_mode(session_state)
+    export_map = rapid_unique[["Group ID"]].copy()
     for column in FINAL_SENTIMENT_COLUMNS:
-        sentiment_map[column] = final_sentiment[column].tolist()
-    tag_map = rapid_unique[["Group ID"]].copy()
-    for column in FINAL_TAG_COLUMNS:
-        tag_map[column] = final_tags[column].tolist()
-
-    out = sentiment_map.drop_duplicates(subset=["Group ID"], keep="last").merge(
-        tag_map.drop_duplicates(subset=["Group ID"], keep="last"),
-        on="Group ID",
-        how="outer",
-    )
+        export_map[column] = final_sentiment[column].tolist()
+    export_map[RAPID_SENTIMENT_SPREAD_COLUMN] = rapid_unique.get("Jev Mixture Label", pd.NA)
+    if tag_mode:
+        final_tags = build_final_rapid_tag_frame(rapid_unique, tag_definitions=tag_definitions)
+        for column in FINAL_TAG_COLUMNS:
+            export_map[column] = final_tags[column].tolist()
+    out = export_map.drop_duplicates(subset=["Group ID"], keep="last")
 
     if include_audit:
         effective_sentiment = build_effective_rapid_sentiment_frame(rapid_unique)
-        effective_tags = build_effective_rapid_tag_frame(
-            rapid_unique,
-            tag_definitions=tag_definitions,
-        )
         effective_map = rapid_unique[["Group ID"]].copy()
         for column in EFFECTIVE_SENTIMENT_COLUMNS:
             effective_map[column] = effective_sentiment[column].tolist()
-        for column in EFFECTIVE_TAG_COLUMNS:
-            effective_map[column] = effective_tags[column].tolist()
+        if tag_mode:
+            effective_tags = build_effective_rapid_tag_frame(rapid_unique, tag_definitions=tag_definitions)
+            for column in EFFECTIVE_TAG_COLUMNS:
+                effective_map[column] = effective_tags[column].tolist()
 
         audit_source_columns = _rapid_audit_source_columns(rapid_unique)
         raw_map = rapid_unique[["Group ID", *audit_source_columns]].copy()
@@ -1175,51 +1189,17 @@ def build_rapid_labeling_sample_export(session_state, *, include_audit: bool = F
     if not jev_sentiment_processed_complete_enough(session_state):
         return pd.DataFrame()
 
-    out = rows.copy()
     rapid_map = build_rapid_clean_export_map(session_state, include_audit=include_audit)
-    rapid_unique = session_state.get("df_jev_sentiment_unique", pd.DataFrame())
-    first_pass_columns = _jev_export_columns(rapid_unique, include_audit=include_audit)
-    first_pass_columns = [column for column in first_pass_columns if column not in JEV_REQUEST_METADATA_COLUMNS]
-
-    supplemental_columns = [
-        column for column in first_pass_columns
-        if rapid_labeling_column_name(column) not in rapid_map.columns
-    ]
-    if supplemental_columns:
-        first_pass_map = rapid_unique[["Group ID", *supplemental_columns]].copy()
-        first_pass_map = rename_jev_columns_to_rapid(
-            first_pass_map.drop_duplicates(subset=["Group ID"], keep="last")
-        )
-        rapid_map = rapid_map.merge(first_pass_map, on="Group ID", how="outer")
-
-    rapid_columns = [column for column in rapid_map.columns if column != "Group ID"]
-    legacy_first_pass_pairs = [
-        f"{rapid_labeling_column_name(column)}_{suffix}"
-        for column in _jev_export_columns(rapid_unique, include_audit=True)
-        for suffix in ("x", "y")
-    ]
-    out = out.drop(columns=[
-        *_jev_result_columns(out), *rapid_columns, *legacy_first_pass_pairs, *RAPID_AUDIT_EXPORT_RENAMES,
-    ], errors="ignore")
-    out = out.merge(rapid_map, on="Group ID", how="left")
-
+    out = _omit_rapid_export_columns(rows).merge(rapid_map, on="Group ID", how="left")
     priority_cols = [
-        "Group ID",
-        "Prime Example",
-        "Date",
-        "Headline",
-        "Outlet",
-        "Type",
-        "Mentions",
-        "Impressions",
-        "Effective Reach",
-        *RAPID_CORE_EXPORT_COLUMNS,
-        *(RAPID_AUDIT_DERIVED_COLUMNS if include_audit else []),
-        *[rapid_labeling_column_name(column) for column in first_pass_columns],
+        "Group ID", "Prime Example", "Date", "Outlet", "Type", "Headline",
+        "URL", "Example Snippet", "Snippet", "Mentions", "Impressions", "Effective Reach",
     ]
     existing_priority = [column for column in priority_cols if column in out.columns]
     remaining_cols = [column for column in out.columns if column not in existing_priority]
-    return out[existing_priority + remaining_cols].copy()
+    return _order_rapid_export_columns(
+        out[existing_priority + remaining_cols], session_state, include_audit=include_audit,
+    )
 
 
 def build_tagging_sample_export(session_state, *, include_audit: bool = False) -> pd.DataFrame:
@@ -1390,10 +1370,7 @@ def merge_full_scope_ai_columns_into_clean_trad(
             session_state,
             include_audit=include_labeling_audit_columns,
         )
-        rapid_cols = [column for column in rapid_map.columns if column != "Group ID"]
-        if "Group ID" in rapid_map.columns:
-            out = out.drop(columns=[column for column in rapid_cols if column in out.columns], errors="ignore")
-            out = out.merge(rapid_map, on="Group ID", how="left")
+        out = _omit_rapid_export_columns(out).merge(rapid_map, on="Group ID", how="left")
 
     return out
 
@@ -1530,6 +1507,12 @@ def build_export_metadata_sheet(
             ("Rapid Labeling Cost USD", float(rapid_cost_usd)),
             ("Rapid Labeling Usage/Cost Basis", "Internal grouped records (one per Group ID)" if rapid_grouped_result_rows else "No"),
         ])
+
+        if jev_processed_groups:
+            rows.extend([
+                ("Rapid Primary Sentiment Scale", RAPID_SENTIMENT_SCALE_LABELS[rapid_report_sentiment_scale(session_state)]),
+                ("Rapid Tagging Mode", _rapid_export_tag_mode(session_state) or "Sentiment only"),
+            ])
 
     if not excluded_counts_df.empty:
         rows.append(("", ""))
@@ -2325,6 +2308,9 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
             )
             trad_export = order_clean_trad_press_release_columns(trad_export)
             trad_export = order_clean_trad_grouping_columns(trad_export)
+            trad_export = _order_rapid_export_columns(
+                trad_export, session_state, include_audit=include_labeling_audit_columns,
+            )
             if "Impressions" in trad_export.columns:
                 trad_export = trad_export.sort_values(by=["Impressions"], ascending=False)
             trad_export = _omit_legacy_translation_errors(trad_export)

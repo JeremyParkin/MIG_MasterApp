@@ -22,6 +22,7 @@ from processing.download_exports import (
 )
 from processing.notebooklm_exports import build_notebooklm_zip
 from processing.rapid_sampling import rapid_sample_matches_scope, rapid_scope_signature
+from processing.rapid_resolution import rapid_report_sentiment_scale, rapid_tag_view_mode
 
 warnings.filterwarnings("ignore")
 
@@ -38,9 +39,6 @@ st.subheader("Clean data workbook")
 
 rapid_enabled = rapid_labeling_enabled()
 rapid_scope_matches = not rapid_enabled or rapid_sample_matches_scope(st.session_state)
-scope_key = (rapid_scope_signature(st.session_state), rapid_enabled, rapid_scope_matches)
-if "clean_excel_bytes" in st.session_state and st.session_state.get("_clean_excel_scope_key") != scope_key:
-    invalidate_clean_workbook(st.session_state)
 if not rapid_scope_matches:
     st.warning(
         "The saved Rapid Labeling sample does not match the current dataset scope. "
@@ -56,6 +54,17 @@ if labeling_audit_available(st.session_state):
     )
 else:
     st.session_state.include_labeling_audit_columns = False
+
+report_choices = (
+    rapid_report_sentiment_scale(st.session_state),
+    rapid_tag_view_mode(st.session_state.get("jev_tagging_mode")),
+) if rapid_enabled and rapid_scope_matches else None
+scope_key = (
+    rapid_scope_signature(st.session_state), rapid_enabled, rapid_scope_matches,
+    report_choices, st.session_state.include_labeling_audit_columns,
+)
+if "clean_excel_bytes" in st.session_state and st.session_state.get("_clean_excel_scope_key") != scope_key:
+    invalidate_clean_workbook(st.session_state)
 
 needs_rebuild = st.session_state.get("_rapid_clean_workbook_needs_rebuild", False)
 had_clean_workbook = needs_rebuild or "clean_excel_bytes" in st.session_state

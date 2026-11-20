@@ -743,6 +743,20 @@ class JevSentimentTests(unittest.TestCase):
         self.assertEqual(recomputed.loc[0, "Jev Tagging Mode"], "Multiple applicable tags")
         self.assertEqual(recomputed.loc[0, "Jev Tags"], "Access")
 
+    def test_recomputing_tag_mode_preserves_legacy_rows_without_independent_evidence(self) -> None:
+        legacy = pd.DataFrame({
+            "Jev Best Tag": ["Access"],
+            "Jev Tags": ["Access; Affordability"],
+            "Jev Tag Count": [2],
+            "Jev Tagging Mode": ["Multiple applicable tags"],
+        })
+        changed = recompute_jev_official_tag_assignments(
+            legacy,
+            tag_definitions={"Access": "Access to services", "Affordability": "Costs"},
+            tagging_mode="Single best tag",
+        )
+        pd.testing.assert_frame_equal(changed[legacy.columns], legacy)
+
     def test_success_and_error_batch_progression_skips_failed_rows(self) -> None:
         df = ensure_jev_sentiment_columns(
             pd.DataFrame(
@@ -1256,10 +1270,8 @@ class JevSentimentTests(unittest.TestCase):
         expected_core = {
             "Final Rapid Relevance",
             "Final Rapid Sentiment 3-Way",
-            "Final Rapid Sentiment 5-Way",
-            "Final Rapid Sentiment Score",
+            "Rapid Sentiment Spread",
             "Final Rapid Best Tag",
-            "Final Rapid Tags",
         }
         self.assertTrue(expected_core.issubset(exported.columns))
         group_ten = exported[exported["Group ID"] == 10]
@@ -1293,6 +1305,7 @@ class JevSentimentTests(unittest.TestCase):
         exported = merge_full_scope_ai_columns_into_clean_trad(
             self._rapid_export_state(rapid_rows),
             traditional,
+            include_labeling_audit_columns=True,
         ).set_index("Group ID")
 
         self.assertEqual(exported.loc[1, "Final Rapid Sentiment 3-Way"], "NEGATIVE")
@@ -1325,7 +1338,9 @@ class JevSentimentTests(unittest.TestCase):
             rapid_rows,
             tag_definitions={"Access": "Access", "Programs": "Programs"},
         )
-        exported = merge_full_scope_ai_columns_into_clean_trad(state, pd.DataFrame({"Group ID": [1]}))
+        exported = merge_full_scope_ai_columns_into_clean_trad(
+            state, pd.DataFrame({"Group ID": [1]}), include_labeling_audit_columns=True,
+        )
 
         self.assertEqual(exported.loc[0, "Final Rapid Best Tag"], "Programs")
         self.assertEqual(exported.loc[0, "Final Rapid Tags"], "Access; Programs")
@@ -1376,10 +1391,8 @@ class JevSentimentTests(unittest.TestCase):
             {
                 "Final Rapid Relevance",
                 "Final Rapid Sentiment 3-Way",
-                "Final Rapid Sentiment 5-Way",
-                "Final Rapid Sentiment Score",
+                "Rapid Sentiment Spread",
                 "Final Rapid Best Tag",
-                "Final Rapid Tags",
             },
         )
         self.assertIn("Effective Rapid Sentiment 3-Way", audit_export.columns)

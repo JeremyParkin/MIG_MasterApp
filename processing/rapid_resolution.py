@@ -28,8 +28,26 @@ RELEVANCE_CONFLICT = "CONFLICT"
 
 HUMAN_STATE_ACCEPTED = "Accepted machine"
 HUMAN_STATE_ASSIGNED = "Assigned"
+HUMAN_STATE_CLEARED = "Cleared"
 HUMAN_SENTIMENT_SCALE_3_WAY = "3-way"
 HUMAN_SENTIMENT_SCALE_5_WAY = "5-way"
+SENTIMENT_SCALE_SUFFIXES = {
+    HUMAN_SENTIMENT_SCALE_3_WAY: "3-Way",
+    HUMAN_SENTIMENT_SCALE_5_WAY: "5-Way",
+}
+RAPID_SENTIMENT_SCALE_LABELS = {
+    HUMAN_SENTIMENT_SCALE_3_WAY: "Three-way",
+    HUMAN_SENTIMENT_SCALE_5_WAY: "Five-way",
+}
+HUMAN_RELEVANCE_COLUMN = "Rapid Human Relevance"
+RAPID_HUMAN_SENTIMENT_DECISION_COLUMNS = [
+    HUMAN_RELEVANCE_COLUMN,
+    *(
+        column
+        for suffix in SENTIMENT_SCALE_SUFFIXES.values()
+        for column in (f"Rapid Human Sentiment {suffix}", f"Rapid Human Sentiment {suffix} Review State")
+    ),
+]
 RAPID_TAG_REVIEW_MODE_BEST = "Single best fit"
 RAPID_TAG_REVIEW_MODE_APPLICABLE = "All applicable"
 LEGACY_RAPID_TAGGING_MODE_BEST = "Single best tag"
@@ -90,6 +108,19 @@ FINAL_TAG_COLUMNS = [
 ]
 
 
+def rapid_report_sentiment_scale(session_state) -> str:
+    scale = session_state.get("rapid_primary_sentiment_scale")
+    return scale if scale in RAPID_SENTIMENT_SCALE_LABELS else HUMAN_SENTIMENT_SCALE_3_WAY
+
+
+def rapid_tag_view_mode(configured_mode: str | None) -> str:
+    return (
+        RAPID_TAG_REVIEW_MODE_APPLICABLE
+        if configured_mode == LEGACY_RAPID_TAGGING_MODE_APPLICABLE
+        else RAPID_TAG_REVIEW_MODE_BEST
+    )
+
+
 def _safe_text(value: Any) -> str:
     try:
         missing = pd.isna(value)
@@ -126,7 +157,7 @@ def _is_not_relevant(value: Any) -> bool:
 
 def ensure_rapid_human_review_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
-    for column in RAPID_HUMAN_REVIEW_COLUMNS:
+    for column in RAPID_HUMAN_REVIEW_COLUMNS + RAPID_HUMAN_SENTIMENT_DECISION_COLUMNS:
         if column not in out.columns:
             out[column] = pd.NA
     return out
@@ -243,47 +274,41 @@ def apply_rapid_sentiment_human_selection(
     scale: str,
     label: str,
 ) -> pd.DataFrame:
-    out = ensure_rapid_human_review_columns(df)
-    if out.empty or "Group ID" not in out.columns:
-        return out
-    mask = out["Group ID"] == group_id
-    if not mask.any():
-        return out
-
-    effective = build_effective_rapid_sentiment_frame(out)
-    idx = out.index[mask][0]
-    active_column = (
-        "Effective Rapid Sentiment 3-Way"
-        if scale == HUMAN_SENTIMENT_SCALE_3_WAY
-        else "Effective Rapid Sentiment 5-Way"
-        if scale == HUMAN_SENTIMENT_SCALE_5_WAY
-        else ""
-    )
-    active_machine_label = _clean_label(effective.loc[idx, active_column]) if active_column else ""
     selected_label = _clean_label(label)
-
-    if active_machine_label and active_machine_label == selected_label:
-        out.loc[mask, "Rapid Human Sentiment Review State"] = HUMAN_STATE_ACCEPTED
-        out.loc[mask, "Rapid Human Sentiment Scale"] = pd.NA
-        out.loc[mask, "Rapid Human Sentiment"] = pd.NA
-        out.loc[mask, "Rapid Human Sentiment Source"] = "HUMAN"
-        out.loc[mask, "Rapid Accepted Machine Relevance"] = effective.loc[idx, "Effective Rapid Relevance"]
-        out.loc[mask, "Rapid Accepted Machine Sentiment 3-Way"] = effective.loc[idx, "Effective Rapid Sentiment 3-Way"]
-        out.loc[mask, "Rapid Accepted Machine Sentiment 5-Way"] = effective.loc[idx, "Effective Rapid Sentiment 5-Way"]
-        out.loc[mask, "Rapid Accepted Machine Sentiment Score"] = effective.loc[idx, "Effective Rapid Sentiment Score"]
+    if _is_not_relevant(selected_label):
+        return apply_rapid_relevance_human_selection(df, group_id, relevance=RELEVANCE_NOT_RELEVANT)
+    suffix = SENTIMENT_SCALE_SUFFIXES[scale]
+    out = ensure_rapid_human_review_columns(df)
+    if out.empty or "Group ID" not in out.columns or not selected_label:
         return out
+    mask = out["Group ID"].eq(group_id)
+    if mask.any():
+        machine = resolve_rapid_sentiment_row(out.loc[mask].iloc[0])
+        accepted = _clean_label(machine[f"Effective Rapid Sentiment {suffix}"]) == selected_label
+        out.loc[mask, f"Rapid Human Sentiment {suffix} Review State"] = (
+            HUMAN_STATE_ACCEPTED if accepted else HUMAN_STATE_ASSIGNED
+        )
+        out.loc[mask, f"Rapid Human Sentiment {suffix}"] = selected_label
+    return out
 
-    out.loc[mask, "Rapid Human Sentiment Review State"] = HUMAN_STATE_ASSIGNED
-    out.loc[mask, "Rapid Human Sentiment Scale"] = scale
-    out.loc[mask, "Rapid Human Sentiment"] = selected_label
-    out.loc[mask, "Rapid Human Sentiment Source"] = "HUMAN"
-    for column in [
-        "Rapid Accepted Machine Relevance",
-        "Rapid Accepted Machine Sentiment 3-Way",
-        "Rapid Accepted Machine Sentiment 5-Way",
-        "Rapid Accepted Machine Sentiment Score",
-    ]:
-        out.loc[mask, column] = pd.NA
+
+def clear_rapid_sentiment_human_selection(df: pd.DataFrame, group_id: int, *, scale: str) -> pd.DataFrame:
+    suffix = SENTIMENT_SCALE_SUFFIXES[scale]
+    out = ensure_rapid_human_review_columns(df)
+    if "Group ID" in out.columns:
+        mask = out["Group ID"].eq(group_id)
+        # An explicit clear prevents the older assignment or acceptance from reappearing.
+        out.loc[mask, f"Rapid Human Sentiment {suffix} Review State"] = HUMAN_STATE_CLEARED
+        out.loc[mask, f"Rapid Human Sentiment {suffix}"] = pd.NA
+    return out
+
+
+def apply_rapid_relevance_human_selection(df: pd.DataFrame, group_id: int, *, relevance: str) -> pd.DataFrame:
+    if relevance not in {RELEVANCE_RELEVANT, RELEVANCE_NOT_RELEVANT}:
+        raise ValueError(f"Unknown relevance decision: {relevance}")
+    out = ensure_rapid_human_review_columns(df)
+    if "Group ID" in out.columns:
+        out.loc[out["Group ID"].eq(group_id), HUMAN_RELEVANCE_COLUMN] = relevance
     return out
 
 
@@ -664,79 +689,97 @@ def build_effective_rapid_tag_frame(
     return pd.DataFrame(rows, index=df.index).reindex(columns=EFFECTIVE_TAG_COLUMNS)
 
 
-def _human_sentiment_assignment(row: pd.Series) -> dict[str, Any] | None:
-    state = _safe_text(row.get("Rapid Human Sentiment Review State", ""))
-    if state == HUMAN_STATE_ACCEPTED:
-        relevance = _safe_text(row.get("Rapid Accepted Machine Relevance", ""))
-        three = _clean_label(row.get("Rapid Accepted Machine Sentiment 3-Way", ""))
-        five = _clean_label(row.get("Rapid Accepted Machine Sentiment 5-Way", ""))
-        score = _to_float(row.get("Rapid Accepted Machine Sentiment Score"))
-        return {
-            "relevance": relevance,
-            "three_way": three,
-            "five_way": five,
-            "score": pd.NA if score is None else score,
-            "source": SOURCE_HUMAN_ACCEPTED_MACHINE,
-        }
+def _human_sentiment_decision(row: pd.Series, scale: str) -> tuple[str, str]:
+    suffix = SENTIMENT_SCALE_SUFFIXES[scale]
+    state = _safe_text(row.get(f"Rapid Human Sentiment {suffix} Review State"))
+    if state == HUMAN_STATE_CLEARED:
+        return "", ""
+    if state in {HUMAN_STATE_ASSIGNED, HUMAN_STATE_ACCEPTED}:
+        return state, _clean_label(row.get(f"Rapid Human Sentiment {suffix}"))
 
-    if state != HUMAN_STATE_ASSIGNED:
-        return None
+    legacy_state = _safe_text(row.get("Rapid Human Sentiment Review State"))
+    if legacy_state == HUMAN_STATE_ACCEPTED:
+        return legacy_state, _clean_label(row.get(f"Rapid Accepted Machine Sentiment {suffix}"))
+    if legacy_state == HUMAN_STATE_ASSIGNED and _safe_text(row.get("Rapid Human Sentiment Scale")) == scale:
+        label = _clean_label(row.get("Rapid Human Sentiment"))
+        if label and not _is_not_relevant(label):
+            return legacy_state, label
+    return "", ""
 
-    scale = _safe_text(row.get("Rapid Human Sentiment Scale", ""))
-    label = _clean_label(row.get("Rapid Human Sentiment", ""))
-    if not scale or not label:
-        return None
 
-    machine = resolve_rapid_sentiment_row(row)
-    machine_score = machine.get("Effective Rapid Sentiment Score", pd.NA)
-    not_relevant = label == "NOT RELEVANT"
-    if not_relevant:
-        return {
-            "relevance": RELEVANCE_NOT_RELEVANT,
-            "three_way": "NOT RELEVANT",
-            "five_way": "NOT RELEVANT",
-            "score": pd.NA,
-            "source": SOURCE_HUMAN_ASSIGNED,
-        }
+def rapid_human_relevance(row: pd.Series) -> str:
+    relevance = _safe_text(row.get(HUMAN_RELEVANCE_COLUMN))
+    if relevance:
+        return relevance
+    legacy_state = _safe_text(row.get("Rapid Human Sentiment Review State"))
+    if legacy_state == HUMAN_STATE_ASSIGNED and _is_not_relevant(row.get("Rapid Human Sentiment")):
+        return RELEVANCE_NOT_RELEVANT
+    if legacy_state == HUMAN_STATE_ACCEPTED and _is_not_relevant(row.get("Rapid Accepted Machine Relevance")):
+        return RELEVANCE_NOT_RELEVANT
+    return ""
 
-    relevance = RELEVANCE_RELEVANT
-    three = machine.get("Effective Rapid Sentiment 3-Way", "")
-    five = machine.get("Effective Rapid Sentiment 5-Way", "")
-    if scale == HUMAN_SENTIMENT_SCALE_3_WAY:
-        three = label
-    elif scale == HUMAN_SENTIMENT_SCALE_5_WAY:
-        five = label
-    else:
-        return None
-    return {
-        "relevance": relevance,
-        "three_way": three,
-        "five_way": five,
-        "score": machine_score,
-        "source": SOURCE_HUMAN_ASSIGNED,
-    }
+
+def rapid_sentiment_review_state(row: pd.Series, scale: str) -> str:
+    return _human_sentiment_decision(row, scale)[0]
+
+
+def rapid_sentiment_review_state_series(df: pd.DataFrame, scale: str) -> pd.Series:
+    return pd.Series(
+        [
+            HUMAN_STATE_ASSIGNED if rapid_human_relevance(row) == RELEVANCE_NOT_RELEVANT
+            else rapid_sentiment_review_state(row, scale)
+            for _, row in df.iterrows()
+        ],
+        index=df.index,
+        dtype="object",
+    )
 
 
 def resolve_final_rapid_sentiment_row(row: pd.Series | dict[str, Any]) -> dict[str, Any]:
     series = pd.Series(row)
-    human = _human_sentiment_assignment(series)
-    if human is not None:
-        return {
-            "Final Rapid Relevance": human["relevance"],
-            "Final Rapid Sentiment 3-Way": human["three_way"],
-            "Final Rapid Sentiment 5-Way": human["five_way"],
-            "Final Rapid Sentiment Score": human["score"],
-            "Final Rapid Sentiment Source": human["source"],
-        }
-
     machine = resolve_rapid_sentiment_row(series)
-    return {
-        "Final Rapid Relevance": machine["Effective Rapid Relevance"],
-        "Final Rapid Sentiment 3-Way": machine["Effective Rapid Sentiment 3-Way"],
-        "Final Rapid Sentiment 5-Way": machine["Effective Rapid Sentiment 5-Way"],
-        "Final Rapid Sentiment Score": machine["Effective Rapid Sentiment Score"],
-        "Final Rapid Sentiment Source": machine["Effective Rapid Sentiment Source"],
+    decisions = {scale: _human_sentiment_decision(series, scale) for scale in SENTIMENT_SCALE_SUFFIXES}
+    legacy_acceptance = _safe_text(series.get("Rapid Human Sentiment Review State")) == HUMAN_STATE_ACCEPTED
+    score = machine["Effective Rapid Sentiment Score"]
+    relevance = machine["Effective Rapid Relevance"]
+    source = machine["Effective Rapid Sentiment Source"]
+    if legacy_acceptance:
+        # Earlier sessions accepted relevance and the machine score along with both labels.
+        # Per-scale changes leave those recorded story-level values intact.
+        relevance = _safe_text(series.get("Rapid Accepted Machine Relevance"))
+        snapshot_score = _to_float(series.get("Rapid Accepted Machine Sentiment Score"))
+        score = pd.NA if snapshot_score is None else snapshot_score
+    states = {state for state, _ in decisions.values()}
+    if HUMAN_STATE_ACCEPTED in states:
+        source = SOURCE_HUMAN_ACCEPTED_MACHINE
+    if HUMAN_STATE_ASSIGNED in states:
+        relevance = RELEVANCE_RELEVANT
+        source = SOURCE_HUMAN_ASSIGNED
+
+    human_relevance = rapid_human_relevance(series)
+    if human_relevance:
+        relevance = human_relevance
+        source = (
+            SOURCE_HUMAN_ACCEPTED_MACHINE
+            if legacy_acceptance and not _safe_text(series.get(HUMAN_RELEVANCE_COLUMN))
+            else SOURCE_HUMAN_ASSIGNED
+        )
+
+    final = {
+        "Final Rapid Relevance": relevance,
+        "Final Rapid Sentiment Score": pd.NA if relevance == RELEVANCE_NOT_RELEVANT else score,
+        "Final Rapid Sentiment Source": source,
     }
+    for scale, suffix in SENTIMENT_SCALE_SUFFIXES.items():
+        state, label = decisions[scale]
+        if not state:
+            label = machine[f"Effective Rapid Sentiment {suffix}"]
+        if relevance == RELEVANCE_NOT_RELEVANT:
+            label = "NOT RELEVANT"
+        elif relevance == RELEVANCE_RELEVANT and _is_not_relevant(label):
+            label = ""
+        final[f"Final Rapid Sentiment {suffix}"] = label
+    return final
 
 
 def _legacy_human_tag_state(row: pd.Series, expected_mode: str) -> tuple[str, str]:

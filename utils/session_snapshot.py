@@ -23,6 +23,11 @@ EXCLUDED_SESSION_KEYS = {
     "build_session_file",
     "sidebar_page_help_open_pre",
     "sidebar_page_help_open_post",
+    # Rapid review and Insights views open from the saved report choices.
+    "rapid_human_sentiment_scale",
+    "rapid_human_tag_review_mode",
+    "rapid_insight_sentiment_scale",
+    "rapid_insight_tag_mode",
 }
 
 

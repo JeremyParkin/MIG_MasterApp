@@ -4,6 +4,7 @@ import zipfile
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import dill
 import pandas as pd
 import pytest
 from deep_translator.exceptions import TooManyRequests
@@ -504,6 +505,402 @@ def test_rapid_review_displays_current_final_values_after_restore(monkeypatch, g
     ]
 
 
+@pytest.mark.parametrize(("edit_order", "include_audit"), [(("3-way", "5-way"), False), (("5-way", "3-way"), True)])
+def test_rapid_sentiment_decisions_survive_scale_edits_and_session_restore(monkeypatch, edit_order, include_audit):
+    frame, summary = run_scripted_second_opinion(monkeypatch)
+    assert summary["successful"] == 1
+    articles = pd.DataFrame({"Group ID": [10, 10], "Headline": ["Original headline", "Another copy"]})
+    corrections = {"3-way": "NEGATIVE", "5-way": "VERY NEGATIVE"}
+    machine = {"3-way": "POSITIVE", "5-way": "SOMEWHAT POSITIVE"}
+    final_columns = ["Final Rapid Sentiment 3-Way", "Final Rapid Sentiment 5-Way"]
+    evidence_columns = [
+        "Jev Sentiment", "Jev 5-Way Sentiment", "Jev Sentiment Score",
+        "Rapid Review 3-Way Sentiment", "Rapid Review 5-Way Sentiment", "Rapid Review Sentiment Rationale",
+    ]
+    machine_score = resolve_final_rapid_sentiment_row(frame.iloc[0])["Final Rapid Sentiment Score"]
+    assert machine_score == 3.0
+    queue_settings = {
+        "rapid_spot_review_view": "All Rapid sample coverage",
+        "df_traditional": articles,
+        "df_jev_sentiment_grouped_rows": articles,
+    }
+    app = open_queue(monkeypatch, frame, "Sentiment", timeout=15, overrides=queue_settings)
+
+    def current_row():
+        assert not app.exception
+        return app.session_state["df_jev_sentiment_unique"].iloc[0]
+
+    def verify_final(three, five, *, relevant=True):
+        final = resolve_final_rapid_sentiment_row(current_row())
+        assert [final[column] for column in final_columns] == [three, five]
+        captions = [caption.value for caption in app.caption if caption.value.startswith("Final ")]
+        assert captions == [f"Final 3-way: {three}", f"Final 5-way: {five}"]
+        if relevant:
+            assert final["Final Rapid Relevance"] == "RELEVANT"
+            assert final["Final Rapid Sentiment Score"] == machine_score
+        else:
+            assert final["Final Rapid Relevance"] == "NOT_RELEVANT"
+            assert pd.isna(final["Final Rapid Sentiment Score"])
+        pd.testing.assert_series_equal(current_row()[evidence_columns], frame.iloc[0][evidence_columns])
+
+    def select_scale(scale):
+        app.radio(key="rapid_human_sentiment_scale").set_value(scale).run()
+
+    def select_label(scale, label):
+        app.button(key=f"rapid_assign_sentiment_10_{scale}_{label}").click().run()
+
+    for scale in edit_order:
+        select_scale(scale)
+        select_label(scale, corrections[scale])
+    verify_final("NEGATIVE", "VERY NEGATIVE")
+
+    app.button(key="rapid_story_relevance_10").click().run()
+    verify_final("NOT RELEVANT", "NOT RELEVANT", relevant=False)
+    snapshot, skipped = build_session_snapshot_bytes({
+        **queue_settings, "df_jev_sentiment_unique": app.session_state["df_jev_sentiment_unique"],
+    })
+    assert not skipped
+    restored = SessionState()
+    load_session_state_from_file(restored, io.BytesIO(snapshot))
+    app = open_queue(monkeypatch, restored["df_jev_sentiment_unique"], "Sentiment", timeout=15, overrides={
+        **queue_settings,
+        "df_traditional": restored["df_traditional"],
+        "df_jev_sentiment_grouped_rows": restored["df_jev_sentiment_grouped_rows"],
+    })
+    verify_final("NOT RELEVANT", "NOT RELEVANT", relevant=False)
+    app.button(key="rapid_story_relevance_10").click().run()
+    verify_final("NEGATIVE", "VERY NEGATIVE")
+
+    for scale in edit_order:
+        select_scale(scale)
+        expected = {**corrections, scale: machine[scale]}
+        clear_key = f"rapid_clear_sentiment_10_{scale}"
+        app.button(key=clear_key).click().run()
+        verify_final(expected["3-way"], expected["5-way"])
+        select_label(scale, corrections[scale])
+
+        select_label(scale, machine[scale])
+        assert f"Human review ({scale}): Accepted machine" in [item.value for item in app.success]
+        verify_final(expected["3-way"], expected["5-way"])
+        app.button(key=clear_key).click().run()
+        assert not app.success
+        assert not any(button.key == clear_key for button in app.button)
+        verify_final(expected["3-way"], expected["5-way"])
+        select_label(scale, corrections[scale])
+
+    download = AppTest.from_file("pages/11-Download.py", default_timeout=15)
+    for key, value in {
+        **queue_settings,
+        "standard_step": True,
+        "export_name": "Independent sentiment decisions",
+        "client_name": "Example",
+        "include_labeling_audit_columns": include_audit,
+        "df_jev_sentiment_unique": app.session_state["df_jev_sentiment_unique"],
+    }.items():
+        download.session_state[key] = value
+    download.run()
+    download.button(key="build_clean_workbook").click().run()
+    assert not download.exception and not download.error
+    with pd.ExcelFile(io.BytesIO(download.session_state["clean_excel_bytes"])) as workbook:
+        for sheet in ("RAPID LABELING SAMPLE", "CLEAN TRAD"):
+            rows = workbook.parse(sheet)
+            assert rows[final_columns[0]].tolist() == ["NEGATIVE"] * 2
+            if include_audit:
+                assert rows[final_columns[1]].tolist() == ["VERY NEGATIVE"] * 2
+                assert rows["Final Rapid Sentiment Score"].tolist() == [machine_score] * 2
+            else:
+                assert final_columns[1] not in rows
+                assert "Final Rapid Sentiment Score" not in rows
+
+
+@pytest.mark.parametrize(("primary_scale", "tag_mode", "tag_view"), [
+    ("3-way", "Single best tag", "Single best fit"),
+    ("5-way", "Multiple applicable tags", "All applicable"),
+])
+def test_rapid_report_choices_set_opening_views_without_relabeling(monkeypatch, primary_scale, tag_mode, tag_view):
+    monkeypatch.setattr("streamlit.env_util.is_repl", lambda: False)
+    labeled, summary = run_scripted_second_opinion(monkeypatch)
+    assert summary["successful"] == 1
+    for scale, label in [("3-way", "NEGATIVE"), ("5-way", "VERY NEGATIVE")]:
+        labeled = apply_rapid_sentiment_human_selection(labeled, 10, scale=scale, label=label)
+    for mode, assignment in [("Single best fit", "Policy"), ("All applicable", "Access")]:
+        labeled = apply_rapid_tag_human_selection(
+            labeled, 10, tagging_mode=mode, assignment=assignment, tag_definitions=QUEUE_TAGS,
+        )
+    source = labeled[["Group ID", "Headline", "Snippet", "Group Count", "Mentions", "Impressions", "Effective Reach"]].assign(
+        Type="ONLINE", URL="https://example.test/story", **{"Prime Example": 1},
+    )
+    other_scale = "5-way" if primary_scale == "3-way" else "3-way"
+    other_tag_mode = "Multiple applicable tags" if tag_mode == "Single best tag" else "Single best tag"
+    other_tag_view = "All applicable" if tag_view == "Single best fit" else "Single best fit"
+
+    with patch("processing.jev_sentiment.run_jev_sentiment_batch") as jev, patch(
+        "processing.rapid_second_opinion.run_rapid_review_batch"
+    ) as luna:
+        monkeypatch.setenv("MIG_ENABLE_RAPID_LABELING", "1")
+        app = AppTest.from_file("pages/Jev_Sentiment_Experimental.py", default_timeout=15)
+        app.session_state["standard_step"] = True
+        app.session_state["client_name"] = "Rapid report preferences"
+        app.session_state["analysis_context_saved_at"] = "saved"
+        app.session_state["analysis_primary_names"] = ["Example"]
+        app.session_state["df_traditional"] = source
+        app.run()
+        assert app.radio(key="_rapid_primary_sentiment_scale_input").value == "3-way"
+        assert not any(radio.label == "Tagging mode" for radio in app.radio)
+        app.radio(key="_rapid_primary_sentiment_scale_input").set_value(primary_scale).run()
+        app.text_area(key="jev_tags_text_input").set_value(
+            "\n".join(f"{name}: {description}" for name, description in QUEUE_TAGS.items())
+        ).run()
+        mode_control = app.radio(key="_rapid_report_tagging_mode_input")
+        assert mode_control.options == ["Single best fit", "All applicable"]
+        mode_control.set_value(tag_mode).run()
+        next(button for button in app.button if button.label == "Prepare Rapid Labeling Sample").click().run()
+        assert not app.exception
+        assert not app.session_state["df_jev_sentiment_unique"]["Jev Sentiment"].notna().any()
+        app.session_state["df_jev_sentiment_unique"] = labeled
+
+        app.button(key="jev_sentiment_nav_prepare").click().run()
+        assert app.radio(key="_rapid_primary_sentiment_scale_input").value == primary_scale
+        assert app.radio(key="_rapid_report_tagging_mode_input").value == tag_mode
+        pd.testing.assert_frame_equal(app.session_state["df_jev_sentiment_unique"], labeled)
+
+        for step, controls in [
+            ("spot_checks", ("rapid_human_sentiment_scale", "rapid_human_tag_review_mode")),
+            ("insights", ("rapid_insight_sentiment_scale", "rapid_insight_tag_mode")),
+        ]:
+            app.button(key=f"jev_sentiment_nav_{step}").click().run()
+            assert not app.exception
+            assert app.radio(key=controls[0]).value == primary_scale
+            app.radio(key=controls[0]).set_value(other_scale).run()
+            if step == "spot_checks":
+                app.button_group(key="rapid_spot_review_domain").set_value("Tagging").run()
+            assert app.radio(key=controls[1]).value == tag_view
+            app.radio(key=controls[1]).set_value(other_tag_view).run()
+            assert app.session_state["rapid_primary_sentiment_scale"] == primary_scale
+            assert app.session_state["jev_tagging_mode"] == tag_mode
+
+        save = AppTest.from_file("pages/12-Save_Load.py", default_timeout=45)
+        for key, value in app.session_state.filtered_state.items():
+            if not key.startswith("jev_sentiment_nav_"):
+                save.session_state[key] = value
+        save.session_state["upload_step"] = True
+        save.session_state["_session_file_build_requested"] = True
+        with patch("utils.session_download.register_session_download", return_value="/media/preferences.bin"):
+            save.run()
+        assert not save.exception and not save.error
+        snapshot = save.session_state["_prepared_session_file"]["data"]
+
+        restored = SessionState()
+        load_session_state_from_file(restored, io.BytesIO(snapshot))
+        assert restored["rapid_primary_sentiment_scale"] == primary_scale
+        assert restored["jev_tagging_mode"] == tag_mode
+        for key in ("rapid_human_sentiment_scale", "rapid_human_tag_review_mode", "rapid_insight_sentiment_scale", "rapid_insight_tag_mode"):
+            assert key not in restored
+
+        # Earlier snapshots could contain transient views but had no primary scale.
+        legacy_payload = dill.loads(snapshot)
+        del legacy_payload["rapid_primary_sentiment_scale"]
+        legacy_payload.update(rapid_human_sentiment_scale="5-way", rapid_insight_sentiment_scale="5-way",
+                              rapid_human_tag_review_mode=other_tag_view, rapid_insight_tag_mode=other_tag_view)
+        legacy = SessionState()
+        load_session_state_from_file(legacy, io.BytesIO(dill.dumps(legacy_payload)))
+
+        for saved, expected_scale in [(restored, primary_scale), (legacy, "3-way")]:
+            reopened = AppTest.from_file("pages/Jev_Sentiment_Experimental.py", default_timeout=15)
+            for key, value in saved.items():
+                reopened.session_state[key] = value
+            reopened.session_state["rapid_spot_review_domain"] = "Sentiment"
+            reopened.session_state["jev_sentiment_section"] = "Prepare Sample"
+            reopened.run()
+            assert reopened.radio(key="_rapid_primary_sentiment_scale_input").value == expected_scale
+            assert reopened.radio(key="_rapid_report_tagging_mode_input").value == tag_mode
+
+            reopened.button(key="jev_sentiment_nav_spot_checks").click().run()
+            assert not reopened.exception
+            assert reopened.session_state["jev_sentiment_section"] == "Spot Checks", [item.value for item in reopened.warning]
+            assert reopened.radio(key="rapid_human_sentiment_scale").value == expected_scale
+            reopened.button_group(key="rapid_spot_review_domain").set_value("Tagging").run()
+            assert reopened.radio(key="rapid_human_tag_review_mode").value == tag_view
+            reopened.button(key="jev_sentiment_nav_insights").click().run()
+            assert reopened.radio(key="rapid_insight_sentiment_scale").value == expected_scale
+            assert reopened.radio(key="rapid_insight_tag_mode").value == tag_view
+            assert not reopened.exception
+            pd.testing.assert_frame_equal(reopened.session_state["df_jev_sentiment_unique"], labeled)
+
+        reopened.button(key="jev_sentiment_nav_prepare").click().run()
+        reopened.radio(key="_rapid_primary_sentiment_scale_input").set_value("5-way").run()
+        reopened.radio(key="_rapid_report_tagging_mode_input").set_value(other_tag_mode).run()
+        reopened.button(key="jev_sentiment_nav_spot_checks").click().run()
+        reopened.button_group(key="rapid_spot_review_domain").set_value("Sentiment").run()
+        assert reopened.radio(key="rapid_human_sentiment_scale").value == "5-way"
+        reopened.button_group(key="rapid_spot_review_domain").set_value("Tagging").run()
+        assert reopened.radio(key="rapid_human_tag_review_mode").value == other_tag_view
+        reopened.button(key="jev_sentiment_nav_insights").click().run()
+        assert reopened.radio(key="rapid_insight_sentiment_scale").value == "5-way"
+        assert reopened.radio(key="rapid_insight_tag_mode").value == other_tag_view
+        assert not reopened.exception
+        updated = reopened.session_state["df_jev_sentiment_unique"]
+        derived = ["Jev Tagging Mode", "Jev Tags", "Jev Tag Count"]
+        assert updated.iloc[0]["Jev Tagging Mode"] == other_tag_mode
+        pd.testing.assert_frame_equal(updated[labeled.columns.difference(derived)], labeled[labeled.columns.difference(derived)])
+        jev.assert_not_called()
+        luna.assert_not_called()
+
+
+def rapid_xlsx_layout_state(monkeypatch, *, scale, tag_mode):
+    monkeypatch.setenv("MIG_ENABLE_RAPID_LABELING", "1")
+    frame, summary = run_scripted_second_opinion(monkeypatch, luna={"sentiment_outcome": "0"})
+    assert summary["successful"] == 1
+    articles = pd.DataFrame({
+        "Group ID": [10, 10, 10, 99],
+        "Headline": ["Program changes", "Online pickup", "Radio pickup", "Unlabeled group"],
+        "Type": ["ONLINE", "ONLINE", "RADIO", "ONLINE"],
+        "URL": [f"https://example.test/{index}" for index in range(4)],
+        "Snippet": ["Example program changes.", "Online copy.", "Radio copy.", "An unrelated report."],
+        "Final Rapid Tags": ["Stale input"] * 4,
+        "Rapid Sentiment Mixture Label": ["Stale input"] * 4,
+    })
+    for name in ("Headline", "Type", "URL", "Snippet"):
+        frame[name] = articles.loc[0, name]
+    frame = apply_rapid_sentiment_human_selection(frame, 10, scale="3-way", label="NEGATIVE")
+    frame = apply_rapid_sentiment_human_selection(frame, 10, scale="5-way", label="VERY POSITIVE")
+    if tag_mode is None:
+        frame = frame.drop(columns=[name for name in frame.columns if "Tag" in name])
+    else:
+        frame = apply_rapid_tag_human_selection(
+            frame, 10, tagging_mode="Single best fit", assignment="Policy", tag_definitions=QUEUE_TAGS,
+        )
+        frame = apply_rapid_tag_human_selection(
+            frame, 10, tagging_mode="All applicable", assignment="Access; Programs", tag_definitions=QUEUE_TAGS,
+        )
+    return {
+        "standard_step": True,
+        "export_name": "Report layout",
+        "client_name": "Example",
+        "analysis_context_saved_at": "saved",
+        "analysis_primary_names": ["Example"],
+        "analysis_dataset_media_types": ["ONLINE"],
+        "df_traditional": articles,
+        "df_jev_sentiment_grouped_rows": articles.iloc[:2].copy(),
+        "df_jev_sentiment_unique": frame,
+        "jev_sentiment_config_step": True,
+        "jev_tag_definitions": QUEUE_TAGS if tag_mode else {},
+        **({"jev_tagging_mode": tag_mode} if tag_mode else {}),
+        **({"rapid_primary_sentiment_scale": scale} if scale else {}),
+    }
+
+
+@pytest.mark.parametrize(("scale", "tag_mode", "sentiment", "tag"), [
+    ("3-way", "Single best tag", ("Final Rapid Sentiment 3-Way", "NEGATIVE"), ("Final Rapid Best Tag", "Policy")),
+    ("5-way", "Multiple applicable tags", ("Final Rapid Sentiment 5-Way", "VERY POSITIVE"), ("Final Rapid Tags", "Access; Programs")),
+    (None, None, ("Final Rapid Sentiment 3-Way", "NEGATIVE"), None),
+])
+def test_rapid_xlsx_selects_report_columns_in_both_sheets(monkeypatch, scale, tag_mode, sentiment, tag):
+    state = rapid_xlsx_layout_state(monkeypatch, scale=scale, tag_mode=tag_mode)
+    reporting = {
+        "Final Rapid Relevance": "RELEVANT",
+        sentiment[0]: sentiment[1],
+        "Rapid Sentiment Spread": "VERY CONSISTENT",
+    }
+    if tag:
+        reporting[tag[0]] = tag[1]
+    headers = list(reporting)
+    standard = {}
+    for audit in (False, True):
+        data = build_clean_workbook_bytes(state, include_labeling_audit_columns=audit)
+        with pd.ExcelFile(io.BytesIO(data)) as workbook:
+            meta = workbook.parse("EXPORT METADATA").set_index("Field")["Value"]
+            assert meta["Rapid Primary Sentiment Scale"] == ("Five-way" if scale == "5-way" else "Three-way")
+            assert meta["Rapid Tagging Mode"] == {
+                "Single best tag": "Single best fit", "Multiple applicable tags": "All applicable", None: "Sentiment only",
+            }[tag_mode]
+            for sheet_name in ("CLEAN TRAD", "RAPID LABELING SAMPLE"):
+                sheet = workbook.parse(sheet_name)
+                rapid_headers = [
+                    name for name in sheet.columns if name.startswith(
+                        ("Rapid ", "Final Rapid ", "Effective Rapid ", "Score-band agreement"),
+                    )
+                ]
+                assert sheet.columns[sheet.columns.get_loc("Headline") + 1:][:len(headers)].tolist() == headers
+                assert rapid_headers[:len(headers)] == headers
+                assert not any(column.endswith(("_x", "_y")) for column in rapid_headers)
+                assert "Rapid Sentiment Mixture Label" not in sheet
+                rows = sheet.loc[sheet["Group ID"].eq(10)].sort_values("Headline").reset_index(drop=True)
+                assert rows["Headline"].tolist() == ["Online pickup", "Program changes"]
+                assert rows["Type"].tolist() == ["ONLINE", "ONLINE"]
+                assert rows["URL"].notna().all() and rows["Snippet"].notna().all()
+                assert rows[headers].to_dict("records") == [reporting, reporting]
+                if sheet_name == "CLEAN TRAD":
+                    assert sheet.loc[sheet["Group ID"].eq(99), headers].isna().all().all()
+                if not audit:
+                    assert rapid_headers == headers
+                    standard[sheet_name] = rows[headers]
+                    continue
+
+                pd.testing.assert_frame_equal(rows[headers], standard[sheet_name])
+                for name, expected in {
+                    "Final Rapid Sentiment 3-Way": "NEGATIVE",
+                    "Final Rapid Sentiment 5-Way": "VERY POSITIVE",
+                    "Final Rapid Sentiment Score": 3.0,
+                    "Rapid Sentiment": "POSITIVE",
+                    "Rapid Review 5-Way Sentiment": "NEUTRAL",
+                    "Rapid Human Sentiment 3-Way": "NEGATIVE",
+                    "Rapid Human Sentiment 5-Way": "VERY POSITIVE",
+                }.items():
+                    assert rows[name].tolist() == [expected] * 2
+                if tag:
+                    for name, expected in {
+                        "Final Rapid Best Tag": "Policy",
+                        "Final Rapid Tags": "Access; Programs",
+                        "Rapid Human Best Tag Assignment": "Policy",
+                        "Rapid Human Applicable Tags Assignment": "Access; Programs",
+                    }.items():
+                        assert rows[name].tolist() == [expected] * 2
+                else:
+                    assert {"Final Rapid Tags", "Final Rapid Best Tag"}.isdisjoint(sheet.columns)
+
+
+@pytest.mark.parametrize(("control", "choice", "old_header", "new_header"), [
+    ("_rapid_primary_sentiment_scale_input", "5-way", "Final Rapid Sentiment 3-Way", "Final Rapid Sentiment 5-Way"),
+    ("_rapid_report_tagging_mode_input", "Multiple applicable tags", "Final Rapid Best Tag", "Final Rapid Tags"),
+])
+def test_rapid_xlsx_preference_change_requires_rebuild(monkeypatch, control, choice, old_header, new_header):
+    state = rapid_xlsx_layout_state(monkeypatch, scale="3-way", tag_mode="Single best tag")
+    download = AppTest.from_file("pages/11-Download.py", default_timeout=15)
+    for key, value in state.items():
+        download.session_state[key] = value
+    download.run()
+    download.button(key="build_clean_workbook").click().run()
+    assert not download.exception and not download.error
+    original = download.session_state["clean_excel_bytes"]
+
+    setup = open_queue(monkeypatch, state["df_jev_sentiment_unique"], "Sentiment", timeout=15, overrides={
+        **state,
+        "jev_sentiment_section": "Prepare Sample",
+        "clean_excel_bytes": original,
+        "_clean_excel_scope_key": download.session_state["_clean_excel_scope_key"],
+    })
+    setup.radio(key=control).set_value(choice).run()
+    assert not setup.exception
+    assert "clean_excel_bytes" not in setup.session_state
+    assert setup.session_state["_rapid_clean_workbook_needs_rebuild"]
+
+    # Simulate opening Download with the old cache still in memory after the preference changed.
+    for key in ("rapid_primary_sentiment_scale", "jev_tagging_mode", "df_jev_sentiment_unique"):
+        download.session_state[key] = setup.session_state[key]
+    download.run()
+    assert "clean_excel_bytes" not in download.session_state
+    assert not download.get("download_button")
+    assert any("Build the cleaned data workbook again" in item.value for item in download.warning)
+    download.button(key="build_clean_workbook").click().run()
+    assert not download.exception and not download.error
+    assert not download.warning
+    with pd.ExcelFile(io.BytesIO(download.session_state["clean_excel_bytes"])) as workbook:
+        for sheet in ("CLEAN TRAD", "RAPID LABELING SAMPLE"):
+            columns = workbook.parse(sheet).columns
+            assert new_header in columns and old_header not in columns
+
+
 def test_rapid_review_invalidates_workbook_and_rebuilds_clean_audit(monkeypatch):
     frame, summary = run_scripted_second_opinion(
         monkeypatch,
@@ -591,6 +988,127 @@ def test_rapid_review_invalidates_workbook_and_rebuilds_clean_audit(monkeypatch)
     with pd.ExcelFile(io.BytesIO(download.session_state["clean_excel_bytes"])) as rebuilt:
         assert "RAPID LABELING SAMPLE" not in rebuilt.sheet_names
         assert "Final Rapid Sentiment 3-Way" not in rebuilt.parse("CLEAN TRAD")
+
+
+def test_rapid_release_workflow_with_mocked_providers(monkeypatch):
+    monkeypatch.setenv("MIG_ENABLE_RAPID_LABELING", "1")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "mock")
+    monkeypatch.setenv("OPENAI_API_KEY", "mock")
+    monkeypatch.setattr("streamlit.env_util.is_repl", lambda: False)
+    coverage = pd.DataFrame({
+        "Group ID": [10, 10], "Prime Example": [1, 0], "Group Count": [2, 2],
+        "Type": ["ONLINE", "ONLINE"], "Headline": ["Transit program opens", "Program opening pickup"],
+        "Snippet": ["Example opened its transit program.", "Syndicated copy."],
+        "URL": ["https://example.test/prime", "https://example.test/pickup"],
+        "Mentions": [1, 1], "Impressions": [100, 50], "Effective Reach": [80, 40],
+    })
+    app = AppTest.from_file("pages/Jev_Sentiment_Experimental.py", default_timeout=30)
+    for key, value in {
+        "standard_step": True, "upload_step": True, "analysis_context_saved_at": "saved",
+        "analysis_primary_names": ["Example"], "client_name": "Example", "export_name": "Release smoke",
+        "df_traditional": coverage,
+    }.items():
+        app.session_state[key] = value
+    app.run()
+    app.radio(key="_rapid_primary_sentiment_scale_input").set_value("5-way").run()
+    app.text_area(key="jev_tags_text_input").set_value("Access: Public access\nPrograms: New programs").run()
+    app.radio(key="_rapid_report_tagging_mode_input").set_value("Multiple applicable tags").run()
+    next(button for button in app.button if button.label == "Prepare Rapid Labeling Sample").click().run()
+    assert not app.exception
+
+    def choice(label):
+        return {"type": "choice", "choice": label, "probabilities": {label: 1.0}}
+
+    def jev_response(_url, *, json, **_kwargs):
+        assert json["state"]["story"]["headline"] == "Transit program opens"
+        assert {"tag_best_fit", "tag_001", "tag_002"} <= json["questions"].keys()
+        answers = {
+            "sentiment": choice("NEUTRAL"), "sentiment_5_way": choice("NEUTRAL"),
+            "sentiment_score": {"type": "score", "score": 4, "legend": {}, "probabilities": {"4": 1}},
+            "sentiment_relevant": {"type": "noul", "noul": 1},
+            "sentiment_mixture": {"type": "score", "score": 0, "legend": {}, "probabilities": {"0": 1}},
+            "tag_best_fit": choice("Programs"), "tag_001": choice("NO"), "tag_002": choice("YES"),
+        }
+        return SimpleNamespace(status_code=200, raise_for_status=lambda: None, json=lambda: {"answers": answers})
+
+    with patch("processing.jev_sentiment.requests.post", side_effect=jev_response) as jev:
+        next(button for button in app.button if button.label == "Run Next Rapid Batch").click().run()
+    jev.assert_called_once()
+    assert not app.exception
+    assert app.session_state["__last_jev_sentiment_batch_summary__"]["successful"] == 1
+
+    app.button(key="jev_sentiment_nav_review").click().run()
+    luna_args = {
+        "sentiment_outcome": "0", "sentiment_confidence": 1, "sentiment_rationale": "Factual coverage.",
+        "best_tag": "Programs", "applicable_tags": ["Programs"], "tag_confidence": 1, "tag_rationale": "Program opening.",
+    }
+    tool = SimpleNamespace(function=SimpleNamespace(arguments=json.dumps(luna_args)))
+    message = SimpleNamespace(tool_calls=[tool])
+    with patch("processing.rapid_second_opinion.OpenAI") as luna:
+        create = luna.return_value.chat.completions.create
+        create.return_value = SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=None)
+        next(button for button in app.button if button.label == "Run AI Second Opinion").click().run()
+        create.assert_called_once()
+        assert "Headline: Transit program opens" in create.call_args.kwargs["messages"][-1]["content"]
+    assert not app.exception
+    assert app.session_state["__last_rapid_review_batch_summary__"]["successful"] == 1
+
+    app.button(key="jev_sentiment_nav_spot_checks").click().run()
+    app.selectbox(key="rapid_spot_review_view").set_value("All Rapid sample coverage").run()
+    assert app.radio(key="rapid_human_sentiment_scale").value == "5-way"
+    app.button(key="rapid_assign_sentiment_10_5-way_VERY POSITIVE").click().run()
+    app.radio(key="rapid_human_sentiment_scale").set_value("3-way").run()
+    app.button(key="rapid_assign_sentiment_10_3-way_NEGATIVE").click().run()
+    app.button_group(key="rapid_spot_review_domain").set_value("Tagging").run()
+    app.selectbox(key="rapid_spot_review_view").set_value("All Rapid sample coverage").run()
+    assert app.radio(key="rapid_human_tag_review_mode").value == "All applicable"
+    app.checkbox(key="rapid_tag_multi_10_Access").check().run()
+    app.button(key="rapid_assign_tags_10").click().run()
+    assert not app.exception
+
+    save = AppTest.from_file("pages/12-Save_Load.py", default_timeout=45)
+    for key, value in app.session_state.filtered_state.items():
+        if not key.startswith("jev_sentiment_nav_"):
+            save.session_state[key] = value
+    save.session_state["_session_file_build_requested"] = True
+    with patch("utils.session_download.register_session_download", return_value="/media/release-smoke.bin"):
+        save.run()
+    assert not save.exception and not save.error
+    restored = SessionState()
+    load_session_state_from_file(restored, io.BytesIO(save.session_state["_prepared_session_file"]["data"]))
+    row = restored["df_jev_sentiment_unique"].iloc[0]
+    final = resolve_final_rapid_sentiment_row(row)
+    assert [final["Final Rapid Sentiment 3-Way"], final["Final Rapid Sentiment 5-Way"]] == ["NEGATIVE", "VERY POSITIVE"]
+    assert row["Jev 5-Way Sentiment"] == row["Rapid Review 5-Way Sentiment"] == "NEUTRAL"
+
+    insights = AppTest.from_file("pages/Jev_Sentiment_Experimental.py", default_timeout=30)
+    for key, value in restored.items():
+        insights.session_state[key] = value
+    insights.session_state["jev_sentiment_section"] = "Insights"
+    insights.run()
+    assert not insights.exception
+    assert insights.radio(key="rapid_insight_sentiment_scale").value == "5-way"
+    assert insights.radio(key="rapid_insight_tag_mode").value == "All applicable"
+    assert any("1 of 1 Rapid stories currently have usable 5-way sentiment" in item.value for item in insights.caption)
+    assert any("1 of 1 Rapid stories currently have usable all applicable tag labels" in item.value for item in insights.caption)
+
+    download = AppTest.from_file("pages/11-Download.py", default_timeout=30)
+    for key, value in restored.items():
+        download.session_state[key] = value
+    download.run()
+    download.button(key="build_clean_workbook").click().run()
+    assert not download.exception and not download.error
+    with pd.ExcelFile(io.BytesIO(download.session_state["clean_excel_bytes"])) as workbook:
+        for name in ("CLEAN TRAD", "RAPID LABELING SAMPLE"):
+            exported = workbook.parse(name)
+            assert exported["Group ID"].tolist() == [10, 10]
+            assert exported["Final Rapid Sentiment 5-Way"].tolist() == ["VERY POSITIVE"] * 2
+            assert exported["Final Rapid Tags"].tolist() == ["Access; Programs"] * 2
+            assert exported["Rapid Sentiment Spread"].notna().all()
+            assert {"Final Rapid Sentiment 3-Way", "Final Rapid Best Tag"}.isdisjoint(exported.columns)
+        meta = workbook.parse("EXPORT METADATA").set_index("Field")["Value"]
+        assert meta["Rapid Primary Sentiment Scale"] == "Five-way"
+        assert meta["Rapid Tagging Mode"] == "All applicable"
 
 
 def test_rapid_batch_controls_run_500_stories_and_retain_individual_errors(monkeypatch):
