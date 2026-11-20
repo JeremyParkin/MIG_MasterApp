@@ -29,6 +29,7 @@ from processing.rapid_resolution import (
     build_final_rapid_sentiment_frame,
     build_final_rapid_tag_frame,
 )
+from processing.insights_evidence import PRIMARY_STORY_LIMIT, distinct_ranked_stories, primary_article_text, request_insights_response
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
@@ -44,7 +45,7 @@ RAPID_SENTIMENT_ORDER_5_WAY = [
     "VERY NEGATIVE",
     "NOT RELEVANT",
 ]
-RAPID_PRIMARY_EXAMPLE_LIMIT = 10
+RAPID_PRIMARY_EXAMPLE_LIMIT = PRIMARY_STORY_LIMIT
 RAPID_ALIGNED_EVIDENCE_LIMIT = 40
 
 
@@ -55,13 +56,6 @@ def _text_series(df: pd.DataFrame, column: str) -> pd.Series:
     if isinstance(values, pd.DataFrame):
         values = values.iloc[:, 0]
     return values.fillna("").astype(str).str.strip()
-
-
-def _truncate_text(text: Any, limit: int = 420) -> str:
-    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
-    if len(cleaned) <= limit:
-        return cleaned
-    return cleaned[: limit - 3].rstrip() + "..."
 
 
 def _extract_json_payload(text: str) -> dict[str, Any] | None:
@@ -122,7 +116,7 @@ def _prepare_story_columns(df: pd.DataFrame) -> pd.DataFrame:
     if "Group Count" in working.columns:
         working["Group Count"] = working["Group Count"].where(working["Group Count"] > 0, 1)
 
-    text_columns = ["Headline", "Snippet", "Example Snippet", "URL", "Example URL", "Outlet", "Example Outlet", "Type", "Example Type", "Date"]
+    text_columns = ["Headline", "URL", "Example URL", "Outlet", "Example Outlet", "Type", "Example Type", "Date"]
     for column in text_columns:
         if column not in working.columns:
             working[column] = ""
@@ -131,7 +125,6 @@ def _prepare_story_columns(df: pd.DataFrame) -> pd.DataFrame:
     working["Display URL"] = working["Example URL"].where(working["Example URL"] != "", working["URL"])
     working["Display Outlet"] = working["Example Outlet"].where(working["Example Outlet"] != "", working["Outlet"])
     working["Display Type"] = working["Example Type"].where(working["Example Type"] != "", working["Type"])
-    working["Display Snippet"] = working["Example Snippet"].where(working["Example Snippet"] != "", working["Snippet"])
     working["_has_url"] = working["Display URL"].ne("")
     working["_is_online_example"] = working["Display Type"].str.upper().isin({"ONLINE", "ONLINE NEWS", "PRESS RELEASE", "BLOGS"})
     return working
@@ -209,7 +202,7 @@ def build_rapid_sentiment_observation_payload(
             ["_obs_story_score", "Group Count", "Mentions", "Impressions", "Effective Reach"],
             ascending=[False, False, False, False, False],
         )
-        primary = ranked.drop_duplicates(subset=["Headline"], keep="first").head(per_sentiment_limit)
+        primary = distinct_ranked_stories(ranked).head(per_sentiment_limit)
         primary_group_ids = {str(row.get("Group ID", "") or "").strip() for _, row in primary.iterrows()}
         primary_headlines = {str(row.get("Headline", "") or "").strip() for _, row in primary.iterrows()}
         examples_by_sentiment[str(sentiment)] = [_story_example(row) for _, row in primary.iterrows()]
@@ -333,7 +326,7 @@ def build_rapid_tag_observation_payload(
             ["_obs_story_score", "Group Count", "Mentions", "Impressions", "Effective Reach"],
             ascending=[False, False, False, False, False],
         )
-        primary = ranked.drop_duplicates(subset=["Headline"], keep="first").head(per_tag_limit)
+        primary = distinct_ranked_stories(ranked).head(per_tag_limit)
         primary_group_ids = {str(row.get("Group ID", "") or "").strip() for _, row in primary.iterrows()}
         primary_headlines = {str(row.get("Headline", "") or "").strip() for _, row in primary.iterrows()}
         examples_by_tag[str(tag_name)] = [_story_example(row) for _, row in primary.iterrows()]
@@ -372,7 +365,7 @@ def _story_example(row: pd.Series, *, compact: bool = False) -> dict[str, Any]:
     if not compact:
         item["impressions"] = int(row.get("Impressions", 0) or 0)
         item["effective_reach"] = int(row.get("Effective Reach", 0) or 0)
-        item["snippet"] = _truncate_text(row.get("Display Snippet", ""), 420)
+        item["snippet"] = primary_article_text(row, prefer_example=True)
     return item
 
 
@@ -450,7 +443,8 @@ def generate_rapid_sentiment_observations(
     )
     prompt = build_sentiment_observation_prompt(client_name, scale, include_not_relevant, payload, analysis_context)
     client = OpenAI(api_key=api_key)
-    response = client.responses.create(
+    response = request_insights_response(
+        client,
         model=model,
         input=[
             {"role": "system", "content": "You write concise, neutral media-intelligence summaries."},
@@ -502,7 +496,8 @@ def generate_rapid_tag_observations(
     )
     prompt = build_tag_observation_prompt(client_name, include_other, payload, analysis_context)
     client = OpenAI(api_key=api_key)
-    response = client.responses.create(
+    response = request_insights_response(
+        client,
         model=model,
         input=[
             {"role": "system", "content": "You write concise, neutral media-intelligence summaries."},

@@ -8,6 +8,14 @@ from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 from openai import OpenAI
+from processing.insights_evidence import (
+    ARTICLE_REFERENCE_GUIDANCE,
+    PRIMARY_STORY_LIMIT,
+    distinct_ranked_stories,
+    primary_article_text,
+    request_insights_response,
+    share_primary_articles,
+)
 from utils.api_meter import add_api_usage
 from utils.api_meter import extract_usage_tokens
 
@@ -497,15 +505,19 @@ def build_top_story_observation_payload(df: pd.DataFrame) -> dict[str, Any]:
         return {"stories": []}
 
     stories = []
-    ranked = working.sort_values(["Mentions", "Impressions"], ascending=False)
-    for _, row in ranked.head(10).iterrows():
+    ranked = distinct_ranked_stories(working.sort_values(["Mentions", "Impressions"], ascending=False))
+    for _, row in ranked.head(PRIMARY_STORY_LIMIT).iterrows():
         stories.append(
             {
+                "group_id": str(row.get("Group ID", "")),
+                "source_group_ids": str(row.get("Source Group IDs", "") or ""),
                 "headline": str(row.get("Headline", "") or "").strip(),
                 "outlet": str(row.get("Example Outlet", "") or "").strip(),
                 "type": str(row.get("Example Type", "") or "").strip(),
                 "mentions": int(row.get("Mentions", 0) or 0),
                 "impressions": int(row.get("Impressions", 0) or 0),
+                "effective_reach": int(row.get("Effective Reach", 0) or 0),
+                "snippet": primary_article_text(row),
                 "summary": str(row.get("Top Story Summary", "") or "").strip(),
                 "callout": str(row.get("Chart Callout", "") or "").strip(),
                 "sentiment": str(row.get("Entity Sentiment", "") or "").strip(),
@@ -538,8 +550,10 @@ Requirements:
 - Note whether the set leans toward announcements, controversy, routine updates, product news, corporate developments, etc. when visible.
 - Do not invent broader implications beyond the supplied stories.
 
+{ARTICLE_REFERENCE_GUIDANCE}
+
 Input data:
-{json.dumps(payload, ensure_ascii=True)}
+{json.dumps(share_primary_articles(payload, "stories"), ensure_ascii=True)}
 """.strip()
 
 
@@ -553,7 +567,8 @@ def generate_top_story_observation(
     payload = build_top_story_observation_payload(df)
     prompt = build_top_story_observation_prompt(entity_name, payload, analysis_context=analysis_context)
     client = OpenAI(api_key=api_key)
-    response = client.responses.create(
+    response = request_insights_response(
+        client,
         model=model,
         input=[
             {"role": "system", "content": "You write concise, neutral media-intelligence summaries."},

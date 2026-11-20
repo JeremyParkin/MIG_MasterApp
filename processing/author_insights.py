@@ -9,11 +9,19 @@ from openai import OpenAI
 
 from processing.coverage_flags import has_coverage_flag
 from processing.prominence import get_prominence_weight_series
+from processing.insights_evidence import (
+    ARTICLE_REFERENCE_GUIDANCE,
+    PRIMARY_STORY_LIMIT,
+    distinct_ranked_stories,
+    primary_article_text,
+    request_insights_response,
+    share_primary_articles,
+)
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
 DEFAULT_AUTHOR_SUMMARY_MODEL = "gpt-6.1-terra"
-DEFAULT_AUTHOR_PRIMARY_EXAMPLE_LIMIT = 10
+DEFAULT_AUTHOR_PRIMARY_EXAMPLE_LIMIT = PRIMARY_STORY_LIMIT
 DEFAULT_AUTHOR_SUPPORTING_EVIDENCE_LIMIT = 40
 
 def init_author_insights_state(session_state) -> None:
@@ -25,7 +33,7 @@ def init_author_insights_state(session_state) -> None:
 def _clean_author_df(df: pd.DataFrame) -> pd.DataFrame:
     working = df.copy()
 
-    for col in ["Author", "Headline", "Outlet", "Coverage Flags", "Type", "URL", "Snippet"]:
+    for col in ["Author", "Headline", "Outlet", "Coverage Flags", "Type", "URL"]:
         if col not in working.columns:
             working[col] = ""
         working[col] = working[col].fillna("").astype(str).str.strip()
@@ -135,6 +143,7 @@ def _build_story_level_rows(df: pd.DataFrame) -> pd.DataFrame:
             "Representative Outlet": rep.get("Outlet", ""),
             "Representative URL": rep.get("URL", ""),
             "Representative Snippet": rep.get("Snippet", ""),
+            "Representative Article Text": primary_article_text(rep),
             "Representative Flag": rep.get("Coverage Flags", ""),
             "Story Mentions": int(pd.to_numeric(group["Mentions"], errors="coerce").fillna(0).sum()),
             "Story Impressions": int(pd.to_numeric(group["Impressions"], errors="coerce").fillna(0).sum()),
@@ -212,6 +221,8 @@ def build_author_headline_table(
     author_name: str,
     limit: int = 12,
     selected_prominence_column: str = "",
+    *,
+    include_article_text: bool = False,
 ) -> pd.DataFrame:
     if story_level_df.empty:
         return pd.DataFrame()
@@ -240,6 +251,8 @@ def build_author_headline_table(
         "Representative Snippet",
         "Representative Flag",
     ]
+    if include_article_text:
+        display_cols.extend(["Group ID", "Representative Article Text", "Syndicated Pickups"])
     existing = [c for c in display_cols if c in author_rows.columns]
     return author_rows[existing].copy()
 
@@ -257,14 +270,10 @@ def build_author_prompt_payload(
         headline_df,
         selected_prominence_column=selected_prominence_column,
     )
-    ranked = (
-        working.sort_values(
-            ["_prompt_story_score", "Story Mentions", "Story Impressions", "Story Effective Reach"],
-            ascending=[False, False, False, False],
-        )
-        .drop_duplicates(subset=["Headline", "Representative Outlet"], keep="first")
-        .copy()
-    )
+    ranked = distinct_ranked_stories(working.sort_values(
+        ["_prompt_story_score", "Story Mentions", "Story Impressions", "Story Effective Reach"],
+        ascending=[False, False, False, False],
+    ))
 
     primary_df = ranked.head(primary_limit).copy()
     supporting_df = ranked.iloc[primary_limit:].head(supporting_limit).copy()
@@ -273,6 +282,7 @@ def build_author_prompt_payload(
     for _, row in primary_df.iterrows():
         primary_examples.append(
             {
+                "group_id": row.get("Group ID", ""),
                 "headline": row.get("Headline", ""),
                 "date": str(row.get("Date", "") or ""),
                 "type": row.get("Type", ""),
@@ -282,7 +292,10 @@ def build_author_prompt_payload(
                 "syndicated_pickups": int(row.get("Syndicated Pickups", 0) or 0),
                 "outlet": row.get("Representative Outlet", ""),
                 "url": row.get("Representative URL", ""),
-                "snippet": _truncate_text(row.get("Representative Snippet", ""), 320),
+                "snippet": primary_article_text({
+                    "Full Text": row.get("Representative Article Text"),
+                    "Snippet": row.get("Representative Snippet"),
+                }),
             }
         )
 
@@ -364,8 +377,10 @@ Author: {author_name}
 Total mentions: {int(author_row.get("Mention_Total", 0) or 0)}
 Total impressions: {int(author_row.get("Impressions", 0) or 0)}
 
+{ARTICLE_REFERENCE_GUIDANCE}
+
 Representative stories:
-{json.dumps(prompt_payload, ensure_ascii=True)}
+{json.dumps(share_primary_articles(prompt_payload, "primary_examples"), ensure_ascii=True)}
 """.strip()
 
 
@@ -389,7 +404,8 @@ def generate_author_summary(
     )
     client = OpenAI(api_key=api_key)
 
-    response = client.responses.create(
+    response = request_insights_response(
+        client,
         model=model,
         input=[
             {"role": "system", "content": "You write concise, neutral media-intelligence summaries."},

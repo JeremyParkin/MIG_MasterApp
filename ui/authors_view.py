@@ -1275,6 +1275,7 @@ def render_authors_page() -> None:
                             author_story_rows,
                             author_name,
                             limit=60,
+                            include_article_text=True,
                             selected_prominence_column=prominence,
                         )
                         try:

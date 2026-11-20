@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from processing.insights_evidence import PRIMARY_ARTICLE_TEXT, primary_article_text
 from processing.coverage_flags import has_coverage_flag, has_effective_coverage_flag
 
 from processing.prominence import get_prominence_weight_series
@@ -452,6 +453,7 @@ def build_prime_grouped_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
 
     rows: list[dict[str, Any]] = []
 
+    has_article_text = bool({"Full Text", "Article Text"}.intersection(df.columns))
     for group_id, group in df.groupby("Group ID", dropna=False):
         mentions = pd.to_numeric(group["Mentions"], errors="coerce").fillna(0).sum()
         impressions = pd.to_numeric(group["Impressions"], errors="coerce").fillna(0).sum()
@@ -477,6 +479,8 @@ def build_prime_grouped_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
             "Example Snippet": best_row.get("Snippet", ""),
             "Source Group IDs": group_id_str,
         })
+        if has_article_text:
+            rows[-1][PRIMARY_ARTICLE_TEXT] = primary_article_text(best_row)
 
     if not rows:
         return _empty_top_story_candidate_df()
@@ -498,6 +502,7 @@ def build_prime_grouped_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
         "Example Type",
         "Example Snippet",
         "Source Group IDs",
+        *([PRIMARY_ARTICLE_TEXT] if has_article_text else []),
     ]]
 
 
@@ -587,6 +592,7 @@ def consolidate_top_story_candidates(df: pd.DataFrame) -> pd.DataFrame:
         "Example URL",
         "Example Type",
         "Example Snippet",
+        PRIMARY_ARTICLE_TEXT,
         "Source Group IDs",
     ]
     existing = [c for c in desired_cols if c in out.columns]
@@ -830,6 +836,9 @@ def build_validation_source_candidate_table(
     working["Source Rank"] = range(1, len(working) + 1)
     working["Source Group IDs"] = working["Group ID"].apply(lambda value: "" if pd.isna(value) else str(value).strip())
 
+    if {"Full Text", "Article Text"}.intersection(working.columns):
+        working[PRIMARY_ARTICLE_TEXT] = working.apply(primary_article_text, axis=1)
+
     renamed = working.rename(
         columns={
             "Outlet": "Example Outlet",
@@ -850,6 +859,7 @@ def build_validation_source_candidate_table(
         "Example URL",
         "Example Type",
         "Example Snippet",
+        PRIMARY_ARTICLE_TEXT,
         "Source Group IDs",
     ]
     existing = [c for c in display_cols if c in renamed.columns]
@@ -903,6 +913,7 @@ def build_source_candidate_table_from_candidates(
         "Example URL",
         "Example Type",
         "Example Snippet",
+        PRIMARY_ARTICLE_TEXT,
         "Source Group IDs",
     ]
     existing = [c for c in display_cols if c in candidate_working.columns]
@@ -960,6 +971,8 @@ def rotate_saved_story_source(
     for col in ["Headline", "Example Outlet", "Example URL", "Example Type", "Example Snippet", "Date"]:
         if col in working.columns and col in next_candidate.index:
             working.at[row_idx, col] = next_candidate.get(col, working.at[row_idx, col])
+    if PRIMARY_ARTICLE_TEXT in next_candidate.index or PRIMARY_ARTICLE_TEXT in working.columns:
+        working.at[row_idx, PRIMARY_ARTICLE_TEXT] = primary_article_text(next_candidate)
 
     for generated_col in ["Chart Callout", "Top Story Summary", "Entity Sentiment Label", "Entity Sentiment Rationale", "Entity Sentiment"]:
         if generated_col in working.columns:
@@ -1019,6 +1032,8 @@ def rotate_saved_story_source_from_candidates(
     for col in ["Example Outlet", "Example URL", "Example Type", "Example Snippet", "Date"]:
         if col in working.columns and col in next_candidate.index:
             working.at[row_idx, col] = next_candidate.get(col, working.at[row_idx, col])
+    if PRIMARY_ARTICLE_TEXT in next_candidate.index or PRIMARY_ARTICLE_TEXT in working.columns:
+        working.at[row_idx, PRIMARY_ARTICLE_TEXT] = primary_article_text(next_candidate)
 
     for generated_col in ["Chart Callout", "Top Story Summary", "Entity Sentiment Label", "Entity Sentiment Rationale", "Entity Sentiment"]:
         if generated_col in working.columns:

@@ -10,11 +10,19 @@ from openai import OpenAI
 
 from processing.coverage_flags import has_coverage_flag
 from processing.prominence import get_prominence_weight_series
+from processing.insights_evidence import (
+    ARTICLE_REFERENCE_GUIDANCE,
+    PRIMARY_STORY_LIMIT,
+    distinct_ranked_stories,
+    primary_article_text,
+    request_insights_response,
+    share_primary_articles,
+)
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
 DEFAULT_OUTLET_SUMMARY_MODEL = "gpt-6.1-terra"
-DEFAULT_OUTLET_PRIMARY_EXAMPLE_LIMIT = 10
+DEFAULT_OUTLET_PRIMARY_EXAMPLE_LIMIT = PRIMARY_STORY_LIMIT
 DEFAULT_OUTLET_SUPPORTING_EVIDENCE_LIMIT = 40
 
 
@@ -231,9 +239,11 @@ def _build_outlet_story_rows(df: pd.DataFrame) -> pd.DataFrame:
             "Type": rep.get("Type", ""),
             "Representative URL": rep.get("URL", ""),
             "Representative Snippet": rep.get("Snippet", ""),
+            "Representative Article Text": primary_article_text(rep),
             "Representative Flag": rep.get("Coverage Flags", ""),
             "Prime Example Story": int(rep.get("Prime Example", 0) or 0),
             "Story Mentions": int(pd.to_numeric(group["Mentions"], errors="coerce").fillna(0).sum()),
+            "Syndicated Pickups": len(group) - 1,
             "Story Impressions": int(pd.to_numeric(group["Impressions"], errors="coerce").fillna(0).sum()),
             "Story Effective Reach": int(pd.to_numeric(group["Effective Reach"], errors="coerce").fillna(0).sum()),
         }
@@ -305,6 +315,8 @@ def build_outlet_headline_table(
     outlet_name: str,
     limit: int = 5,
     selected_prominence_column: str = "",
+    *,
+    include_article_text: bool = False,
 ) -> pd.DataFrame:
     if story_level_df.empty:
         return pd.DataFrame()
@@ -332,6 +344,8 @@ def build_outlet_headline_table(
         "Representative URL",
         "Representative Snippet",
     ]
+    if include_article_text:
+        display_cols.extend(["Group ID", "Representative Article Text", "Syndicated Pickups"])
     return outlet_rows[[c for c in display_cols if c in outlet_rows.columns]].copy()
 
 
@@ -348,14 +362,10 @@ def build_outlet_prompt_payload(
         headline_df,
         selected_prominence_column=selected_prominence_column,
     )
-    ranked = (
-        working.sort_values(
-            ["_prompt_story_score", "Story Mentions", "Story Impressions", "Story Effective Reach"],
-            ascending=[False, False, False, False],
-        )
-        .drop_duplicates(subset=["Headline"], keep="first")
-        .copy()
-    )
+    ranked = distinct_ranked_stories(working.sort_values(
+        ["_prompt_story_score", "Story Mentions", "Story Impressions", "Story Effective Reach"],
+        ascending=[False, False, False, False],
+    ))
 
     primary_df = ranked.head(primary_limit).copy()
     supporting_df = ranked.iloc[primary_limit:].head(supporting_limit).copy()
@@ -364,6 +374,7 @@ def build_outlet_prompt_payload(
     for _, row in primary_df.iterrows():
         primary_examples.append(
             {
+                "group_id": row.get("Group ID", ""),
                 "headline": row.get("Headline", ""),
                 "date": str(row.get("Date", "") or ""),
                 "author": row.get("Author", ""),
@@ -371,8 +382,12 @@ def build_outlet_prompt_payload(
                 "mentions": int(row.get("Story Mentions", 0) or 0),
                 "impressions": int(row.get("Story Impressions", 0) or 0),
                 "effective_reach": int(row.get("Story Effective Reach", 0) or 0),
+                "syndicated_pickups": int(row.get("Syndicated Pickups", 0) or 0),
                 "url": row.get("Representative URL", ""),
-                "snippet": _truncate_text(row.get("Representative Snippet", ""), 320),
+                "snippet": primary_article_text({
+                    "Full Text": row.get("Representative Article Text"),
+                    "Snippet": row.get("Representative Snippet"),
+                }),
             }
         )
 
@@ -775,8 +790,10 @@ Total mentions: {int(outlet_row.get("Mention_Total", 0) or 0)}
 Unique mentions: {int(outlet_row.get("Unique_Mentions", 0) or 0)}
 Impressions: {int(outlet_row.get("Impressions", 0) or 0)}
 
+{ARTICLE_REFERENCE_GUIDANCE}
+
 Representative stories:
-{json.dumps(prompt_payload, ensure_ascii=True)}
+{json.dumps(share_primary_articles(prompt_payload, "primary_examples"), ensure_ascii=True)}
 """.strip()
 
 
@@ -802,7 +819,8 @@ def generate_outlet_summary(
     )
     client = OpenAI(api_key=api_key)
 
-    response = client.responses.create(
+    response = request_insights_response(
+        client,
         model=model,
         input=[
             {"role": "system", "content": "You write concise, neutral media-intelligence summaries."},

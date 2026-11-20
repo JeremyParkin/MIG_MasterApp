@@ -10,6 +10,14 @@ from openai import OpenAI
 
 from processing.prominence import get_prominence_weight_series
 from processing.sentiment_config import build_tolerant_regex_str, get_sentiment_labels, normalize_sentiment_type
+from processing.insights_evidence import (
+    ARTICLE_REFERENCE_GUIDANCE,
+    PRIMARY_STORY_LIMIT,
+    distinct_ranked_stories,
+    primary_article_text,
+    request_insights_response,
+    share_primary_articles,
+)
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
@@ -17,7 +25,7 @@ DEFAULT_SENTIMENT_MODEL = "gpt-6-luna"
 DEFAULT_SENTIMENT_OBSERVATION_MODEL = "gpt-6.1-terra"
 DEFAULT_SENTIMENT_BATCH_SIZE = 50
 DEFAULT_SENTIMENT_MAX_WORKERS = 8
-DEFAULT_SENTIMENT_PRIMARY_EXAMPLE_LIMIT = 10
+DEFAULT_SENTIMENT_PRIMARY_EXAMPLE_LIMIT = PRIMARY_STORY_LIMIT
 DEFAULT_SENTIMENT_ALIGNED_EVIDENCE_LIMIT = 40
 FIRST_PASS_REASONING_EFFORT = "low"
 SECOND_OPINION_REASONING_EFFORT = "medium"
@@ -672,11 +680,10 @@ def build_sentiment_observation_payload(
             ("Example Outlet", "Prime Outlet"),
             ("Type", "Prime Type"),
             ("Example Type", "Prime Type"),
-            ("Snippet", "Prime Snippet"),
-            ("Example Snippet", "Prime Snippet"),
         ]:
             if source_col in grouped.columns and target_col not in grouped.columns:
                 grouped[target_col] = _get_text_series(grouped, source_col)
+        grouped["Prime Snippet"] = grouped.apply(primary_article_text, axis=1)
         keep_cols = [c for c in ["Group ID", "Prime URL", "Prime Outlet", "Prime Type", "Prime Snippet"] if c in grouped.columns]
         prime_lookup = grouped[keep_cols].drop_duplicates(subset=["Group ID"], keep="first").copy()
 
@@ -699,10 +706,18 @@ def build_sentiment_observation_payload(
     if "Prime Type" in working.columns:
         working["Display Type"] = working["Display Type"].where(working["Display Type"] != "", _get_text_series(working, "Prime Type"))
 
-    working["Display Snippet"] = _get_text_series(working, "Example Snippet") if "Example Snippet" in working.columns else ""
-    working["Display Snippet"] = working["Display Snippet"].where(working["Display Snippet"] != "", _get_text_series(working, "Snippet") if "Snippet" in working.columns else "")
+    working["Display Snippet"] = working.apply(primary_article_text, axis=1, prefer_example=True)
     if "Prime Snippet" in working.columns:
-        working["Display Snippet"] = working["Display Snippet"].where(working["Display Snippet"] != "", _get_text_series(working, "Prime Snippet"))
+        # Use the same representative only. A present example URL can identify a different article.
+        display_url = working["Display URL"]
+        prime_url = _get_text_series(working, "Prime URL")
+        matching_url = display_url.ne("") & display_url.eq(prime_url)
+        known_different = display_url.ne("") & prime_url.ne("") & ~matching_url
+        prime_body = working["Prime Snippet"].fillna("")
+        use_prime = (~known_different & working["Display Snippet"].eq("")) | (
+            matching_url & prime_body.str.len().gt(working["Display Snippet"].str.len())
+        )
+        working["Display Snippet"] = working["Display Snippet"].mask(use_prime, prime_body)
 
     working["_has_url"] = working["Display URL"].ne("")
     working["_is_online_example"] = working["Display Type"].str.upper().isin({"ONLINE", "ONLINE NEWS", "PRESS RELEASE", "BLOGS"})
@@ -726,7 +741,7 @@ def build_sentiment_observation_payload(
             ascending=[False, False, False, False, False],
         )
         examples = []
-        primary_ranked = ranked.drop_duplicates(subset=["Headline"], keep="first").head(per_sentiment_limit)
+        primary_ranked = distinct_ranked_stories(ranked).head(per_sentiment_limit)
         primary_group_ids = {str(row.get("Group ID", "") or "").strip() for _, row in primary_ranked.iterrows()}
         primary_headlines = {str(row.get("Headline", "") or "").strip() for _, row in primary_ranked.iterrows()}
 
@@ -742,7 +757,7 @@ def build_sentiment_observation_payload(
                 "impressions": int(row.get("Impressions", 0) or 0),
                 "effective_reach": int(row.get("Effective Reach", 0) or 0),
                 "group_count": int(row.get("Group Count", 0) or 0),
-                "snippet": _truncate_text(row.get("Display Snippet", ""), 420),
+                "snippet": row.get("Display Snippet", ""),
                 "sentiment_rationale": _truncate_text(row.get("Effective AI Sentiment Rationale", ""), 220),
             })
         examples_by_sentiment[str(sentiment)] = examples
@@ -823,8 +838,10 @@ Requirements:
 
 Sentiment mode: {sentiment_type}
 
+{ARTICLE_REFERENCE_GUIDANCE}
+
 Input data:
-{json.dumps(payload, ensure_ascii=True)}
+{json.dumps(share_primary_articles(payload, "examples_by_sentiment"), ensure_ascii=True)}
 """.strip()
 
 
@@ -884,7 +901,8 @@ def generate_sentiment_observations(
     )
 
     client = OpenAI(api_key=api_key)
-    response = client.responses.create(
+    response = request_insights_response(
+        client,
         model=model,
         input=[
             {"role": "system", "content": "You write concise, neutral media-intelligence summaries."},

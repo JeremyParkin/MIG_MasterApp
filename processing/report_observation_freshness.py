@@ -110,7 +110,7 @@ def stale_coverage_themes(state, *, author_blocks, outlet_blocks) -> list[str]:
             row = metrics.loc[metrics["Author"].eq(name)] if not metrics.empty else metrics
             if row.empty or saved.get(name) != content_fingerprint(build_author_prompt(
                 name, client, row.iloc[0],
-                build_author_headline_table(stories, name, limit=60, selected_prominence_column=prominence),
+                build_author_headline_table(stories, name, limit=60, selected_prominence_column=prominence, include_article_text=True),
                 analysis_context=context, selected_prominence_column=prominence,
             )):
                 stale.append("author coverage themes in Authors → Insights")
@@ -125,7 +125,7 @@ def stale_coverage_themes(state, *, author_blocks, outlet_blocks) -> list[str]:
             row = metrics.loc[metrics["Outlet"].eq(name)] if not metrics.empty else metrics
             if row.empty or saved.get(name) != content_fingerprint(build_outlet_prompt(
                 name, client, row.iloc[0],
-                build_outlet_headline_table(stories, name, limit=60, selected_prominence_column=prominence),
+                build_outlet_headline_table(stories, name, limit=60, selected_prominence_column=prominence, include_article_text=True),
                 build_outlet_top_authors(raw, name, limit=5, outlet_rollup_map=rollup),
                 analysis_context=context, selected_prominence_column=prominence,
             )):

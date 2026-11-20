@@ -1283,6 +1283,7 @@ def render_outlets_page() -> None:
                             get_story_rows(),
                             outlet_name,
                             limit=60,
+                            include_article_text=True,
                             selected_prominence_column=prominence,
                         )
                         author_df = build_outlet_top_authors(

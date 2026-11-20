@@ -10,6 +10,14 @@ import pandas as pd
 from openai import OpenAI
 
 from processing.prominence import get_prominence_weight_series
+from processing.insights_evidence import (
+    ARTICLE_REFERENCE_GUIDANCE,
+    PRIMARY_STORY_LIMIT,
+    distinct_ranked_stories,
+    primary_article_text,
+    request_insights_response,
+    share_primary_articles,
+)
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
@@ -27,7 +35,7 @@ DEFAULT_TAGGING_MAX_WORKERS = 8
 DEFAULT_TAGGING_BATCH_SIZE = 50
 DEFAULT_TAGGING_REVIEW_BATCH_SIZE = 50
 DEFAULT_TAGGING_REVIEW_CONFIDENCE_THRESHOLD = 65
-DEFAULT_TAGGING_PRIMARY_EXAMPLE_LIMIT = 10
+DEFAULT_TAGGING_PRIMARY_EXAMPLE_LIMIT = PRIMARY_STORY_LIMIT
 DEFAULT_TAGGING_ALIGNED_EVIDENCE_LIMIT = 40
 MAX_RETRIES = 2
 RESERVED_OTHER_TAG = "Other"
@@ -693,7 +701,7 @@ def build_tag_observation_payload(
         return {"distribution": [], "examples_by_tag": {}}
 
     working = df_tagging_unique.copy()
-    for col in ["Headline", "Snippet", "URL", "Outlet", "Type", "Assigned Tag"]:
+    for col in ["Headline", "URL", "Outlet", "Type", "Assigned Tag"]:
         if col not in working.columns:
             working[col] = ""
         working[col] = working[col].fillna("").astype(str).str.strip()
@@ -760,7 +768,7 @@ def build_tag_observation_payload(
             ascending=[False, False, False, False, False],
         )
         examples = []
-        primary_ranked = ranked.drop_duplicates(subset=["Headline"], keep="first").head(per_tag_limit)
+        primary_ranked = distinct_ranked_stories(ranked.loc[ranked["Headline"].ne("")]).head(per_tag_limit)
         primary_group_ids = {str(row.get("Group ID", "") or "").strip() for _, row in primary_ranked.iterrows()}
         primary_headlines = {str(row.get("Headline", "") or "").strip() for _, row in primary_ranked.iterrows()}
 
@@ -780,7 +788,7 @@ def build_tag_observation_payload(
                     "impressions": int(row.get("Impressions", 0) or 0),
                     "effective_reach": int(row.get("Effective Reach", 0) or 0),
                     "group_count": int(row.get("Group Count", 0) or 0),
-                    "snippet": _truncate_text(row.get("Snippet", ""), 420),
+                    "snippet": primary_article_text(row),
                     "tag_rationale": _truncate_text(row.get("Effective AI Tag Rationale", ""), 220),
                 }
             )
@@ -860,8 +868,10 @@ Requirements:
 - {"Exclude Other from the narrative unless it appears in the provided data." if not include_other else "Include Other only if it appears meaningfully in the provided examples."}
 - Use only tag labels present in the provided data.
 
+{ARTICLE_REFERENCE_GUIDANCE}
+
 Input data:
-{json.dumps(payload, ensure_ascii=True)}
+{json.dumps(share_primary_articles(payload, "examples_by_tag"), ensure_ascii=True)}
 """.strip()
 
 
@@ -916,7 +926,8 @@ def generate_tag_observations(
     )
 
     client = OpenAI(api_key=api_key)
-    response = client.responses.create(
+    response = request_insights_response(
+        client,
         model=model,
         input=[
             {"role": "system", "content": "You write concise, neutral media-intelligence summaries."},

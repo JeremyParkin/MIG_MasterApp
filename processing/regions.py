@@ -10,6 +10,16 @@ from openai import OpenAI
 from processing.prominence import get_prominence_weight_series
 from processing.top_stories import consolidate_top_story_candidates, parse_source_group_ids
 from processing.coverage_flags import has_effective_coverage_flag
+from processing.insights_evidence import (
+    ARTICLE_REFERENCE_GUIDANCE,
+    PRIMARY_ARTICLE_TEXT,
+    PRIMARY_STORY_LIMIT,
+    primary_article_text,
+    ranked_story_keys,
+    request_insights_response,
+    share_primary_articles,
+    story_identity,
+)
 from utils.api_meter import add_api_usage, extract_usage_tokens
 
 
@@ -20,7 +30,7 @@ METRIC_FIELD_MAP = {
 }
 
 DEFAULT_REGIONS_OBSERVATION_MODEL = "gpt-6.1-terra"
-DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT = 10
+DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT = PRIMARY_STORY_LIMIT
 DEFAULT_REGIONS_SUPPORTING_EVIDENCE_LIMIT = 40
 REGIONS_DEFAULT_EXCLUDED_FLAGS = [
     "Press Release",
@@ -39,6 +49,7 @@ REGIONS_REQUIRED_COLUMNS = [
     "Outlet",
     "Headline",
     "Snippet",
+    PRIMARY_ARTICLE_TEXT,
     "Media Type",
     "Coverage Flags",
     "Country",
@@ -111,6 +122,7 @@ def build_regions_source_df(
     working["Outlet"] = working["Source Outlet"].map(lambda value: outlet_map.get(value, value))
     media_type_source = "Type" if "Type" in working.columns else "Media Type"
     working["Media Type"] = _normalize_text_column(working.get(media_type_source, pd.Series(index=working.index, dtype="object")))
+    working[PRIMARY_ARTICLE_TEXT] = working.apply(primary_article_text, axis=1)
     for col in ["Headline", "Snippet", "Coverage Flags", "Country", "Prov/State", "City", "URL"]:
         working[col] = _normalize_text_column(working.get(col, pd.Series(index=working.index, dtype="object")))
 
@@ -445,6 +457,7 @@ def _build_region_story_candidates(working: pd.DataFrame) -> pd.DataFrame:
             "Example URL": best_row.get("URL", ""),
             "Example Type": best_row.get("Media Type", ""),
             "Example Snippet": best_row.get("Snippet", ""),
+            PRIMARY_ARTICLE_TEXT: primary_article_text(best_row),
             "Source Group IDs": group_id_str,
         }
         for col in prominence_cols:
@@ -586,9 +599,16 @@ def build_region_profile_context(
         limit=DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT + DEFAULT_REGIONS_SUPPORTING_EVIDENCE_LIMIT,
         selected_prominence_column=selected_prominence_column,
     )
-    top_stories = top_story_context[:DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT]
+    top_stories = []
+    for item in top_story_context[:DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT]:
+        story = item.copy()
+        story["Snippet"] = story.pop(PRIMARY_ARTICLE_TEXT)
+        story.pop("Example Snippet", None)
+        top_stories.append(story)
     supporting_story_evidence = [
         {
+            "Group ID": item.get("Group ID", ""),
+            "Source Group IDs": item.get("Source Group IDs", ""),
             "Headline": item.get("Headline", ""),
             "Date": item.get("Date", ""),
             "Mentions": int(item.get("Mentions", 0) or 0),
@@ -673,27 +693,36 @@ def _build_representative_rows_context(
     filtered_df: pd.DataFrame,
     level: str,
     region_name: str,
-    limit: int = DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT + DEFAULT_REGIONS_SUPPORTING_EVIDENCE_LIMIT,
+    *,
+    region_profile: dict[str, Any],
     selected_prominence_column: str = "",
 ) -> dict[str, list[dict[str, Any]]]:
-    rows_df = build_region_example_rows(
+    working = build_region_example_rows(
         filtered_df,
         level,
         region_name,
-        limit=limit,
+        limit=None,
         selected_prominence_column=selected_prominence_column,
+        include_story_context=True,
     )
-    if rows_df.empty:
+    if working.empty:
         return {"primary_examples": [], "supporting_evidence": []}
-    working = rows_df.copy()
+
+    group_aliases = {
+        source_id: story["Group ID"]
+        for story in region_profile["top_stories"] + region_profile["supporting_story_evidence"]
+        for source_id in parse_source_group_ids(story.get("Source Group IDs", ""), story["Group ID"])
+    }
+    working["Source Group ID"] = working["Group ID"]
+    working["Group ID"] = working["Group ID"].map(lambda group: group_aliases.get(str(group).strip(), group))
     for col in ["Mentions", "Impressions", "Effective Reach"]:
-        if col in working.columns:
-            working[col] = working[col].fillna(0).astype(int)
+        working[col] = working[col].fillna(0).astype(int)
+    primary = working.loc[~ranked_story_keys(working).duplicated()].head(DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT)
+    # Remaining ranked rows still show outlet pickups, including additional rows of a primary group.
+    supporting = working.drop(index=primary.index).head(DEFAULT_REGIONS_SUPPORTING_EVIDENCE_LIMIT)
     return {
-        "primary_examples": working.head(DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT).to_dict(orient="records"),
-        "supporting_evidence": working.iloc[
-            DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT : DEFAULT_REGIONS_PRIMARY_EXAMPLE_LIMIT + DEFAULT_REGIONS_SUPPORTING_EVIDENCE_LIMIT
-        ].to_dict(orient="records"),
+        "primary_examples": primary.to_dict(orient="records"),
+        "supporting_evidence": supporting.to_dict(orient="records"),
     }
 
 
@@ -833,6 +862,20 @@ def generate_region_profile_observation(
         "required": ["blurb"],
     }
 
+    profile_payload = share_primary_articles(
+        region_profile, "top_stories", group_field="Group ID", headline_field="Headline", body_field="Snippet",
+    )
+    covered_ids = {story_id for story_id, body in profile_payload["articles_by_id"].items() if body}
+    rows_payload = {}
+    for label, rows in representative_rows.items():
+        rows_payload[label] = []
+        for row in rows:
+            story_id = story_identity(row.get("Group ID"), row.get("Headline", ""))
+            pickup = {key: value for key, value in row.items() if key not in ("Snippet", "Example Snippet", PRIMARY_ARTICLE_TEXT)}
+            pickup["story_id"] = story_id
+            if story_id in covered_ids:
+                pickup["article_ref"] = story_id
+            rows_payload[label].append(pickup)
     prompt = (
         "Write one concise regional profile blurb for reporting use.\n\n"
         f"Client: {client_name or '[not provided]'}\n"
@@ -852,19 +895,23 @@ def generate_region_profile_observation(
         "- If the top story appears only once, treat it as one example rather than a dominant driver.\n"
         "- Do not overstate trend, momentum, or audience intent.\n"
         "- If the evidence is mixed, say the coverage is mixed, varied, or distributed.\n"
-        "- Use top_stories and representative_rows.primary_examples to anchor the clearest themes.\n"
-        "- Use supporting_story_evidence and representative_rows.supporting_evidence to judge whether those themes recur more broadly.\n\n"
+        "- Use top_stories to anchor themes and representative_rows to corroborate their pickup patterns.\n"
+        "- Use supporting_story_evidence and representative_rows.supporting_evidence to judge whether those themes recur more broadly.\n"
+        "- Group ID links pickup rows to their grouped story. Source Group ID identifies the original group.\n"
+        "- A pickup has an article_ref only when its group has a full body. Otherwise use the row as metadata evidence.\n"
+        f"- {ARTICLE_REFERENCE_GUIDANCE}\n\n"
         "Style:\n"
         "- One compact paragraph.\n"
         "- Specific, analyst-facing, and report-ready.\n"
         "- Do not just paraphrase the ranking table.\n\n"
         f"Level context:\n{json.dumps(level_payload, ensure_ascii=False, indent=2)}\n\n"
-        f"Region profile context:\n{json.dumps(region_profile, ensure_ascii=False, indent=2)}\n\n"
-        f"Representative rows:\n{json.dumps(representative_rows, ensure_ascii=False, indent=2)}"
+        f"Region profile context:\n{json.dumps(profile_payload, ensure_ascii=False, indent=2)}\n\n"
+        f"Representative rows:\n{json.dumps(rows_payload, ensure_ascii=False, indent=2)}"
     )
 
     client = OpenAI(api_key=api_key)
-    response = client.responses.create(
+    response = request_insights_response(
+        client,
         model=model,
         input=[
             {
@@ -948,6 +995,7 @@ def generate_regions_level_output(
             filtered_df,
             level_key,
             str(region_name),
+            region_profile=region_profile,
             selected_prominence_column=selected_prominence_column,
         )
         blurb, in_tok, out_tok = generate_region_profile_observation(
@@ -1006,8 +1054,10 @@ def build_region_example_rows(
     df: pd.DataFrame,
     level: str,
     region_name: str,
-    limit: int = 5,
+    limit: int | None = 5,
     selected_prominence_column: str = "",
+    *,
+    include_story_context: bool = False,
 ) -> pd.DataFrame:
     if df is None or df.empty or not str(region_name or "").strip():
         return pd.DataFrame(columns=["Outlet", "Headline", "Country", "Prov/State", "City", "Mentions", "Impressions", "Effective Reach"])
@@ -1041,17 +1091,19 @@ def build_region_example_rows(
         + working["_is_online"].astype(float) * 0.35
     )
 
+    columns = ["Outlet", "Headline", "Country", "Prov/State", "City", "Mentions", "Impressions", "Effective Reach"]
+    if include_story_context:
+        columns.extend(["Group ID", "URL", "Media Type"])
+
     ranked = (
         working.sort_values(
             ["_row_context_score", "Mentions", "Impressions", "Effective Reach", "Date"],
             ascending=[False, False, False, False, False],
             na_position="last",
         )
-        .loc[:, ["Outlet", "Headline", "Country", "Prov/State", "City", "Mentions", "Impressions", "Effective Reach"]]
-        .head(limit)
-        .reset_index(drop=True)
+        .loc[:, columns]
     )
-    return ranked
+    return ranked.iloc[:limit].reset_index(drop=True)
 
 
 def build_region_story_group_examples(

@@ -399,7 +399,7 @@ def render_top_stories_selection() -> None:
                     )
                     st.session_state.added_df = save_selected_rows(
                         updated_data_custom,
-                        df_to_display,
+                        st.session_state.df_grouped,
                         st.session_state.added_df,
                     )
     

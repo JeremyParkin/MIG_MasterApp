@@ -149,7 +149,7 @@ def render_regions_page() -> None:
         qualitative_flags = tuple(get_qualitative_coverage_flag_exclusions(st.session_state))
         cache_key = (
             "regions_source_cache",
-            3,
+            4,
             len(df_traditional),
             tuple(df_traditional.columns.tolist()),
             tuple(sorted((str(k), str(v)) for k, v in outlet_map.items())),
