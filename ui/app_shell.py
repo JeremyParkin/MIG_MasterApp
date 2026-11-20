@@ -3,6 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from utils.api_meter import init_api_meter, get_api_cost_usd
+from utils.deployment import rapid_labeling_enabled
 from ui.page_help import render_sidebar_page_help
 
 
@@ -102,7 +103,7 @@ def standard_sidebar(target=None, *, key_suffix: str = "default") -> None:
 # ----------------------------
 def build_pages() -> list:
     """Return list of Streamlit pages."""
-    return [
+    pages = [
         st.Page("pages/1-Getting_Started.py", title="Getting Started", icon=":material/play_arrow:"),
         st.Page("pages/2-Basic_Cleaning.py", title="Basic Cleaning", icon=":material/mop:"),
         st.Page("pages/Analysis_Context.py", title="Analysis Context", icon=":material/tune:"),
@@ -113,7 +114,10 @@ def build_pages() -> list:
         st.Page("pages/7-Regions.py", title="Regions", icon=":material/public:"),
         st.Page("pages/Sentiment.py", title="Sentiment", icon=":material/auto_awesome:"),
         st.Page("pages/8-Tagging.py", title="Tagging", icon=":material/sell:"),
-        st.Page("pages/Jev_Sentiment_Experimental.py", title="Rapid Labeling", icon=":material/experiment:", url_path="Rapid_Labeling"),
+    ]
+    if rapid_labeling_enabled():
+        pages.append(st.Page("pages/Jev_Sentiment_Experimental.py", title="Rapid Labeling", icon=":material/experiment:", url_path="Rapid_Labeling"))
+    return pages + [
         st.Page("pages/11-Download.py", title="Download", icon=":material/download:"),
         st.Page("pages/12-Save_Load.py", title="Save & Load", icon=":material/save:"),
     ]

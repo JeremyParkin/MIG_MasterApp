@@ -120,6 +120,7 @@ from processing.spot_checks import (
 from ui.page_help import set_page_help_context
 from ui.insight_blocks import build_linked_example_blocks_html
 from utils.api_meter import apply_usage_to_session
+from utils.deployment import rapid_labeling_enabled
 
 warnings.filterwarnings("ignore")
 
@@ -760,6 +761,9 @@ def _clear_rapid_human_review(
     out.loc[mask, columns] = pd.NA
     return out
 
+
+if not rapid_labeling_enabled():
+    st.stop()
 
 st.title("Rapid Labeling")
 st.caption("Quickly apply structured sentiment and tagging labels to grouped stories.")

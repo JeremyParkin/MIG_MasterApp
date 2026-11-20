@@ -55,6 +55,7 @@ from utils.session_timing import (
     format_session_started,
     get_current_session_duration_seconds,
 )
+from utils.deployment import rapid_labeling_enabled
 from utils.time_display import format_local_timestamp
 
 
@@ -246,6 +247,13 @@ def add_mapped_outlet_column(df: pd.DataFrame, outlet_rollup_map: dict[str, str]
     return out
 
 
+def _omit_disabled_rapid_columns(df: pd.DataFrame) -> pd.DataFrame:
+    return df.drop(columns=[
+        column for column in df.columns
+        if str(column).startswith(("Jev ", "Rapid ", "Final Rapid ", "Effective Rapid "))
+    ])
+
+
 def remove_inactive_workflow_columns(
     df: pd.DataFrame,
     session_state,
@@ -295,6 +303,9 @@ def remove_inactive_workflow_columns(
             out = out.drop(columns=tagging_detail_cols + binary_tag_cols, errors="ignore")
     else:
         out = out.drop(columns=tagging_keep_cols + tagging_detail_cols + binary_tag_cols, errors="ignore")
+
+    if not rapid_labeling_enabled():
+        return _omit_disabled_rapid_columns(out)
 
     rapid_all_cols = _rapid_clean_export_column_names(session_state, include_audit=True)
     rapid_audit_cols = [
@@ -751,6 +762,8 @@ def sentiment_processed_complete_enough(session_state) -> bool:
 
 
 def jev_sentiment_processed_complete_enough(session_state) -> bool:
+    if not rapid_labeling_enabled():
+        return False
     df_unique = session_state.get("df_jev_sentiment_unique", pd.DataFrame())
     if not isinstance(df_unique, pd.DataFrame) or df_unique.empty:
         return False
@@ -1378,7 +1391,7 @@ def build_export_metadata_sheet(
         sent_processed_groups = int((has_ai | has_assigned).sum())
 
     jev_processed_groups = 0
-    if isinstance(jev_unique, pd.DataFrame) and not jev_unique.empty:
+    if rapid_labeling_enabled() and isinstance(jev_unique, pd.DataFrame) and not jev_unique.empty:
         jev_cols = _jev_result_columns(jev_unique)
         if jev_cols:
             jev_processed_groups = int(_jev_output_mask(jev_unique, jev_cols).sum())
@@ -1454,15 +1467,18 @@ def build_export_metadata_sheet(
         ("Sentiment Sample Sheet", sentiment_sample_sheet),
         ("Sentiment Exported Rows", sentiment_sample_rows),
 
-        ("Rapid Labeling Run", "Yes" if jev_sentiment_processed_complete_enough(session_state) else "No"),
-        ("Rapid Labeling Processed Groups", jev_processed_groups),
-        ("Rapid Labeling Sample Sheet", RAPID_LABELING_SAMPLE_SHEET_NAME if rapid_sample_rows else "No"),
-        ("Rapid Labeling Sampled Article Rows", rapid_sample_rows),
-        ("Rapid Labeling Grouped Usage Records", rapid_grouped_result_rows),
-        ("Rapid Labeling Input Tokens", int(rapid_input_tokens)),
-        ("Rapid Labeling Cost USD", float(rapid_cost_usd)),
-        ("Rapid Labeling Usage/Cost Basis", "Internal grouped records (one per Group ID)" if rapid_grouped_result_rows else "No"),
     ]
+    if rapid_labeling_enabled():
+        rows.extend([
+            ("Rapid Labeling Run", "Yes" if jev_sentiment_processed_complete_enough(session_state) else "No"),
+            ("Rapid Labeling Processed Groups", jev_processed_groups),
+            ("Rapid Labeling Sample Sheet", RAPID_LABELING_SAMPLE_SHEET_NAME if rapid_sample_rows else "No"),
+            ("Rapid Labeling Sampled Article Rows", rapid_sample_rows),
+            ("Rapid Labeling Grouped Usage Records", rapid_grouped_result_rows),
+            ("Rapid Labeling Input Tokens", int(rapid_input_tokens)),
+            ("Rapid Labeling Cost USD", float(rapid_cost_usd)),
+            ("Rapid Labeling Usage/Cost Basis", "Internal grouped records (one per Group ID)" if rapid_grouped_result_rows else "No"),
+        ])
 
     if not excluded_counts_df.empty:
         rows.append(("", ""))
@@ -1886,6 +1902,8 @@ def _iter_sentiment_report_sections(session_state) -> tuple[str, list[dict[str, 
 
 
 def _iter_rapid_sentiment_report_sections(session_state) -> tuple[str, list[dict[str, Any]]]:
+    if not rapid_labeling_enabled():
+        return "", []
     return _iter_observation_report_sections(
         session_state.get("rapid_sentiment_observation_output", {}) or {},
         sections_key="sentiment_sections",
@@ -1962,6 +1980,8 @@ def _iter_tag_report_sections(session_state) -> tuple[str, list[dict[str, Any]]]
 
 
 def _iter_rapid_tag_report_sections(session_state) -> tuple[str, list[dict[str, Any]]]:
+    if not rapid_labeling_enabled():
+        return "", []
     return _iter_observation_report_sections(
         session_state.get("rapid_tag_observation_output", {}) or {},
         sections_key="tag_sections",
@@ -2228,6 +2248,8 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
 
         # SHARED SAMPLED AI RESULTS
         if not shared_sample_export.empty:
+            if not rapid_labeling_enabled():
+                shared_sample_export = _omit_disabled_rapid_columns(shared_sample_export)
             shared_sample_export.to_excel(writer, sheet_name="SAMPLED AI RESULTS", header=True, index=False)
             ws = writer.sheets["SAMPLED AI RESULTS"]
             ws.set_tab_color("#7f8c8d")
@@ -2240,6 +2262,8 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
                 original_ave_col=original_ave_col,
             )
             if not tagging_export.empty:
+                if not rapid_labeling_enabled():
+                    tagging_export = _omit_disabled_rapid_columns(tagging_export)
                 tagging_export.to_excel(writer, sheet_name="TAGGING SAMPLE", header=True, index=False)
                 ws = writer.sheets["TAGGING SAMPLE"]
                 ws.set_tab_color("#7f8c8d")
@@ -2252,6 +2276,8 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
                 original_ave_col=original_ave_col,
             )
             if not sentiment_export.empty:
+                if not rapid_labeling_enabled():
+                    sentiment_export = _omit_disabled_rapid_columns(sentiment_export)
                 sentiment_export.to_excel(writer, sheet_name="SENTIMENT SAMPLE", header=True, index=False)
                 ws = writer.sheets["SENTIMENT SAMPLE"]
                 ws.set_tab_color("#7f8c8d")
