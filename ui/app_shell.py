@@ -86,7 +86,7 @@ def standard_sidebar(target=None, *, key_suffix: str = "default") -> None:
             """
             <div class="sidebar-app-meta">
               <div class="sidebar-app-title">MIG Master App</div>
-              <div class="sidebar-app-subtle">Version: October 2026 · <a href="https://forms.office.com/Pages/ResponsePage.aspx?id=GvcJkLbBVUumZQrrWC6V07d2jCu79C5FsfEZJPZEfZxUNVlIVDRNNVBQVEgxQVFXNEM5VldUMkpXNS4u" target="_blank">Feedback</a></div>
+              <div class="sidebar-app-subtle">Version: November 2026 · <a href="https://forms.office.com/Pages/ResponsePage.aspx?id=GvcJkLbBVUumZQrrWC6V07d2jCu79C5FsfEZJPZEfZxUNVlIVDRNNVBQVEgxQVFXNEM5VldUMkpXNS4u" target="_blank">Feedback</a></div>
             </div>
             """,
             unsafe_allow_html=True,
