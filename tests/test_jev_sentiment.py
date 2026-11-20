@@ -181,7 +181,18 @@ class JevSentimentTests(unittest.TestCase):
         self.assertEqual(payload["state"]["entity_context"]["primary_entity"], "College Board")
         self.assertIn("AP", payload["state"]["entity_context"]["products_subbrands_programs"])
         self.assertEqual(payload["state"]["story"]["headline"], "Students recognized by College Board")
-        self.assertIn("directly mentioned", payload["state"]["sentiment_rules"]["direct_mention_scope"])
+        self.assertIn("genuine mention", payload["state"]["sentiment_rules"]["scope"])
+        self.assertIn("refers to something else", payload["state"]["sentiment_rules"]["scope"])
+        self.assertIn("passing factual mention", payload["state"]["sentiment_rules"]["neutral"])
+        self.assertIn("Negative subject matter", payload["state"]["sentiment_rules"]["neutral"])
+        self.assertEqual(
+            payload["state"]["analysis_guidance"]["shared_guidance"],
+            self.analysis_payload["general_guidance"],
+        )
+        self.assertEqual(
+            payload["state"]["analysis_guidance"]["sentiment_specific_guidance"],
+            self.analysis_payload["sentiment_guidance"],
+        )
         self.assertIn(
             "high-priority",
             payload["state"]["analysis_guidance"]["sentiment_specific_guidance_priority"].lower(),
@@ -253,11 +264,16 @@ class JevSentimentTests(unittest.TestCase):
     def test_jev_state_clarifies_configured_products_are_relevant_without_parent_name(self) -> None:
         payload = build_jev_combined_sentiment_payload(self.row, self.analysis_payload)
 
-        rules = payload["state"]["sentiment_rules"]
-
-        self.assertIn("parent organization does not need to be explicitly named", rules["configured_member_scope"])
-        self.assertIn("configured alias, spokesperson", rules["configured_member_scope"])
-        self.assertIn("product, sub-brand, or program is in scope", rules["configured_member_scope"])
+        state = payload["state"]
+        entity = state["entity_context"]
+        definition = entity["collective_entity_definition"]
+        self.assertIn("without naming the parent", state["sentiment_rules"]["scope"])
+        self.assertIn("aliases or alternate names", definition)
+        self.assertIn("named spokespeople when acting on behalf of the entity", definition)
+        self.assertTrue(any("products, sub-brands, or programs" in member for member in definition))
+        self.assertEqual(entity["aliases"], self.analysis_payload["alternate_names"])
+        self.assertEqual(entity["spokespeople"], self.analysis_payload["spokespeople"])
+        self.assertEqual(entity["products_subbrands_programs"], self.analysis_payload["products"])
 
     def test_five_way_response_parsing_extracts_all_probabilities(self) -> None:
         response = {

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import time
 import warnings
 import html
@@ -10,7 +9,6 @@ import pandas as pd
 import streamlit as st
 
 from processing.analysis_context import (
-    apply_session_coverage_flag_policy,
     build_analysis_context_text,
     build_analysis_context_caption,
     build_analysis_context_required_message,
@@ -21,13 +19,19 @@ from processing.analysis_context import (
     has_saved_analysis_context,
 )
 from processing.ai_sentiment import ensure_ai_sentiment_columns
+from processing.rapid_sampling import (
+    ensure_scoped_rapid_primes,
+    rapid_sample_matches_scope,
+    rapid_scope_signature,
+    scoped_rapid_reuse_rows,
+    scoped_rapid_source_rows,
+)
 from processing.jev_sentiment import (
     DEFAULT_JEV_MAX_WORKERS,
     DEFAULT_JEV_MODEL,
     DEFAULT_JEV_TAGGING_MODE,
     JEV_3WAY_SENTIMENT_ORDER,
     JEV_5WAY_SENTIMENT_ORDER,
-    JEV_COMBINED_SCHEMES,
     JEV_TAGGING_MODES,
     build_jev_tag_color_scale,
     build_jev_all_applicable_tag_distribution,
@@ -54,10 +58,12 @@ from processing.rapid_second_opinion import (
     RAPID_REVIEW_MAX_WORKERS,
     RAPID_REVIEW_MODEL,
     build_rapid_review_candidates,
-    clear_rapid_review_columns,
+    RAPID_REVIEW_COLUMNS,
     ensure_rapid_review_columns,
     get_openai_api_key,
     normalize_first_pass_sentiment,
+    rapid_has_material_priority_flag,
+    rapid_review_impact_thresholds,
     resolve_rapid_review_batch_size,
     run_rapid_review_batch,
 )
@@ -72,6 +78,7 @@ from processing.rapid_resolution import (
     LEGACY_RAPID_TAGGING_MODE_BEST,
     RAPID_TAG_REVIEW_MODE_APPLICABLE,
     RAPID_TAG_REVIEW_MODE_BEST,
+    RAPID_HUMAN_REVIEW_COLUMNS,
     apply_rapid_sentiment_human_selection,
     apply_rapid_tag_human_selection,
     build_final_rapid_sentiment_frame,
@@ -79,8 +86,11 @@ from processing.rapid_resolution import (
     build_effective_rapid_sentiment_frame,
     build_effective_rapid_tag_frame,
     build_rapid_highlight_keywords,
+    compare_rapid_active_decision,
     ensure_rapid_human_review_columns,
     format_rapid_numeric,
+    first_pass_applicable_tags,
+    second_pass_applicable_tags,
     summarize_rapid_label_provenance,
 )
 from processing.rapid_insights import (
@@ -95,13 +105,13 @@ from processing.rapid_insights import (
     build_rapid_tag_insight_frame,
     generate_rapid_sentiment_observations,
     generate_rapid_tag_observations,
-    rapid_observation_fingerprint,
+    build_analysis_context_fingerprint,
+    rapid_observation_current_fingerprint,
     sentiment_order_for_scale,
 )
 from processing.ai_tagging import (
     RESERVED_OTHER_DEFINITION,
     RESERVED_OTHER_TAG,
-    normalize_tag_list,
     remove_reserved_tag_from_text,
 )
 from processing.sentiment_config import (
@@ -109,20 +119,24 @@ from processing.sentiment_config import (
     build_tolerant_regex_str,
     calculate_representative_sample_size,
     prepare_sentiment_datasets,
-    get_sentiment_source_rows,
 )
 from processing.spot_checks import (
     apply_translation_to_group,
     escape_markdown,
     highlight_with_tolerant_regex,
     translate_text,
+    usable_spot_translation,
 )
 from ui.page_help import set_page_help_context
 from ui.insight_blocks import build_linked_example_blocks_html
 from utils.api_meter import apply_usage_to_session
 from utils.deployment import rapid_labeling_enabled
+from utils.workbook_download import invalidate_clean_workbook
 
 warnings.filterwarnings("ignore")
+
+RAPID_BATCH_LIMIT = 500
+RAPID_FIRST_PASS_DEFAULT_BATCH_SIZE = 50
 
 
 def init_jev_sentiment_state() -> None:
@@ -172,6 +186,7 @@ def reset_jev_sentiment_state() -> None:
         "jev_tagging_mode",
         "jev_tag_config_fingerprint",
         "jev_analysis_context_fingerprint",
+        "rapid_sample_scope_signature",
         "df_jev_sentiment_rows",
         "df_jev_sentiment_grouped_rows",
         "df_jev_sentiment_unique",
@@ -192,17 +207,26 @@ def reset_jev_sentiment_state() -> None:
     st.session_state.jev_sentiment_section = "Prepare Sample"
 
 
+def clear_rapid_run_outputs() -> None:
+    for key in (
+        "__last_jev_sentiment_batch_summary__",
+        "__last_rapid_review_batch_summary__",
+        "rapid_sentiment_observation_output",
+        "rapid_sentiment_observation_fingerprint",
+        "rapid_tag_observation_output",
+        "rapid_tag_observation_fingerprint",
+    ):
+        st.session_state.pop(key, None)
+
+
 def reset_jev_results() -> None:
-    unique = st.session_state.get("df_jev_sentiment_unique", pd.DataFrame()).copy()
-    if unique.empty:
-        return
-    for column in [column for column in unique.columns if column.startswith("Jev")]:
-        if column in unique.columns:
+    unique = st.session_state.df_jev_sentiment_unique.copy()
+    for column in unique.columns:
+        if column.startswith("Jev ") or column in RAPID_REVIEW_COLUMNS or column in RAPID_HUMAN_REVIEW_COLUMNS:
             unique[column] = pd.NA
-    unique = clear_rapid_review_columns(unique)
     st.session_state.df_jev_sentiment_unique = unique
-    st.session_state.pop("__last_jev_sentiment_batch_summary__", None)
-    st.session_state.pop("__last_rapid_review_batch_summary__", None)
+    clear_rapid_run_outputs()
+    invalidate_clean_workbook(st.session_state)
 
 
 def format_sample_mode(mode: str) -> str:
@@ -215,24 +239,14 @@ def format_sample_mode(mode: str) -> str:
     }.get(mode, str(mode))
 
 
-def build_analysis_context_fingerprint(payload: dict) -> str:
-    try:
-        return json.dumps(payload or {}, ensure_ascii=False, sort_keys=True, default=str)
-    except Exception:
-        return str(payload or "")
-
-
-def metric_counts() -> tuple[int, int, int, int, int, int]:
-    source_rows = get_sentiment_source_rows(st.session_state.df_traditional)
-    excluded_flags = get_qualitative_coverage_flag_exclusions(st.session_state)
-    eligible_rows = apply_session_coverage_flag_policy(source_rows, st.session_state, excluded_flags)
+def metric_counts(eligible_count: int) -> tuple[int, int, int, int, int, int]:
     tag_definitions = st.session_state.get("jev_tag_definitions", {})
     unique = ensure_jev_sentiment_columns(
         st.session_state.get("df_jev_sentiment_unique", pd.DataFrame()),
         tag_definitions=tag_definitions,
     )
     if unique.empty:
-        return len(eligible_rows), 0, 0, 0, 0, 0
+        return eligible_count, 0, 0, 0, 0, 0
     errors = unique["Jev Error"].astype("string").fillna("").str.strip()
     completed = (
         unique["Jev Sentiment"].astype("string").fillna("").str.strip().ne("")
@@ -248,7 +262,7 @@ def metric_counts() -> tuple[int, int, int, int, int, int]:
     remaining = int(((~completed) & (errors == "")).sum())
     sample_used = len(st.session_state.get("df_jev_sentiment_rows", pd.DataFrame()))
     grouped = len(unique)
-    return len(eligible_rows), sample_used, grouped, processed, error_count, remaining
+    return eligible_count, sample_used, grouped, processed, error_count, remaining
 
 
 def percent_display(df: pd.DataFrame) -> pd.DataFrame:
@@ -496,44 +510,6 @@ def render_rapid_example_blocks(examples: list[dict], selected_fields: set[str])
         st.markdown(blocks, unsafe_allow_html=True)
 
 
-def rapid_observation_current_fingerprint(
-    *,
-    family: str,
-    unique_df: pd.DataFrame,
-    scale: str = RAPID_SENTIMENT_SCALE_3_WAY,
-    tag_mode: str = RAPID_TAG_REVIEW_MODE_BEST,
-    include_not_relevant: bool = False,
-    include_other: bool = False,
-    tag_definitions: dict[str, str] | None = None,
-    analysis_context: str = "",
-    selected_prominence_column: str = "",
-) -> str:
-    if family == "sentiment":
-        payload = build_rapid_sentiment_observation_payload(
-            unique_df,
-            scale=scale,
-            include_not_relevant=include_not_relevant,
-            selected_prominence_column=selected_prominence_column,
-        )
-        return rapid_observation_fingerprint(
-            payload,
-            settings={"family": "sentiment", "scale": scale, "include_not_relevant": include_not_relevant},
-            analysis_context=analysis_context,
-        )
-    payload = build_rapid_tag_observation_payload(
-        unique_df,
-        mode=tag_mode,
-        include_other=include_other,
-        tag_definitions=tag_definitions,
-        selected_prominence_column=selected_prominence_column,
-    )
-    return rapid_observation_fingerprint(
-        payload,
-        settings={"family": "tagging", "mode": tag_mode, "include_other": include_other, "tag_definitions": tag_definitions or {}},
-        analysis_context=analysis_context,
-    )
-
-
 def rapid_unresolved_sentiment_quality_count(unique_df: pd.DataFrame) -> int:
     final = build_final_rapid_sentiment_frame(unique_df)
     effective = build_effective_rapid_sentiment_frame(unique_df)
@@ -569,19 +545,22 @@ def build_rapid_review_candidates_for_mode(
     *,
     review_domain: str,
     review_mode: str,
+    sentiment_scale: str = HUMAN_SENTIMENT_SCALE_3_WAY,
     tag_review_mode: str = RAPID_TAG_REVIEW_MODE_BEST,
     tag_definitions: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     if unique_df is None or unique_df.empty:
         return pd.DataFrame()
 
-    working = ensure_rapid_human_review_columns(unique_df).copy()
+    working = ensure_rapid_review_columns(ensure_rapid_human_review_columns(unique_df))
     processed = rapid_processed_mask(working)
     sentiment_effective = build_effective_rapid_sentiment_frame(working)
     tag_effective = build_effective_rapid_tag_frame(working, tag_definitions=tag_definitions)
     final_sentiment = build_final_rapid_sentiment_frame(working)
     final_tags = build_final_rapid_tag_frame(working, tag_definitions=tag_definitions)
-    working = pd.concat([working, sentiment_effective, tag_effective, final_sentiment, final_tags], axis=1)
+    derived = pd.concat([sentiment_effective, tag_effective, final_sentiment, final_tags], axis=1)
+    # Restored rows can contain derived columns from an earlier workbook.
+    working = pd.concat([working.drop(columns=derived.columns, errors="ignore"), derived], axis=1)
 
     if review_domain == "Sentiment":
         review_state = working["Rapid Human Sentiment Review State"].fillna("").astype(str).str.strip()
@@ -607,16 +586,35 @@ def build_rapid_review_candidates_for_mode(
     if "Rapid Review Priority Tier" not in working.columns or "Rapid Review Priority Reason" not in working.columns:
         working["Rapid Review Priority Tier"] = ""
         working["Rapid Review Priority Reason"] = ""
-    recommended = (
-        internal
-        | disagreement
-        | working["Rapid Review Priority Tier"].fillna("").astype(str).str.contains("Tier 1|Tier 2|Tier 3|Tier 4", regex=True)
-    )
     unresolved = review_state.eq("")
+    scoped_queue = (
+        sentiment_scale == HUMAN_SENTIMENT_SCALE_3_WAY
+        if review_domain == "Sentiment"
+        else tag_review_mode == RAPID_TAG_REVIEW_MODE_APPLICABLE
+    )
+    priority = working["Rapid Review Priority Tier"].fillna("").astype(str).str.contains(
+        "Tier 1|Tier 2|Tier 3|Tier 4", regex=True,
+    )
+    if scoped_queue and review_mode in {"Recommended / flagged for review", "Cross-model disagreements", "Internal conflicts"}:
+        completed = working["Rapid Review Status"].fillna("").astype(str).str.strip().str.upper().eq("COMPLETED")
+        compared = working.loc[available & completed].apply(
+            lambda row: compare_rapid_active_decision(row, domain=review_domain, tag_definitions=tag_definitions),
+            axis=1,
+        )
+        agrees = compared.eq(True).reindex(working.index, fill_value=False)
+        disagreement = (disagreement & ~completed) | (available & completed & ~agrees)
+        if review_mode == "Recommended / flagged for review":
+            thresholds = rapid_review_impact_thresholds(working.loc[processed])
+            for idx, row in working.loc[available & unresolved & ~internal & ~disagreement].iterrows():
+                priority.loc[idx] = rapid_has_material_priority_flag(
+                    row, domain=review_domain, agrees=bool(agrees.loc[idx]),
+                    tag_definitions=tag_definitions, impact_thresholds=thresholds,
+                )
+    recommended = internal | disagreement | priority
 
     if review_mode == "Recommended / flagged for review":
-        pool = working[available & recommended].copy()
-        if pool.empty:
+        pool = working[available & recommended & (unresolved if scoped_queue else available)].copy()
+        if pool.empty and not scoped_queue:
             pool = working[available & unresolved].copy()
     elif review_mode == "Cross-model disagreements":
         pool = working[available & disagreement].copy()
@@ -760,6 +758,11 @@ def _clear_rapid_human_review(
     columns = [column for column in columns if column in out.columns]
     out.loc[mask, columns] = pd.NA
     return out
+
+
+def save_rapid_human_review(updated: pd.DataFrame) -> None:
+    st.session_state.df_jev_sentiment_unique = updated
+    invalidate_clean_workbook(st.session_state)
 
 
 if not rapid_labeling_enabled():
@@ -946,23 +949,32 @@ with step5:
         st.session_state.jev_sentiment_section = "Insights"
         st.rerun()
 
-source_rows = get_sentiment_source_rows(st.session_state.df_traditional)
 analysis_payload = get_analysis_context_payload(st.session_state)
+current_context = build_analysis_context_fingerprint(analysis_payload)
+prepared_context = st.session_state.get("jev_analysis_context_fingerprint")
+current_scope = rapid_scope_signature(st.session_state)
+working_source_rows = None
+scope_changed = False
+if st.session_state.jev_sentiment_config_step:
+    working_source_rows = scoped_rapid_source_rows(st.session_state)
+    scope_changed = not rapid_sample_matches_scope(
+        st.session_state, current_context=current_context, source_rows=working_source_rows,
+    )
+
+if scope_changed:
+    st.warning(
+        "The saved Rapid sample does not match the current Analysis Context scope. "
+        "Save a session copy in Save & Load before replacing the sample, or restore its original scope to resume "
+        "if the sample is eligible there."
+    )
+    if st.session_state.jev_sentiment_section != "Prepare Sample":
+        st.stop()
 
 if st.session_state.jev_sentiment_section == "Prepare Sample":
     st.caption("Sampling mirrors the production Sentiment setup, then Rapid Labeling writes only separate Rapid result columns.")
 
     reusable_sentiment_sample = st.session_state.get("df_sentiment_rows", None)
-    reusable_sentiment_grouped = st.session_state.get("df_sentiment_grouped_rows", None)
-    reusable_sentiment_unique = st.session_state.get("df_sentiment_unique", None)
-    has_reusable_sentiment = (
-        isinstance(reusable_sentiment_sample, pd.DataFrame)
-        and not reusable_sentiment_sample.empty
-        and isinstance(reusable_sentiment_grouped, pd.DataFrame)
-        and not reusable_sentiment_grouped.empty
-        and isinstance(reusable_sentiment_unique, pd.DataFrame)
-        and not reusable_sentiment_unique.empty
-    )
+    has_reusable_sentiment = isinstance(reusable_sentiment_sample, pd.DataFrame) and not reusable_sentiment_sample.empty
     reusable_tagging_sample = st.session_state.get("df_tagging_rows", None)
     has_reusable = isinstance(reusable_tagging_sample, pd.DataFrame) and not reusable_tagging_sample.empty
 
@@ -978,7 +990,8 @@ if st.session_state.jev_sentiment_section == "Prepare Sample":
         options.insert(insert_at, "Reuse tagging sample")
 
     excluded_flags = get_qualitative_coverage_flag_exclusions(st.session_state)
-    working_source_rows = apply_session_coverage_flag_policy(source_rows, st.session_state, excluded_flags)
+    if working_source_rows is None:
+        working_source_rows = scoped_rapid_source_rows(st.session_state)
     population_size = len(working_source_rows)
     default_index = 1 if population_size > DEFAULT_MAX_FULL_ROWS else 0
     if has_reusable_sentiment:
@@ -1002,7 +1015,7 @@ if st.session_state.jev_sentiment_section == "Prepare Sample":
     else:
         sample_mode = "custom"
 
-    if sample_mode not in {"reuse_other_sample", "reuse_sentiment_sample"} and excluded_flags:
+    if excluded_flags:
         st.caption(format_qualitative_exclusion_caption(excluded_flags))
 
     recommended_sample = calculate_representative_sample_size(population_size) if population_size > 0 else 0
@@ -1026,16 +1039,17 @@ if st.session_state.jev_sentiment_section == "Prepare Sample":
             value=False,
         )
 
-    if sample_mode == "reuse_sentiment_sample":
-        preview_rows = len(reusable_sentiment_sample) if has_reusable_sentiment else 0
-    elif sample_mode == "reuse_other_sample":
-        preview_rows = len(reusable_tagging_sample) if has_reusable else 0
+    reused_rows = None
+    if sample_mode in {"reuse_sentiment_sample", "reuse_other_sample"}:
+        previous_sample = reusable_sentiment_sample if sample_mode == "reuse_sentiment_sample" else reusable_tagging_sample
+        reused_rows = scoped_rapid_reuse_rows(working_source_rows, previous_sample)
+        preview_rows = len(reused_rows)
     elif sample_mode == "full":
         preview_rows = population_size if (population_size <= DEFAULT_MAX_FULL_ROWS or full_override) else DEFAULT_MAX_FULL_ROWS
     elif sample_mode == "representative":
         preview_rows = recommended_sample
     else:
-        preview_rows = int(custom_sample_size or 0)
+        preview_rows = min(population_size, int(custom_sample_size or 0))
 
     stat1, stat2 = st.columns(2)
     with stat1:
@@ -1045,13 +1059,8 @@ if st.session_state.jev_sentiment_section == "Prepare Sample":
 
     if sample_mode == "representative":
         st.caption(f"Representative sample size estimate: {recommended_sample:,}")
-    if sample_mode == "reuse_other_sample" and has_reusable:
-        st.caption(f"Using existing tagging sample: {len(reusable_tagging_sample):,} rows")
-    if sample_mode == "reuse_sentiment_sample" and has_reusable_sentiment:
-        st.caption(
-            f"Using prepared Sentiment workflow sample: {len(reusable_sentiment_sample):,} rows, "
-            f"{len(reusable_sentiment_unique):,} grouped stories"
-        )
+    if reused_rows is not None:
+        st.caption(f"{len(reused_rows):,} of {len(previous_sample):,} reused rows are in scope.")
 
     st.divider()
     st.write("**Analysis context**")
@@ -1103,7 +1112,15 @@ if st.session_state.jev_sentiment_section == "Prepare Sample":
     else:
         tagging_mode = DEFAULT_JEV_TAGGING_MODE
 
-    prep_clicked = st.button("Prepare Rapid Labeling Sample", type="primary")
+    if preview_rows == 0:
+        st.info("No eligible articles are available for this sample.")
+    confirm_replacement = not scope_changed or st.checkbox(
+        "Replace the existing Rapid sample and its saved AI results and analyst decisions",
+        key="rapid_confirm_scope_replacement",
+    )
+    prep_clicked = st.button(
+        "Prepare Rapid Labeling Sample", type="primary", disabled=not confirm_replacement or preview_rows == 0,
+    )
     if prep_clicked:
         if tag_validation_error:
             st.error("Fix the Rapid Tag definitions before preparing.")
@@ -1114,31 +1131,23 @@ if st.session_state.jev_sentiment_section == "Prepare Sample":
             st.stop()
 
         start = time.time()
-        if sample_mode == "reuse_sentiment_sample":
-            if not has_reusable_sentiment:
-                st.warning("No prepared Sentiment workflow sample is available to reuse.")
-                st.stop()
-            sampled_rows = reusable_sentiment_sample.copy()
-            grouped = reusable_sentiment_grouped.copy()
-            unique = reusable_sentiment_unique.copy()
-            sample_size_used = len(sampled_rows)
-        else:
-            reused_rows = reusable_tagging_sample if sample_mode == "reuse_other_sample" else None
-            results = prepare_sentiment_datasets(
-                df_traditional=st.session_state.df_traditional,
-                sample_mode=sample_mode,
-                excluded_flags=excluded_flags if sample_mode != "reuse_other_sample" else [],
-                custom_sample_size=custom_sample_size,
-                max_full_rows=DEFAULT_MAX_FULL_ROWS,
-                full_override=full_override,
-                reused_rows=reused_rows,
-            )
-            grouped, unique = ensure_ai_sentiment_columns(
-                results["df_sentiment_grouped_rows"],
-                results["df_sentiment_unique"],
-            )
-            sampled_rows = results["df_sentiment_rows"]
-            sample_size_used = results["sample_size_used"]
+        scoped_source = ensure_scoped_rapid_primes(working_source_rows)
+        if reused_rows is not None:
+            reused_rows = scoped_rapid_reuse_rows(scoped_source, reused_rows)
+        results = prepare_sentiment_datasets(
+            df_traditional=scoped_source,
+            sample_mode="reuse_other_sample" if reused_rows is not None else sample_mode,
+            custom_sample_size=custom_sample_size,
+            max_full_rows=DEFAULT_MAX_FULL_ROWS,
+            full_override=full_override,
+            reused_rows=reused_rows,
+        )
+        grouped, unique = ensure_ai_sentiment_columns(
+            results["df_sentiment_grouped_rows"],
+            results["df_sentiment_unique"],
+        )
+        sampled_rows = results["df_sentiment_rows"]
+        sample_size_used = results["sample_size_used"]
 
         previous_fingerprint = str(st.session_state.get("jev_tag_config_fingerprint", "") or "")
         next_fingerprint = build_jev_tag_config_fingerprint(parsed_tag_definitions)
@@ -1152,8 +1161,7 @@ if st.session_state.jev_sentiment_section == "Prepare Sample":
             if column.startswith("Jev") or column.startswith("Rapid Review") or column.startswith("Rapid Sentiment") or column.startswith("Rapid Tag")
         ]:
             prepared_unique = prepared_unique.drop(columns=[column])
-        for scheme in JEV_COMBINED_SCHEMES:
-            prepared_unique = ensure_jev_sentiment_columns(prepared_unique, scheme, tag_definitions=parsed_tag_definitions)
+        prepared_unique = ensure_jev_sentiment_columns(prepared_unique, tag_definitions=parsed_tag_definitions)
         prepared_unique = ensure_rapid_review_columns(prepared_unique)
         prepared_unique = ensure_rapid_human_review_columns(prepared_unique)
         st.session_state.df_jev_sentiment_unique = prepared_unique
@@ -1161,29 +1169,37 @@ if st.session_state.jev_sentiment_section == "Prepare Sample":
         st.session_state.jev_tag_definitions = parsed_tag_definitions
         st.session_state.jev_tagging_mode = tagging_mode
         st.session_state.jev_tag_config_fingerprint = next_fingerprint
-        st.session_state.jev_analysis_context_fingerprint = build_analysis_context_fingerprint(analysis_payload)
+        st.session_state.jev_analysis_context_fingerprint = current_context
+        st.session_state.rapid_sample_scope_signature = current_scope
         st.session_state.jev_sentiment_sample_mode = sample_mode
         st.session_state.jev_sentiment_sample_size = sample_size_used
         st.session_state.jev_sentiment_full_override = full_override
-        st.session_state.jev_sentiment_excluded_flags = (
-            excluded_flags if sample_mode not in {"reuse_other_sample", "reuse_sentiment_sample"} else []
-        )
+        st.session_state.jev_sentiment_excluded_flags = excluded_flags
         st.session_state.jev_sentiment_elapsed_time = time.time() - start
         st.session_state.jev_sentiment_config_step = True
-        st.session_state.pop("__last_jev_sentiment_batch_summary__", None)
-        st.session_state.pop("__last_rapid_review_batch_summary__", None)
+        clear_rapid_run_outputs()
+        invalidate_clean_workbook(st.session_state)
         if previous_fingerprint and previous_fingerprint != next_fingerprint:
             st.toast("Rapid Tag configuration changed; previous Rapid results were reset.")
         st.session_state.jev_sentiment_section = "Run Jev Analysis"
         st.rerun()
 
-    if st.session_state.get("jev_sentiment_config_step", False):
+    if st.session_state.jev_sentiment_config_step and not scope_changed:
         st.info("A Rapid Labeling sample is already prepared. You can prepare again or move to Run Rapid Labeling.")
 
     st.stop()
 
 if not st.session_state.get("jev_sentiment_config_step", False):
     st.info("Prepare a Rapid Labeling sample before running.")
+    st.stop()
+
+if prepared_context and prepared_context != current_context:
+    st.warning("Analysis Context has changed since this sample was prepared. Reset Rapid results or prepare a new sample before continuing.")
+    if st.button("Reset Rapid Results for current context"):
+        reset_jev_results()
+        st.session_state.jev_analysis_context_fingerprint = current_context
+        st.session_state.jev_sentiment_section = "Run Jev Analysis"
+        st.rerun()
     st.stop()
 
 tag_definitions = st.session_state.get("jev_tag_definitions", {})
@@ -1589,6 +1605,7 @@ if st.session_state.jev_sentiment_section == "Spot Checks":
         unique_for_review,
         review_domain=review_domain,
         review_mode=review_view,
+        sentiment_scale=sentiment_scale,
         tag_review_mode=tag_review_mode,
         tag_definitions=tag_definitions,
     )
@@ -1598,6 +1615,7 @@ if st.session_state.jev_sentiment_section == "Spot Checks":
             "Recommended views focus the queue; all-coverage views let you audit or manually label broader Rapid sample rows."
         )
 
+    next_tag_group_id = st.session_state.pop("_rapid_spot_tagging_next_group_id", None)
     if candidates.empty:
         with left:
             st.info("No grouped stories match the current view.")
@@ -1605,14 +1623,18 @@ if st.session_state.jev_sentiment_section == "Spot Checks":
 
     idx_key = "rapid_spot_sentiment_idx" if review_domain == "Sentiment" else "rapid_spot_tagging_idx"
     st.session_state[idx_key] = min(int(st.session_state.get(idx_key, 0) or 0), len(candidates) - 1)
+    if review_domain == "Tagging" and next_tag_group_id is not None:
+        next_positions = candidates.index[candidates["Group ID"].eq(next_tag_group_id)]
+        if not next_positions.empty:
+            st.session_state[idx_key] = int(next_positions[0])
     idx = int(st.session_state[idx_key])
     row = candidates.iloc[idx]
     current_group_id = int(row["Group ID"])
 
     head_raw = safe_display_text(row.get("Headline", ""))
     body_raw = safe_display_text(row.get("Example Snippet", row.get("Snippet", "")))
-    trans_head = safe_display_text(row.get("Translated Headline", ""))
-    trans_body = safe_display_text(row.get("Translated Body", ""))
+    trans_head = usable_spot_translation(row.get("Translated Headline"))
+    trans_body = usable_spot_translation(row.get("Translated Body"))
     headline = trans_head or head_raw
     snippet = trans_body or body_raw
     url = safe_display_text(row.get("Example URL", row.get("URL", "")))
@@ -1634,8 +1656,9 @@ if st.session_state.jev_sentiment_section == "Spot Checks":
                 st.session_state.df_jev_sentiment_unique = ensure_rapid_human_review_columns(unique2)
                 st.session_state.df_jev_sentiment_grouped_rows = grouped2
                 st.rerun()
-            except Exception as exc:
-                st.error(f"Translation failed: {exc}")
+            except Exception:
+                headline, snippet = head_raw, body_raw
+                st.error("Translation failed. Select Translate to retry.")
 
     with left:
         highlighted_head = highlight_with_tolerant_regex(
@@ -1702,12 +1725,13 @@ if st.session_state.jev_sentiment_section == "Spot Checks":
             )
             for label in labels:
                 if rapid_sentiment_button(label, group_id=current_group_id, scale=sentiment_scale):
-                    st.session_state.df_jev_sentiment_unique = apply_rapid_sentiment_human_selection(
+                    updated = apply_rapid_sentiment_human_selection(
                         st.session_state.df_jev_sentiment_unique,
                         current_group_id,
                         scale=sentiment_scale,
                         label=label,
                     )
+                    save_rapid_human_review(updated)
                     st.rerun()
 
             with st.expander("Sentiment evidence", expanded=False), st.container(key="rapid_sentiment_evidence"):
@@ -1747,19 +1771,12 @@ if st.session_state.jev_sentiment_section == "Spot Checks":
                     if score_distance:
                         st.caption(f"Score distance: {score_distance}")
 
-                machine_three = safe_display_text(row.get("Effective Rapid Sentiment 3-Way", ""))
                 final_three = safe_display_text(row.get("Final Rapid Sentiment 3-Way", ""))
-                machine_five = safe_display_text(row.get("Effective Rapid Sentiment 5-Way", ""))
                 final_five = safe_display_text(row.get("Final Rapid Sentiment 5-Way", ""))
-                changed = (machine_three and final_three and machine_three != final_three) or (
-                    machine_five and final_five and machine_five != final_five
-                )
-                if changed:
+                if final_three or final_five:
                     st.write("**Final decision**")
-                    if machine_three and final_three and machine_three != final_three:
-                        st.caption(f"3-way: machine {machine_three} -> final {final_three}")
-                    if machine_five and final_five and machine_five != final_five:
-                        st.caption(f"5-way: machine {machine_five} -> final {final_five}")
+                    rapid_evidence_line("Final 3-way", final_three)
+                    rapid_evidence_line("Final 5-way", final_five)
 
                 rationale = safe_display_text(row.get("Rapid Review Sentiment Rationale", ""))
                 if rationale:
@@ -1776,12 +1793,12 @@ if st.session_state.jev_sentiment_section == "Spot Checks":
                 st.info(status)
 
             first_active_tag = (
-                safe_display_text(row.get("Jev Tags", ""))
+                "; ".join(first_pass_applicable_tags(row, tag_definitions))
                 if tag_review_mode == RAPID_TAG_REVIEW_MODE_APPLICABLE
                 else safe_display_text(row.get("Jev Best Tag", ""))
             )
             second_active_tag = (
-                safe_display_text(row.get("Rapid Review Tags", ""))
+                "; ".join(second_pass_applicable_tags(row))
                 if tag_review_mode == RAPID_TAG_REVIEW_MODE_APPLICABLE
                 else safe_display_text(row.get("Rapid Review Best Tag", ""))
             )
@@ -1798,10 +1815,10 @@ if st.session_state.jev_sentiment_section == "Spot Checks":
                 st.write("**Assign human tags**")
                 selected_assignment = None
                 if tag_review_mode == RAPID_TAG_REVIEW_MODE_APPLICABLE:
-                    default_tags = normalize_tag_list(
-                        safe_display_text(row.get("Rapid Human Applicable Tags Assignment", ""))
-                        or safe_display_text(row.get("Effective Rapid Tags", ""))
-                    )
+                    final_tags = row["Final Rapid Tags"]
+                    default_tags = final_tags.split("; ")
+                    defaults = (current_group_id, final_tags)
+                    refresh_defaults = st.session_state.get("_rapid_tag_multi_defaults") != defaults
 
                     def enforce_rapid_other_exclusivity(changed_label: str) -> None:
                         changed_key = f"rapid_tag_multi_{current_group_id}_{changed_label}"
@@ -1818,44 +1835,51 @@ if st.session_state.jev_sentiment_section == "Spot Checks":
 
                     for label in tag_names:
                         key = f"rapid_tag_multi_{current_group_id}_{label}"
-                        if key not in st.session_state:
+                        if refresh_defaults or key not in st.session_state:
                             st.session_state[key] = label in default_tags
                         st.checkbox(label, key=key, on_change=enforce_rapid_other_exclusivity, args=(label,))
+                    st.session_state["_rapid_tag_multi_defaults"] = defaults
                     selected = [label for label in tag_names if st.session_state.get(f"rapid_tag_multi_{current_group_id}_{label}", False)]
                     if st.button("Save & next", key=f"rapid_assign_tags_{current_group_id}", use_container_width=True):
-                        selected_assignment = ", ".join(selected)
+                        selected_assignment = selected or [RESERVED_OTHER_TAG]
                 else:
                     for label in tag_names:
                         if st.button(label, key=f"rapid_assign_tag_{current_group_id}_{label}", use_container_width=True):
                             selected_assignment = label
                 if selected_assignment:
-                    st.session_state.df_jev_sentiment_unique = apply_rapid_tag_human_selection(
+                    updated = apply_rapid_tag_human_selection(
                         st.session_state.df_jev_sentiment_unique,
                         current_group_id,
                         assignment=selected_assignment,
                         tagging_mode=tag_review_mode,
                         tag_definitions=tag_definitions,
                     )
-                    st.session_state[idx_key] = min(len(candidates) - 1, idx + 1)
+                    save_rapid_human_review(updated)
+                    next_idx = min(len(candidates) - 1, idx + 1)
+                    if tag_review_mode == RAPID_TAG_REVIEW_MODE_APPLICABLE:
+                        # Reviewed stories move in the queue, so keep the next story by ID.
+                        st.session_state["_rapid_spot_tagging_next_group_id"] = int(candidates.iloc[next_idx]["Group ID"])
+                    else:
+                        st.session_state[idx_key] = next_idx
                     st.rerun()
 
             with st.expander("Tagging evidence", expanded=False):
                 st.write("**First opinion**")
                 if tag_review_mode == RAPID_TAG_REVIEW_MODE_APPLICABLE:
-                    rapid_evidence_line("Applicable tags", row.get("Jev Tags", ""))
+                    rapid_evidence_line("Applicable tags", "; ".join(first_pass_applicable_tags(row, tag_definitions)))
                     rapid_evidence_line("Best-fit tag", row.get("Jev Best Tag", ""))
                 else:
                     rapid_evidence_line("Best-fit tag", row.get("Jev Best Tag", ""))
-                    rapid_evidence_line("Applicable tags", row.get("Jev Tags", ""))
+                    rapid_evidence_line("Applicable tags", "; ".join(first_pass_applicable_tags(row, tag_definitions)))
 
                 if safe_display_text(row.get("Rapid Review Best Tag", "")) or safe_display_text(row.get("Rapid Review Tags", "")):
                     st.write("**Second opinion**")
                     if tag_review_mode == RAPID_TAG_REVIEW_MODE_APPLICABLE:
-                        rapid_evidence_line("Applicable tags", row.get("Rapid Review Tags", ""))
+                        rapid_evidence_line("Applicable tags", "; ".join(second_pass_applicable_tags(row)))
                         rapid_evidence_line("Best-fit tag", row.get("Rapid Review Best Tag", ""))
                     else:
                         rapid_evidence_line("Best-fit tag", row.get("Rapid Review Best Tag", ""))
-                        rapid_evidence_line("Applicable tags", row.get("Rapid Review Tags", ""))
+                        rapid_evidence_line("Applicable tags", "; ".join(second_pass_applicable_tags(row)))
 
                 machine_best = safe_display_text(row.get("Effective Rapid Best Tag", ""))
                 final_best = safe_display_text(row.get("Final Rapid Best Tag", ""))
@@ -1877,12 +1901,13 @@ if st.session_state.jev_sentiment_section == "Spot Checks":
                     st.caption(rationale)
 
         if state and st.button("Clear human review", key=f"rapid_clear_{review_domain}_{current_group_id}", use_container_width=True):
-            st.session_state.df_jev_sentiment_unique = _clear_rapid_human_review(
+            updated = _clear_rapid_human_review(
                 st.session_state.df_jev_sentiment_unique,
                 current_group_id,
                 review_domain=review_domain,
                 tag_review_mode=tag_review_mode if review_domain == "Tagging" else None,
             )
+            save_rapid_human_review(updated)
             st.rerun()
 
         st.divider()
@@ -1906,18 +1931,8 @@ unique_df = ensure_jev_sentiment_columns(
 unique_df = ensure_rapid_review_columns(unique_df)
 st.session_state.df_jev_sentiment_unique = unique_df
 
-current_analysis_fingerprint = build_analysis_context_fingerprint(analysis_payload)
-stored_analysis_fingerprint = str(st.session_state.get("jev_analysis_context_fingerprint", "") or "")
-if stored_analysis_fingerprint and stored_analysis_fingerprint != current_analysis_fingerprint:
-    status = unique_df["Rapid Review Status"].fillna("").astype(str).str.strip()
-    if status.ne("").any():
-        st.session_state.df_jev_sentiment_unique = clear_rapid_review_columns(unique_df)
-        st.session_state.pop("__last_rapid_review_batch_summary__", None)
-        st.warning("Analysis Context changed, so Rapid second-opinion results were cleared. Run second opinion again after confirming the current Rapid first-pass results are still appropriate.")
-    st.session_state.jev_analysis_context_fingerprint = current_analysis_fingerprint
-    unique_df = st.session_state.df_jev_sentiment_unique
-
-eligible_count, sample_used, grouped_count, processed_count, error_count, remaining_count = metric_counts()
+eligible_count, sample_used, grouped_count, processed_count, error_count, remaining_count = metric_counts(len(working_source_rows))
+st.caption("To download a session checkpoint, build a session file in Save & Load.")
 
 if st.session_state.jev_sentiment_section == "AI Second Opinion":
     st.caption(
@@ -1970,7 +1985,7 @@ if st.session_state.jev_sentiment_section == "AI Second Opinion":
         )
         clamped_batch_size = resolve_rapid_review_batch_size(
             stored_review_batch_size,
-            remaining_review_count,
+            min(RAPID_BATCH_LIMIT, remaining_review_count),
         )
         st.session_state.rapid_review_batch_size_input = clamped_batch_size
 
@@ -1980,8 +1995,7 @@ if st.session_state.jev_sentiment_section == "AI Second Opinion":
         review_batch_size = st.number_input(
             "Second-opinion batch size",
             min_value=1,
-            max_value=remaining_review_count,
-            value=clamped_batch_size,
+            max_value=min(RAPID_BATCH_LIMIT, remaining_review_count),
             step=1,
             key="rapid_review_batch_size_input",
             on_change=sync_rapid_review_batch_size,
@@ -1989,7 +2003,7 @@ if st.session_state.jev_sentiment_section == "AI Second Opinion":
 
     review_batch_df = review_candidates.head(int(review_batch_size or 0)).copy()
     run_review_clicked = st.button(
-        "Run Rapid AI Second Opinion",
+        "Run AI Second Opinion",
         type="primary",
         disabled=not bool(openai_key) or review_batch_df.empty,
         use_container_width=True,
@@ -2024,6 +2038,7 @@ if st.session_state.jev_sentiment_section == "AI Second Opinion":
         progress_status.empty()
         summary["elapsed"] = time.time() - start
         st.session_state.df_jev_sentiment_unique = updated
+        invalidate_clean_workbook(st.session_state)
         st.session_state["__last_rapid_review_batch_summary__"] = summary
         apply_usage_to_session(summary.get("input_tokens", 0), summary.get("output_tokens", 0), RAPID_REVIEW_MODEL)
         st.rerun()
@@ -2175,25 +2190,26 @@ if tagging_enabled:
             tag_definitions=tag_definitions,
             tagging_mode=selected_tagging_mode,
         )
+        invalidate_clean_workbook(st.session_state)
         st.rerun()
 
+retry_errors = error_count > 0 and st.checkbox("Retry failed stories", key="jev_retry_errors")
 remaining_df = get_remaining_jev_sentiment_rows(
     st.session_state.df_jev_sentiment_unique,
     tag_definitions=tag_definitions,
+    retry_errors=retry_errors,
 )
-if remaining_count == 0:
+if remaining_df.empty:
     batch_size = 0
     st.info("No grouped stories remain for Rapid Labeling. Rows with errors are skipped so they do not block later batches.")
 else:
-    stored_batch_size = int(st.session_state.get("jev_sentiment_batch_size", 200) or 200)
-    if stored_batch_size == 10:
-        stored_batch_size = 200
-    default_batch_size = min(stored_batch_size, remaining_count)
+    max_batch_size = min(RAPID_BATCH_LIMIT, len(remaining_df))
+    stored_batch_size = int(st.session_state.get("jev_sentiment_batch_size") or RAPID_FIRST_PASS_DEFAULT_BATCH_SIZE)
+    st.session_state.jev_sentiment_batch_size = min(max_batch_size, max(1, stored_batch_size))
     batch_size = st.number_input(
         "Batch size",
         min_value=1,
-        max_value=max(1, remaining_count),
-        value=max(1, default_batch_size),
+        max_value=max_batch_size,
         step=1,
         key="jev_sentiment_batch_size",
     )
@@ -2246,6 +2262,7 @@ if run_clicked:
     summary["elapsed"] = time.time() - start
     summary["method"] = "Rapid Labeling"
     st.session_state.df_jev_sentiment_unique = updated
+    invalidate_clean_workbook(st.session_state)
     st.session_state["__last_jev_sentiment_batch_summary__"] = summary
     apply_usage_to_session(
         summary.get("input_tokens", 0),

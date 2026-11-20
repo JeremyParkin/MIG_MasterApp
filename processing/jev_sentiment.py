@@ -458,6 +458,8 @@ def get_remaining_jev_sentiment_rows(
     df_unique: pd.DataFrame,
     scheme: JevSentimentScheme = JEV_SENTIMENT_3WAY_SCHEME,
     tag_definitions: dict[str, str] | None = None,
+    *,
+    retry_errors: bool = False,
 ) -> pd.DataFrame:
     if df_unique is None or df_unique.empty:
         return pd.DataFrame()
@@ -470,7 +472,7 @@ def get_remaining_jev_sentiment_rows(
     completed = pd.Series(True, index=working.index)
     for column in required:
         completed = completed & working[column].astype("string").fillna("").str.strip().ne("")
-    remaining_mask = (~completed) & (error == "")
+    remaining_mask = error.ne("") if retry_errors else (~completed) & error.eq("")
     return working.loc[remaining_mask].reset_index(drop=False)
 
 
@@ -503,41 +505,18 @@ def build_jev_sentiment_state(
             "products_subbrands_programs": products,
         },
         "sentiment_rules": {
-            "judge": "Net sentiment conveyed to a typical reader/viewer about the collective entity.",
-            "entity_vs_topic": (
-                "Judge sentiment toward the collective entity itself, not toward the broader topic, event, market "
-                "condition, social problem, or historic issue being discussed."
+            "target": (
+                "Judge how the story portrays the monitored entity, including configured members in their role "
+                "or connection to the entity."
             ),
-            "direct_mention_scope": (
-                "If the collective entity is directly mentioned anywhere in the headline, body, or transcript, "
-                "NOT RELEVANT is not appropriate."
+            "scope": (
+                "A genuine mention of the entity or an in-scope member counts even without naming the parent. "
+                "A matching name that refers to something else does not count."
             ),
-            "configured_member_scope": (
-                "The parent organization does not need to be explicitly named for the story to be relevant. "
-                "Substantive coverage of any configured alias, spokesperson acting for the entity, product, "
-                "sub-brand, or program is in scope for sentiment."
+            "neutral": (
+                "A passing factual mention is relevant and neutral. Negative subject matter alone does not "
+                "make coverage negative toward the entity."
             ),
-            "incidental_mentions": (
-                "If the entity is mentioned but coverage is only incidental or passing and does not express judgment, "
-                "choose NEUTRAL."
-            ),
-            "negative_subject_matter": (
-                "Negative subject matter does not automatically mean negative sentiment toward the collective entity."
-            ),
-            "normal_entity_activities": (
-                "Researching, reporting, forecasting, warning, hosting, teaching, commemorating, responding, or other "
-                "normal entity activities are generally NEUTRAL unless coverage clearly praises or criticizes how the "
-                "entity did it."
-            ),
-            "attribution": [
-                f"When a spokesperson acts explicitly for {primary_name}, attribute their stance to the entity.",
-                f"When a product, sub-brand, or program is discussed, attribute sentiment to {primary_name} unless clearly unrelated.",
-                "Do not infer sentiment toward the entity from third parties or adjacent topics.",
-            ],
-            "tie_breakers": [
-                "Use the audience takeaway when positive and negative elements coexist.",
-                "Prefer explicit attributions, direct quotes, headlines, and framing to infer stance.",
-            ],
         },
         "analysis_guidance": {
             "shared_guidance": shared_guidance,
@@ -1000,6 +979,17 @@ def apply_jev_combined_result_to_unique_df(
     tagging_mode: str = DEFAULT_JEV_TAGGING_MODE,
 ) -> pd.DataFrame:
     out = ensure_jev_sentiment_columns(df_unique, tag_definitions=tag_definitions)
+    _write_jev_combined_result(out, original_index, result, tag_definitions, tagging_mode)
+    return out
+
+
+def _write_jev_combined_result(
+    out: pd.DataFrame,
+    original_index: int,
+    result: dict[str, Any],
+    tag_definitions: dict[str, str] | None,
+    tagging_mode: str,
+) -> None:
     out.loc[original_index, "Jev Model"] = result.get("model")
     out.loc[original_index, "Jev Input Tokens"] = result.get("input_tokens")
     out.loc[original_index, "Jev Cost USD"] = result.get("cost_usd")
@@ -1038,14 +1028,7 @@ def apply_jev_combined_result_to_unique_df(
             out.loc[original_index, f"{prefix} Probability {label}"] = probabilities.get(label, 0.0)
     tagging_result = result.get("tagging", {}) if isinstance(result.get("tagging"), dict) else {}
     if tagging_result:
-        out = apply_jev_tagging_result_to_unique_df(
-            out,
-            original_index,
-            tagging_result,
-            tag_definitions=tag_definitions,
-            tagging_mode=tagging_mode,
-        )
-    return out
+        _write_jev_tagging_result(out, original_index, tagging_result, tag_definitions, tagging_mode)
 
 
 def apply_jev_tagging_result_to_unique_df(
@@ -1057,6 +1040,17 @@ def apply_jev_tagging_result_to_unique_df(
     tagging_mode: str = DEFAULT_JEV_TAGGING_MODE,
 ) -> pd.DataFrame:
     out = ensure_jev_sentiment_columns(df_unique, tag_definitions=tag_definitions)
+    _write_jev_tagging_result(out, original_index, tagging_result, tag_definitions, tagging_mode)
+    return out
+
+
+def _write_jev_tagging_result(
+    out: pd.DataFrame,
+    original_index: int,
+    tagging_result: dict[str, Any],
+    tag_definitions: dict[str, str] | None,
+    tagging_mode: str,
+) -> None:
     mode = normalize_jev_tagging_mode(tagging_mode)
     tags = tagging_result.get("tags", [])
     if not isinstance(tags, list):
@@ -1088,7 +1082,6 @@ def apply_jev_tagging_result_to_unique_df(
         out.loc[original_index, f"Jev Tag Probability [{tag}]"] = tag_result.get("yes_probability")
         out.loc[original_index, f"Jev Tag Confidence [{tag}]"] = tag_result.get("confidence")
     out.loc[original_index, f"Jev Best Tag Probability [{RESERVED_OTHER_TAG}]"] = best_probabilities.get(RESERVED_OTHER_TAG, 0.0)
-    return out
 
 
 def recompute_jev_official_tag_assignments(
@@ -1222,25 +1215,19 @@ def run_jev_sentiment_batch(
                 row_result = future.result()
                 original_index = int(row_result["original_index"])
                 result = row_result["result"]
-                updated = apply_jev_combined_result_to_unique_df(
+                _write_jev_combined_result(
                     updated,
                     original_index,
                     result,
-                    tag_definitions=tag_definitions,
-                    tagging_mode=tagging_mode,
+                    tag_definitions,
+                    tagging_mode,
                 )
                 total_input_tokens += int(result.get("input_tokens", 0) or 0)
                 total_cost += float(result.get("cost_usd", 0.0) or 0.0)
                 completed += 1
             except Exception as exc:
                 message = str(exc)
-                updated = apply_jev_sentiment_error_to_unique_df(
-                    updated,
-                    original_index,
-                    message,
-                    scheme=scheme,
-                    tag_definitions=tag_definitions,
-                )
+                updated.loc[original_index, "Jev Error"] = message.strip() or "Unknown Rapid Labeling error"
                 errors.append(f"Story {original_index + 1}: {message}")
             finally:
                 finished += 1

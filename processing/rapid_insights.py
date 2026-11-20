@@ -386,6 +386,51 @@ def rapid_observation_fingerprint(payload: dict[str, Any], *, settings: dict[str
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def build_analysis_context_fingerprint(payload: dict) -> str:
+    try:
+        return json.dumps(payload or {}, ensure_ascii=False, sort_keys=True, default=str)
+    except Exception:
+        return str(payload or "")
+
+
+def rapid_observation_current_fingerprint(
+    *,
+    family: str,
+    unique_df: pd.DataFrame,
+    scale: str = RAPID_SENTIMENT_SCALE_3_WAY,
+    tag_mode: str = RAPID_TAG_REVIEW_MODE_BEST,
+    include_not_relevant: bool = False,
+    include_other: bool = False,
+    tag_definitions: dict[str, str] | None = None,
+    analysis_context: str = "",
+    selected_prominence_column: str = "",
+) -> str:
+    if family == "sentiment":
+        payload = build_rapid_sentiment_observation_payload(
+            unique_df,
+            scale=scale,
+            include_not_relevant=include_not_relevant,
+            selected_prominence_column=selected_prominence_column,
+        )
+        return rapid_observation_fingerprint(
+            payload,
+            settings={"family": "sentiment", "scale": scale, "include_not_relevant": include_not_relevant},
+            analysis_context=analysis_context,
+        )
+    payload = build_rapid_tag_observation_payload(
+        unique_df,
+        mode=tag_mode,
+        include_other=include_other,
+        tag_definitions=tag_definitions,
+        selected_prominence_column=selected_prominence_column,
+    )
+    return rapid_observation_fingerprint(
+        payload,
+        settings={"family": "tagging", "mode": tag_mode, "include_other": include_other, "tag_definitions": tag_definitions or {}},
+        analysis_context=analysis_context,
+    )
+
+
 def generate_rapid_sentiment_observations(
     df_unique: pd.DataFrame,
     *,

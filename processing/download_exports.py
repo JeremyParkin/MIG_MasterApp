@@ -10,8 +10,11 @@ import pandas as pd
 from processing.analysis_context import (
     _build_dataset_scope_masks,
     apply_session_coverage_flag_policy,
+    build_analysis_context_text,
     build_coverage_row_key_series,
     build_dataset_scope_preview,
+    build_sentiment_analysis_context_text,
+    get_analysis_context_payload,
     get_dataset_coverage_flag_exclusions,
     get_dataset_coverage_keep_keys,
     get_dataset_scope_date_range,
@@ -25,6 +28,7 @@ from processing.ai_sentiment import (
     build_effective_sentiment_source_series,
     build_final_sentiment_series,
 )
+from utils.deployment import rapid_labeling_enabled
 from processing.jev_sentiment import (
     JEV_SHARED_RESULT_COLUMNS,
     RAPID_LABELING_SAMPLE_SHEET_NAME,
@@ -43,6 +47,14 @@ from processing.rapid_resolution import (
     build_final_rapid_tag_frame,
 )
 from processing.rapid_second_opinion import RAPID_REVIEW_COLUMNS
+from processing.rapid_sampling import rapid_sample_matches_scope
+from processing.spot_checks import is_legacy_spot_translation_error
+from processing.rapid_insights import (
+    RAPID_SENTIMENT_SCALE_3_WAY,
+    RAPID_TAG_REVIEW_MODE_BEST,
+    build_analysis_context_fingerprint,
+    rapid_observation_current_fingerprint,
+)
 from processing.outlet_insights import build_outlet_headline_table, build_outlet_metrics
 from processing.regions import (
     build_region_rankings,
@@ -55,7 +67,6 @@ from utils.session_timing import (
     format_session_started,
     get_current_session_duration_seconds,
 )
-from utils.deployment import rapid_labeling_enabled
 from utils.time_display import format_local_timestamp
 
 
@@ -169,6 +180,32 @@ RAPID_REVIEW_REQUEST_METADATA_COLUMNS = {
     "Rapid Review Raw Response",
 }
 
+RAPID_AUDIT_EXPORT_RENAMES = {
+    "Rapid Sentiment 3-Way Agreement": "Score-band agreement (3-way)",
+    "Rapid Sentiment 5-Way Agreement": "Score-band agreement (5-way)",
+}
+
+
+class _WorkbookExportState(dict):
+    """Hold the scope decision for one workbook build."""
+
+    def __init__(self, session_state):
+        super().__init__(session_state)
+        self.rapid_scope_matches = not rapid_labeling_enabled() or rapid_sample_matches_scope(self)
+
+
+def _rapid_workbook_scope_matches(session_state) -> bool:
+    if isinstance(session_state, _WorkbookExportState):
+        return session_state.rapid_scope_matches
+    return rapid_sample_matches_scope(session_state)
+
+
+def _omit_rapid_export_columns(df: pd.DataFrame) -> pd.DataFrame:
+    return df.drop(columns=[
+        column for column in df.columns
+        if str(column).startswith(("Jev ", "Rapid ", "Final Rapid ", "Effective Rapid "))
+        or column in RAPID_AUDIT_EXPORT_RENAMES.values()
+    ])
 def rename_ave(df: pd.DataFrame, original_ave_col: str | None = None) -> pd.DataFrame:
     """Restore internal AVE column to original uploaded AVE column name for export."""
     export_ave_name = original_ave_col or "AVE"
@@ -247,13 +284,6 @@ def add_mapped_outlet_column(df: pd.DataFrame, outlet_rollup_map: dict[str, str]
     return out
 
 
-def _omit_disabled_rapid_columns(df: pd.DataFrame) -> pd.DataFrame:
-    return df.drop(columns=[
-        column for column in df.columns
-        if str(column).startswith(("Jev ", "Rapid ", "Final Rapid ", "Effective Rapid "))
-    ])
-
-
 def remove_inactive_workflow_columns(
     df: pd.DataFrame,
     session_state,
@@ -304,8 +334,9 @@ def remove_inactive_workflow_columns(
     else:
         out = out.drop(columns=tagging_keep_cols + tagging_detail_cols + binary_tag_cols, errors="ignore")
 
-    if not rapid_labeling_enabled():
-        return _omit_disabled_rapid_columns(out)
+    out = out.drop(columns=list(RAPID_AUDIT_EXPORT_RENAMES), errors="ignore")
+    if not rapid_labeling_enabled() or not _rapid_workbook_scope_matches(session_state):
+        return _omit_rapid_export_columns(out)
 
     rapid_all_cols = _rapid_clean_export_column_names(session_state, include_audit=True)
     rapid_audit_cols = [
@@ -762,7 +793,7 @@ def sentiment_processed_complete_enough(session_state) -> bool:
 
 
 def jev_sentiment_processed_complete_enough(session_state) -> bool:
-    if not rapid_labeling_enabled():
+    if not rapid_labeling_enabled() or not _rapid_workbook_scope_matches(session_state) or not rapid_analysis_context_matches(session_state):
         return False
     df_unique = session_state.get("df_jev_sentiment_unique", pd.DataFrame())
     if not isinstance(df_unique, pd.DataFrame) or df_unique.empty:
@@ -781,6 +812,13 @@ def jev_sentiment_processed_complete_enough(session_state) -> bool:
         .any(axis=1)
     )
     return bool(has_output.any())
+
+
+def rapid_analysis_context_matches(session_state) -> bool:
+    prepared_context = session_state.get("jev_analysis_context_fingerprint")
+    return not prepared_context or prepared_context == build_analysis_context_fingerprint(
+        get_analysis_context_payload(session_state)
+    )
 
 
 def labeling_audit_available(session_state) -> bool:
@@ -1000,7 +1038,7 @@ def _rapid_clean_export_column_names(session_state, *, include_audit: bool) -> l
     rapid_unique = session_state.get("df_jev_sentiment_unique", pd.DataFrame())
     if isinstance(rapid_unique, pd.DataFrame):
         columns.extend(
-            rapid_labeling_column_name(column)
+            RAPID_AUDIT_EXPORT_RENAMES.get(column, rapid_labeling_column_name(column))
             for column in _rapid_audit_source_columns(rapid_unique)
         )
     return list(dict.fromkeys(columns))
@@ -1049,7 +1087,7 @@ def build_rapid_clean_export_map(session_state, *, include_audit: bool = False) 
 
         audit_source_columns = _rapid_audit_source_columns(rapid_unique)
         raw_map = rapid_unique[["Group ID", *audit_source_columns]].copy()
-        raw_map = rename_jev_columns_to_rapid(raw_map)
+        raw_map = rename_jev_columns_to_rapid(raw_map).rename(columns=RAPID_AUDIT_EXPORT_RENAMES)
         out = out.merge(
             effective_map.drop_duplicates(subset=["Group ID"], keep="last"),
             on="Group ID",
@@ -1143,15 +1181,26 @@ def build_rapid_labeling_sample_export(session_state, *, include_audit: bool = F
     first_pass_columns = _jev_export_columns(rapid_unique, include_audit=include_audit)
     first_pass_columns = [column for column in first_pass_columns if column not in JEV_REQUEST_METADATA_COLUMNS]
 
-    if isinstance(rapid_unique, pd.DataFrame) and first_pass_columns:
-        first_pass_map = rapid_unique[["Group ID", *first_pass_columns]].copy()
+    supplemental_columns = [
+        column for column in first_pass_columns
+        if rapid_labeling_column_name(column) not in rapid_map.columns
+    ]
+    if supplemental_columns:
+        first_pass_map = rapid_unique[["Group ID", *supplemental_columns]].copy()
         first_pass_map = rename_jev_columns_to_rapid(
             first_pass_map.drop_duplicates(subset=["Group ID"], keep="last")
         )
         rapid_map = rapid_map.merge(first_pass_map, on="Group ID", how="outer")
 
     rapid_columns = [column for column in rapid_map.columns if column != "Group ID"]
-    out = out.drop(columns=[*_jev_result_columns(out), *rapid_columns], errors="ignore")
+    legacy_first_pass_pairs = [
+        f"{rapid_labeling_column_name(column)}_{suffix}"
+        for column in _jev_export_columns(rapid_unique, include_audit=True)
+        for suffix in ("x", "y")
+    ]
+    out = out.drop(columns=[
+        *_jev_result_columns(out), *rapid_columns, *legacy_first_pass_pairs, *RAPID_AUDIT_EXPORT_RENAMES,
+    ], errors="ignore")
     out = out.merge(rapid_map, on="Group ID", how="left")
 
     priority_cols = [
@@ -1391,7 +1440,7 @@ def build_export_metadata_sheet(
         sent_processed_groups = int((has_ai | has_assigned).sum())
 
     jev_processed_groups = 0
-    if rapid_labeling_enabled() and isinstance(jev_unique, pd.DataFrame) and not jev_unique.empty:
+    if jev_sentiment_processed_complete_enough(session_state):
         jev_cols = _jev_result_columns(jev_unique)
         if jev_cols:
             jev_processed_groups = int(_jev_output_mask(jev_unique, jev_cols).sum())
@@ -1466,9 +1515,11 @@ def build_export_metadata_sheet(
         ("Sentiment Visible In CLEAN TRAD", "Yes" if sentiment_visible else "No"),
         ("Sentiment Sample Sheet", sentiment_sample_sheet),
         ("Sentiment Exported Rows", sentiment_sample_rows),
-
     ]
-    if rapid_labeling_enabled():
+
+    if rapid_labeling_enabled() and not _rapid_workbook_scope_matches(session_state):
+        rows.append(("Rapid Labeling Export", "Omitted: saved sample does not match the current dataset scope"))
+    elif rapid_labeling_enabled():
         rows.extend([
             ("Rapid Labeling Run", "Yes" if jev_sentiment_processed_complete_enough(session_state) else "No"),
             ("Rapid Labeling Processed Groups", jev_processed_groups),
@@ -1901,11 +1952,55 @@ def _iter_sentiment_report_sections(session_state) -> tuple[str, list[dict[str, 
     )
 
 
+def _rapid_observation_inputs_match(session_state, family: str) -> bool:
+    unique = session_state.get("df_jev_sentiment_unique")
+    if not isinstance(unique, pd.DataFrame) or unique.empty:
+        return False
+
+    prominence = get_analysis_context_payload(session_state).get("selected_prominence_column", "")
+    if family == "sentiment":
+        current = rapid_observation_current_fingerprint(
+            family="sentiment",
+            unique_df=unique,
+            scale=session_state.get("rapid_sentiment_observation_scale", RAPID_SENTIMENT_SCALE_3_WAY),
+            include_not_relevant=session_state.get("rapid_sentiment_observation_include_nr", False),
+            analysis_context=build_sentiment_analysis_context_text(session_state),
+            selected_prominence_column=prominence,
+        )
+    else:
+        current = rapid_observation_current_fingerprint(
+            family="tagging",
+            unique_df=unique,
+            tag_mode=session_state.get("rapid_tag_observation_mode", RAPID_TAG_REVIEW_MODE_BEST),
+            include_other=session_state.get("rapid_tag_observation_include_other", False),
+            tag_definitions=session_state.get("jev_tag_definitions", {}),
+            analysis_context=build_analysis_context_text(session_state),
+            selected_prominence_column=prominence,
+        )
+    return current == session_state.get(f"rapid_{family}_observation_fingerprint")
+
+
+def rapid_report_regeneration_needed(session_state, families: tuple[str, ...]) -> list[str]:
+    return [
+        family for family in families
+        if (session_state.get(f"rapid_{family}_observation_output") or {}).get("_error")
+        or not session_state.get(f"rapid_{family}_observation_fingerprint")
+        or not _rapid_observation_inputs_match(session_state, family)
+    ]
+
+
+def _current_rapid_observation_output(session_state, family: str) -> dict:
+    if not rapid_labeling_enabled() or not rapid_analysis_context_matches(session_state):
+        return {}
+    output = session_state.get(f"rapid_{family}_observation_output", {}) or {}
+    if not output or not session_state.get(f"rapid_{family}_observation_fingerprint"):
+        return output
+    return output if _rapid_observation_inputs_match(session_state, family) else {}
+
+
 def _iter_rapid_sentiment_report_sections(session_state) -> tuple[str, list[dict[str, Any]]]:
-    if not rapid_labeling_enabled():
-        return "", []
     return _iter_observation_report_sections(
-        session_state.get("rapid_sentiment_observation_output", {}) or {},
+        _current_rapid_observation_output(session_state, "sentiment"),
         sections_key="sentiment_sections",
         label_key="sentiment",
         summary_key="observation",
@@ -1980,10 +2075,8 @@ def _iter_tag_report_sections(session_state) -> tuple[str, list[dict[str, Any]]]
 
 
 def _iter_rapid_tag_report_sections(session_state) -> tuple[str, list[dict[str, Any]]]:
-    if not rapid_labeling_enabled():
-        return "", []
     return _iter_observation_report_sections(
-        session_state.get("rapid_tag_observation_output", {}) or {},
+        _current_rapid_observation_output(session_state, "tag"),
         sections_key="tag_sections",
         label_key="tag",
         summary_key="observation",
@@ -2171,7 +2264,21 @@ def build_report_copy_docx_bytes(session_state) -> bytes:
 
 # ---------- Workbook builder ----------
 
+def _omit_legacy_translation_errors(df: pd.DataFrame) -> pd.DataFrame:
+    out = df
+    for column in ("Translated Headline", "Translated Body"):
+        if column not in df.columns:
+            continue
+        failed = df[column].map(is_legacy_spot_translation_error)
+        if failed.any():
+            if out is df:
+                out = df.copy()
+            out.loc[failed, column] = None
+    return out
+
+
 def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns: bool | None = None) -> bytes:
+    session_state = _WorkbookExportState(session_state)
     if include_labeling_audit_columns is None:
         include_labeling_audit_columns = bool(session_state.get("include_labeling_audit_columns", False))
 
@@ -2220,6 +2327,7 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
             trad_export = order_clean_trad_grouping_columns(trad_export)
             if "Impressions" in trad_export.columns:
                 trad_export = trad_export.sort_values(by=["Impressions"], ascending=False)
+            trad_export = _omit_legacy_translation_errors(trad_export)
             trad_export.to_excel(writer, sheet_name="CLEAN TRAD", startrow=1, header=False, index=False)
             ws = writer.sheets["CLEAN TRAD"]
             ws.set_tab_color("black")
@@ -2236,6 +2344,7 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
             )
             if "Impressions" in social_export.columns:
                 social_export = social_export.sort_values(by=["Impressions"], ascending=False)
+            social_export = _omit_legacy_translation_errors(social_export)
             social_export.to_excel(writer, sheet_name="CLEAN SOCIAL", startrow=1, header=False, index=False)
             ws = writer.sheets["CLEAN SOCIAL"]
             ws.set_tab_color("black")
@@ -2245,11 +2354,13 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
             build_shared_sample_ai_export(session_state, include_audit=include_labeling_audit_columns),
             original_ave_col=original_ave_col,
         )
+        omit_rapid = not rapid_labeling_enabled() or not session_state.rapid_scope_matches
 
         # SHARED SAMPLED AI RESULTS
         if not shared_sample_export.empty:
-            if not rapid_labeling_enabled():
-                shared_sample_export = _omit_disabled_rapid_columns(shared_sample_export)
+            if omit_rapid:
+                shared_sample_export = _omit_rapid_export_columns(shared_sample_export)
+            shared_sample_export = _omit_legacy_translation_errors(shared_sample_export)
             shared_sample_export.to_excel(writer, sheet_name="SAMPLED AI RESULTS", header=True, index=False)
             ws = writer.sheets["SAMPLED AI RESULTS"]
             ws.set_tab_color("#7f8c8d")
@@ -2262,8 +2373,9 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
                 original_ave_col=original_ave_col,
             )
             if not tagging_export.empty:
-                if not rapid_labeling_enabled():
-                    tagging_export = _omit_disabled_rapid_columns(tagging_export)
+                if omit_rapid:
+                    tagging_export = _omit_rapid_export_columns(tagging_export)
+                tagging_export = _omit_legacy_translation_errors(tagging_export)
                 tagging_export.to_excel(writer, sheet_name="TAGGING SAMPLE", header=True, index=False)
                 ws = writer.sheets["TAGGING SAMPLE"]
                 ws.set_tab_color("#7f8c8d")
@@ -2276,8 +2388,9 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
                 original_ave_col=original_ave_col,
             )
             if not sentiment_export.empty:
-                if not rapid_labeling_enabled():
-                    sentiment_export = _omit_disabled_rapid_columns(sentiment_export)
+                if omit_rapid:
+                    sentiment_export = _omit_rapid_export_columns(sentiment_export)
+                sentiment_export = _omit_legacy_translation_errors(sentiment_export)
                 sentiment_export.to_excel(writer, sheet_name="SENTIMENT SAMPLE", header=True, index=False)
                 ws = writer.sheets["SENTIMENT SAMPLE"]
                 ws.set_tab_color("#7f8c8d")
@@ -2289,6 +2402,7 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
             original_ave_col=original_ave_col,
         )
         if not rapid_sample_export.empty:
+            rapid_sample_export = _omit_legacy_translation_errors(rapid_sample_export)
             rapid_sample_export.to_excel(writer, sheet_name=RAPID_LABELING_SAMPLE_SHEET_NAME, header=True, index=False)
             ws = writer.sheets[RAPID_LABELING_SAMPLE_SHEET_NAME]
             ws.set_tab_color("#9b59b6")
@@ -2365,6 +2479,7 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
                 session_state,
                 include_labeling_audit_columns=include_labeling_audit_columns,
             )
+            dupes_export = _omit_legacy_translation_errors(dupes_export)
             dupes_export.to_excel(writer, sheet_name="DLTD DUPES", header=True, index=False)
             ws = writer.sheets["DLTD DUPES"]
             ws.set_tab_color("#c26f4f")
@@ -2381,6 +2496,7 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
             )
             if "Impressions" in excluded_export.columns:
                 excluded_export = excluded_export.sort_values(by=["Impressions"], ascending=False)
+            excluded_export = _omit_legacy_translation_errors(excluded_export)
             excluded_export.to_excel(writer, sheet_name="EXCLUDED ROWS", header=True, index=False)
             ws = writer.sheets["EXCLUDED ROWS"]
             ws.set_tab_color("#c26f4f")
@@ -2395,6 +2511,7 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
             include_labeling_audit_columns=include_labeling_audit_columns,
         )
         raw_export.drop(["Mentions"], axis=1, inplace=True, errors="ignore")
+        raw_export = _omit_legacy_translation_errors(raw_export)
         raw_export.to_excel(writer, sheet_name="RAW", header=True, index=False)
         ws = writer.sheets["RAW"]
         ws.set_tab_color("#c26f4f")

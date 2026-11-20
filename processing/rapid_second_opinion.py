@@ -17,6 +17,7 @@ from processing.jev_sentiment import (
     build_jev_tag_question_map,
     normalize_jev_tagging_mode,
 )
+from processing.rapid_resolution import first_pass_applicable_tags
 from utils.api_meter import estimate_cost_usd, extract_usage_tokens
 
 
@@ -45,6 +46,7 @@ RAPID_REVIEW_COLUMNS = [
     "Rapid Review 5-Way Sentiment",
     "Rapid Review Best Tag",
     "Rapid Review Tags",
+    "Rapid Review Applicable Tags",
     "Rapid Review Tag Confidence",
     "Rapid Review Tag Rationale",
     "Rapid Review Status",
@@ -178,7 +180,7 @@ def derive_five_way_from_score(score: Any, *, not_relevant: bool = False) -> str
 
 
 def normalize_sentiment_outcome(value: Any) -> tuple[str, float | None]:
-    raw = str(value or "").strip().upper().replace(" ", "_")
+    raw = ("" if value is None else str(value).strip()).upper().replace(" ", "_")
     if raw in {"NOT_RELEVANT", "NOT-RELEVANT", "NOT_RELEVANT."}:
         return "NOT_RELEVANT", None
     raw = raw.replace("+", "")
@@ -312,15 +314,18 @@ def _near_boundary(score: float | None) -> bool:
 def _has_successful_first_pass(row: pd.Series, tag_definitions: dict[str, str] | None) -> bool:
     if _safe_text(row.get("Jev Error", "")):
         return False
-    required = ["Jev Sentiment", "Jev 5-Way Sentiment", "Jev Sentiment Score", "Jev Mixture Label"]
+    required = ["Jev Sentiment", "Jev 5-Way Sentiment", "Jev Mixture Label"]
     if any(not _safe_text(row.get(column, "")) for column in required):
+        return False
+    score = row.get("Jev Sentiment Score")
+    if not _safe_text(score) and _to_float(score) != 0.0:
         return False
     if build_jev_tag_question_map(tag_definitions):
         return bool(_safe_text(row.get("Jev Best Tag", "")) and _safe_text(row.get("Jev Tags", "")))
     return True
 
 
-def _impact_thresholds(df: pd.DataFrame) -> dict[str, float]:
+def rapid_review_impact_thresholds(df: pd.DataFrame) -> dict[str, float]:
     thresholds = {}
     for column in ["Group Count", "Effective Reach", "Mentions", "Impressions"]:
         if column not in df.columns:
@@ -480,8 +485,66 @@ def compute_rapid_review_candidate_reasons(
         "impact_count": len(impact_reasons),
         "uncertainty_count": len(uncertainty_reasons),
         "contextual_count": len(contextual_reasons),
+        "reasons": ordered_reasons,
         "first_pass": first_pass,
     }
+
+
+def rapid_has_material_priority_flag(
+    row: pd.Series,
+    *,
+    domain: str,
+    agrees: bool,
+    tag_definitions: dict[str, str] | None,
+    impact_thresholds: dict[str, float],
+) -> bool:
+    evaluation = compute_rapid_review_candidate_reasons(
+        row, tag_definitions=tag_definitions, impact_thresholds=impact_thresholds,
+    )
+    saved = _safe_text(row.get("Rapid Review Priority Reason"))
+    reasons = set(evaluation["reasons"]) | {reason for reason in saved.split("; ") if reason}
+    reasons.discard("routine processed story")
+    if not reasons:
+        # A restored priority without its reason cannot be safely dismissed.
+        return _safe_text(row.get("Rapid Review Priority Tier")).startswith(("Tier 1", "Tier 2", "Tier 3", "Tier 4"))
+    if not agrees:
+        return True
+
+    if domain == "Sentiment":
+        incidental = {"raw 5-way conflicts with score-derived 5-way"}
+        selected = _to_probability(row.get("Jev Selected Probability"))
+        five_selected = _to_probability(row.get("Jev 5-Way Selected Probability"))
+        if (
+            selected is not None and selected >= RAPID_REVIEW_PROBABILITY_LOW
+            and five_selected is not None and five_selected < RAPID_REVIEW_PROBABILITY_LOW
+        ):
+            incidental.add("low selected sentiment probability")
+        three_probs = _probabilities_for_prefix(row, "Jev Probability ")
+        five_probs = _probabilities_for_prefix(row, "Jev 5-Way Probability ")
+        if (
+            len(three_probs) >= 2 and not _close_probability_competition(three_probs)
+            and _close_probability_competition(five_probs)
+        ):
+            incidental.add("close competing sentiment probabilities")
+        score = evaluation["first_pass"]["raw_score"]
+        if score is not None and abs(abs(score) - 4) <= 0.35:
+            incidental.add("fractional score near a derived sentiment boundary")
+    else:
+        incidental = {
+            "low best-tag probability",
+            "best-fit tag is not among independent YES tags",
+            "zero explicit YES tags when best-fit is not Other",
+        }
+
+    remaining = reasons - incidental
+    # These compound reasons add no flag when their only trigger was just cleared.
+    contradictions = set(evaluation["reasons"][:evaluation["contradiction_count"]])
+    if contradictions and contradictions <= incidental:
+        remaining.discard("negative + sentiment contradiction")
+    low_confidence = {reason for reason in reasons if reason.startswith("low ")}
+    if low_confidence and low_confidence <= incidental:
+        remaining.discard("negative + low confidence")
+    return bool(remaining)
 
 
 def build_rapid_review_candidates(
@@ -500,7 +563,7 @@ def build_rapid_review_candidates(
     if pool.empty:
         return pool
 
-    thresholds = _impact_thresholds(pool)
+    thresholds = rapid_review_impact_thresholds(pool)
     reason_rows = []
     for idx, row in pool.iterrows():
         reasons = compute_rapid_review_candidate_reasons(
@@ -792,13 +855,23 @@ def apply_rapid_review_result_to_df(
     tag_definitions: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     out = ensure_rapid_review_columns(df_unique)
+    _write_rapid_review_result(out, original_index, row_result, tag_definitions)
+    return out
+
+
+def _write_rapid_review_result(
+    out: pd.DataFrame,
+    original_index: int,
+    row_result: dict[str, Any],
+    tag_definitions: dict[str, str] | None,
+) -> None:
     parsed = row_result.get("parsed", {}) if isinstance(row_result.get("parsed"), dict) else {}
     error = _safe_text(row_result.get("error", ""))
     if error:
         out.loc[original_index, "Rapid Review Status"] = "Error"
         out.loc[original_index, "Rapid Review Error"] = error
         out.loc[original_index, "Rapid Review Model"] = row_result.get("model")
-        return out
+        return
 
     row = out.loc[original_index]
     first_pass = normalize_first_pass_sentiment(row)
@@ -828,14 +901,16 @@ def apply_rapid_review_result_to_df(
 
     if build_jev_tag_question_map(tag_definitions):
         first_best = _safe_text(row.get("Jev Best Tag", ""))
-        first_tags = set(normalize_tag_assignment(_json_list(row.get("Jev Tags", "")), {item["tag"]: item["rationale"] for item in build_jev_tag_question_map(tag_definitions)}))
+        first_tags = set(normalize_tag_assignment(first_pass_applicable_tags(row, tag_definitions), tag_definitions))
         review_tags = parsed.get("official_tags", [])
+        applicable_tags = parsed.get("applicable_tags", review_tags)
         out.loc[original_index, "Rapid Review Best Tag"] = parsed.get("best_tag")
         out.loc[original_index, "Rapid Review Tags"] = "; ".join(review_tags)
+        out.loc[original_index, "Rapid Review Applicable Tags"] = "; ".join(applicable_tags)
         out.loc[original_index, "Rapid Review Tag Confidence"] = parsed.get("tag_confidence")
         out.loc[original_index, "Rapid Review Tag Rationale"] = parsed.get("tag_rationale")
         out.loc[original_index, "Rapid Tag Best-Fit Agreement"] = "Match" if first_best.casefold() == str(parsed.get("best_tag", "")).casefold() else "Disagree"
-        out.loc[original_index, "Rapid Tag Set Agreement"] = "Match" if first_tags == set(review_tags) else "Disagree"
+        out.loc[original_index, "Rapid Tag Set Agreement"] = "Match" if first_tags == set(applicable_tags) else "Disagree"
 
     out.loc[original_index, "Rapid Review Status"] = "Completed"
     out.loc[original_index, "Rapid Review Error"] = pd.NA
@@ -844,7 +919,6 @@ def apply_rapid_review_result_to_df(
     out.loc[original_index, "Rapid Review Output Tokens"] = row_result.get("output_tokens")
     out.loc[original_index, "Rapid Review Cost USD"] = row_result.get("cost_usd")
     out.loc[original_index, "Rapid Review Raw Response"] = row_result.get("raw_response")
-    return out
 
 
 def run_rapid_review_batch(
@@ -894,12 +968,7 @@ def run_rapid_review_batch(
             try:
                 row_result = future.result()
                 original_index = int(row_result.get("original_index", original_index))
-                updated = apply_rapid_review_result_to_df(
-                    updated,
-                    original_index,
-                    row_result,
-                    tag_definitions=tag_definitions,
-                )
+                _write_rapid_review_result(updated, original_index, row_result, tag_definitions)
                 if row_result.get("error"):
                     gid = row_result.get("group_id", original_index)
                     errors.append(f"Group {gid}: {row_result['error']}")

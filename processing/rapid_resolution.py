@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import json
 from typing import Any
 
 import pandas as pd
@@ -500,9 +501,78 @@ def _tags_equal(left: list[str], right: list[str]) -> bool:
     return {tag.casefold() for tag in left} == {tag.casefold() for tag in right}
 
 
+def compare_rapid_active_decision(
+    row: pd.Series,
+    *,
+    domain: str,
+    tag_definitions: dict[str, str] | None = None,
+) -> bool | None:
+    """Compare original AI decisions for Spot Checks. None means no usable comparison."""
+    if not _review_has_completed(row) or _review_has_error(row):
+        return None
+    if domain == "Sentiment":
+        first = _sentiment_base_from_jev(row)
+        second = _review_sentiment_from_luna(row)
+        labels = {"POSITIVE", "NEUTRAL", "NEGATIVE", "NOT RELEVANT"}
+        if not first["valid"] or not second["valid"]:
+            return None
+        if first["three_way"] not in labels or second["three_way"] not in labels:
+            return None
+        return (first["relevance"], first["three_way"]) == (second["relevance"], second["three_way"])
+
+    first, first_invalid = _normalize_tag_set(first_pass_applicable_tags(row, tag_definitions), tag_definitions)
+    raw = _safe_text(row.get("Rapid Review Raw Response", ""))
+    if raw:
+        # Older parsers could store Other even when Luna omitted the applicable set.
+        try:
+            evidence = json.loads(raw)
+        except ValueError:
+            return None
+        applicable = evidence.get("applicable_tags") if isinstance(evidence, dict) else None
+        if not isinstance(applicable, list) or any(not isinstance(tag, str) or not tag.strip() for tag in applicable):
+            return None
+        # Use the parsed set when present to retain the existing Other normalization.
+        second_input = _safe_text(row.get("Rapid Review Applicable Tags")) or applicable or [RESERVED_OTHER_TAG]
+    else:
+        second_input = row.get("Rapid Review Applicable Tags")
+    second, second_invalid = _normalize_tag_set(second_input, tag_definitions)
+    if not first or not second or first_invalid or second_invalid:
+        return None
+    return _tags_equal(first, second)
+
+
+def first_pass_applicable_tags(
+    row: pd.Series | dict[str, Any],
+    tag_definitions: dict[str, str] | None,
+) -> list[str]:
+    questions = build_jev_tag_question_map(tag_definitions)
+    choices = {
+        question["tag"]: _clean_label(row.get(f'Jev Tag [{question["tag"]}]', ""))
+        for question in questions
+    }
+    if choices and all(choice in {"YES", "NO"} for choice in choices.values()):
+        return [tag for tag, choice in choices.items() if choice == "YES"] or [RESERVED_OTHER_TAG]
+    return _split_tag_list(row.get("Jev Tags", ""))
+
+
+def second_pass_applicable_tags(row: pd.Series | dict[str, Any]) -> list[str]:
+    stored = _safe_text(row.get("Rapid Review Applicable Tags", ""))
+    if stored:
+        return _split_tag_list(stored)
+    raw = _safe_text(row.get("Rapid Review Raw Response", ""))
+    if raw:
+        try:
+            evidence = json.loads(raw)
+            if isinstance(evidence, dict) and isinstance(evidence.get("applicable_tags"), list):
+                return _split_tag_list(evidence["applicable_tags"]) or [RESERVED_OTHER_TAG]
+        except ValueError:
+            pass
+    return _split_tag_list(row.get("Rapid Review Tags", ""))
+
+
 def _tag_base_from_jev(row: pd.Series, tag_definitions: dict[str, str] | None) -> dict[str, Any]:
     best_tag, best_invalid = _normalize_one_tag(row.get("Jev Best Tag", ""), tag_definitions)
-    tags, tags_invalid = _normalize_tag_set(row.get("Jev Tags", ""), tag_definitions)
+    tags, tags_invalid = _normalize_tag_set(first_pass_applicable_tags(row, tag_definitions), tag_definitions)
     if not best_tag or not tags:
         return {
             "valid": False,
@@ -532,7 +602,7 @@ def _tag_base_from_jev(row: pd.Series, tag_definitions: dict[str, str] | None) -
 
 def _tag_review_from_luna(row: pd.Series, tag_definitions: dict[str, str] | None) -> dict[str, Any]:
     best_tag, best_invalid = _normalize_one_tag(row.get("Rapid Review Best Tag", ""), tag_definitions)
-    tags, tags_invalid = _normalize_tag_set(row.get("Rapid Review Tags", ""), tag_definitions)
+    tags, tags_invalid = _normalize_tag_set(second_pass_applicable_tags(row), tag_definitions)
     if not best_tag or not tags or best_invalid or tags_invalid:
         return {"valid": False}
     return {"valid": True, "best_tag": best_tag, "tags": tags}

@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import warnings
 
 import streamlit as st
 from ui.page_help import set_page_help_context
+from utils.deployment import rapid_labeling_enabled
 from utils.time_display import format_local_timestamp
+from utils.workbook_download import invalidate_clean_workbook
 
 from processing.download_exports import (
     build_clean_workbook_bytes,
     build_report_copy_docx_bytes,
     build_scoped_traditional_export_bundle,
     labeling_audit_available,
+    rapid_analysis_context_matches,
+    rapid_report_regeneration_needed,
 )
 from processing.notebooklm_exports import build_notebooklm_zip
+from processing.rapid_sampling import rapid_sample_matches_scope, rapid_scope_signature
 
 warnings.filterwarnings("ignore")
 
@@ -29,6 +36,18 @@ if not st.session_state.get("standard_step", False):
 st.divider()
 st.subheader("Clean data workbook")
 
+rapid_enabled = rapid_labeling_enabled()
+rapid_scope_matches = not rapid_enabled or rapid_sample_matches_scope(st.session_state)
+scope_key = (rapid_scope_signature(st.session_state), rapid_enabled, rapid_scope_matches)
+if "clean_excel_bytes" in st.session_state and st.session_state.get("_clean_excel_scope_key") != scope_key:
+    invalidate_clean_workbook(st.session_state)
+if not rapid_scope_matches:
+    st.warning(
+        "The saved Rapid Labeling sample does not match the current dataset scope. "
+        "The cleaned workbook will omit its Rapid results. To include Rapid results, restore a compatible scope "
+        "or prepare a new sample in Rapid Labeling. The saved sample and analyst decisions are still in the session."
+    )
+
 if labeling_audit_available(st.session_state):
     st.checkbox(
         "Include labeling audit columns",
@@ -38,7 +57,8 @@ if labeling_audit_available(st.session_state):
 else:
     st.session_state.include_labeling_audit_columns = False
 
-had_clean_workbook = "clean_excel_bytes" in st.session_state
+needs_rebuild = st.session_state.get("_rapid_clean_workbook_needs_rebuild", False)
+had_clean_workbook = needs_rebuild or "clean_excel_bytes" in st.session_state
 
 build_xlsx = st.button("Build cleaned data workbook", key="build_clean_workbook")
 if build_xlsx:
@@ -49,6 +69,8 @@ if build_xlsx:
                 include_labeling_audit_columns=bool(st.session_state.get("include_labeling_audit_columns", False)),
             )
             st.session_state.clean_excel_built_at = format_local_timestamp()
+            st.session_state["_clean_excel_scope_key"] = scope_key
+            st.session_state.pop("_rapid_clean_workbook_needs_rebuild", None)
             action_word = "rebuilt" if had_clean_workbook else "built"
             st.success(f"Cleaned workbook {action_word} at {st.session_state.clean_excel_built_at}")
     except Exception as e:
@@ -66,28 +88,80 @@ if "clean_excel_bytes" in st.session_state:
 
     if "clean_excel_built_at" in st.session_state:
         st.caption(f"Current workbook built: {st.session_state.clean_excel_built_at}")
+elif st.session_state.get("_rapid_clean_workbook_needs_rebuild", False):
+    st.warning("Build the cleaned data workbook again to download current results.")
 
 st.divider()
 st.subheader("Report copy document")
 
 had_report_copy = "report_copy_docx_bytes" in st.session_state
+rapid_observations = {
+    family: output
+    for family in ("sentiment", "tag")
+    if rapid_enabled and (output := st.session_state.get(f"rapid_{family}_observation_output"))
+}
+report_blocked = False
+if rapid_observations:
+    if not rapid_scope_matches:
+        st.warning(
+            "Before rebuilding the Word report with Rapid observations, restore a compatible scope or "
+            "prepare a new Rapid sample and regenerate its observations. Your saved work is still in the session."
+        )
+        report_blocked = True
+    elif not rapid_analysis_context_matches(st.session_state):
+        st.warning(
+            "Resolve the Analysis Context warning in Rapid Labeling, then regenerate the Rapid observations "
+            "in Insights before rebuilding the Word report."
+        )
+        report_blocked = True
+    else:
+        regenerate = rapid_report_regeneration_needed(st.session_state, tuple(rapid_observations))
+        if regenerate:
+            observations = " and ".join(regenerate)
+            st.warning(
+                f"Regenerate Rapid {observations} observations in Rapid Labeling → Insights "
+                "before rebuilding the Word report."
+            )
+            report_blocked = True
+
+# Keep the cached document until the build succeeds, and check its Rapid content before offering it.
+rapid_report_key = (
+    rapid_enabled,
+    tuple(
+        (family, st.session_state.get(f"rapid_{family}_observation_fingerprint"),
+         hashlib.sha256(json.dumps(output, sort_keys=True, default=str).encode()).hexdigest())
+        for family, output in rapid_observations.items()
+    ),
+)
+cached_report_key = st.session_state.get("_report_copy_rapid_key")
+if had_report_copy and rapid_enabled and not report_blocked and cached_report_key:
+    removed = {family for family, _, _ in cached_report_key[1]} - rapid_observations.keys()
+    if removed:
+        st.warning(
+            "The previous Word report included Rapid observations that are no longer generated in this session. "
+            "Generate them in Rapid Labeling → Insights before rebuilding if you want to include them."
+        )
 
 build_report_copy = st.button(
     "Build report copy document",
     key="build_report_copy_document",
     help="Creates a lightly formatted Word document with the current narrative insights and representative linked examples.",
+    disabled=report_blocked,
 )
-if build_report_copy:
+if build_report_copy and not report_blocked:
     try:
         with st.spinner("Building report copy document..."):
             st.session_state.report_copy_docx_bytes = build_report_copy_docx_bytes(st.session_state)
             st.session_state.report_copy_built_at = format_local_timestamp()
+            st.session_state["_report_copy_rapid_key"] = rapid_report_key
             action_word = "rebuilt" if had_report_copy else "built"
             st.success(f"Report copy document {action_word} at {st.session_state.report_copy_built_at}")
     except Exception as e:
         st.error(f"Error building report copy document: {e}")
 
-if "report_copy_docx_bytes" in st.session_state:
+if had_report_copy and not report_blocked and st.session_state.get("_report_copy_rapid_key") != rapid_report_key:
+    st.warning("Build the report copy document again to download current observations.")
+elif "report_copy_docx_bytes" in st.session_state and not report_blocked:
     export_name = f"{st.session_state.export_name} - report_copy.docx"
     st.download_button(
         "Download report copy document",

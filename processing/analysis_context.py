@@ -1143,18 +1143,15 @@ def init_analysis_context_state(session_state) -> None:
             flag for flag in DEFAULT_QUALITATIVE_COVERAGE_FLAGS
             if (not present_junky_flags) or flag in present_junky_flags
         ]
-        if session_state.get("analysis_exclude_junky_from_qualitative", None) is True:
-            session_state.analysis_qualitative_excluded_flags = default_qualitative_flags
-        else:
-            session_state.analysis_qualitative_excluded_flags = default_qualitative_flags
+        session_state["analysis_qualitative_excluded_flags"] = default_qualitative_flags
     if "analysis_dataset_excluded_flags" not in session_state:
         if session_state.get("analysis_exclude_junky_from_dataset", None) is True:
-            session_state.analysis_dataset_excluded_flags = [
+            session_state["analysis_dataset_excluded_flags"] = [
                 flag for flag in ["Press Release", "Financial Outlet", "Advertorial"]
                 if ((not present_junky_flags) or flag in present_junky_flags) and flag in AVAILABLE_JUNKY_COVERAGE_FLAGS
             ]
         else:
-            session_state.analysis_dataset_excluded_flags = DEFAULT_DATASET_COVERAGE_FLAGS.copy()
+            session_state["analysis_dataset_excluded_flags"] = DEFAULT_DATASET_COVERAGE_FLAGS.copy()
 
 
 def save_analysis_context(

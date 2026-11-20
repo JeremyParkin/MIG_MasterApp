@@ -216,17 +216,27 @@ def split_text(text: str, limit: int = 700, sentence_limit: int = 350) -> list[s
 
 def translate_concurrently(chunks: list[str]) -> list[str]:
     translator = GoogleTranslator(source="auto", target="en")
-    results: list[str | None] = [None] * len(chunks)
-
     with ThreadPoolExecutor(max_workers=20) as ex:
-        futures = [(i, ex.submit(translator.translate, c)) for i, c in enumerate(chunks)]
-        for i, fut in futures:
-            try:
-                results[i] = fut.result()
-            except Exception as e:
-                results[i] = f"Error: {e}"
+        results = list(ex.map(translator.translate, chunks))
 
-    return [str(x or "") for x in results]
+    translated = [usable_spot_translation(result) for result in results]
+    if not all(translated):
+        raise ValueError("The translation provider returned unusable text.")
+    return translated
+
+
+def usable_spot_translation(value: object) -> str:
+    """Ignore missing text and legacy provider errors embedded in saved translations."""
+    if not isinstance(value, str) or is_legacy_spot_translation_error(value):
+        return ""
+    return value.strip()
+
+
+def is_legacy_spot_translation_error(value: object) -> bool:
+    return isinstance(value, str) and (
+        "Error: Server Error:" in value
+        or "Error: Request exception can happen due to an api connection error." in value
+    )
 
 
 def translate_text(text: str) -> str:
