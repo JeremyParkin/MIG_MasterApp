@@ -57,6 +57,7 @@ from utils.api_meter import (
     estimate_cost_usd,
     get_api_cost_usd,
 )
+from processing.report_observation_freshness import sentiment_observation_fingerprint
 from utils.ai_checkpoints import record_checkpoint_progress, render_checkpoint_save_reminder, reset_workflow_checkpoints
 from ui.page_help import set_page_help_context
 
@@ -834,6 +835,7 @@ with obs_button_col:
     if st.button("Generate sentiment observations", type="primary", key="generate_sentiment_observations", use_container_width=True):
         with st.spinner("Generating sentiment observations..."):
             try:
+                fingerprint = sentiment_observation_fingerprint(st.session_state, include_not_relevant=include_not_relevant_final)
                 obs_output, _, _ = generate_sentiment_observations(
                     df_unique=st.session_state.df_sentiment_unique,
                     df_grouped_rows=st.session_state.get("df_sentiment_grouped_rows"),
@@ -847,6 +849,7 @@ with obs_button_col:
                 )
                 st.session_state.sentiment_observation_output = obs_output
                 st.session_state.sentiment_observation_include_nr = include_not_relevant_final
+                st.session_state.sentiment_observation_fingerprint = fingerprint
             except Exception as e:
                 st.error(f"Could not generate sentiment observations: {e}")
 

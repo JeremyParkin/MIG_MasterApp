@@ -26,6 +26,7 @@ from processing.author_insights import (
     DEFAULT_AUTHOR_SUMMARY_MODEL,
     build_author_headline_table,
     build_author_metrics,
+    build_author_prompt,
     generate_author_summary,
     init_author_insights_state,
 )
@@ -41,6 +42,7 @@ from processing.missing_authors import (
     prepare_author_working_df,
     undo_last_author_fix,
 )
+from utils.download_freshness import content_fingerprint
 from utils.dataframe_helpers import top_x_by_mentions
 
 author_outlets = importlib.reload(author_outlets_module)
@@ -1262,8 +1264,10 @@ def render_authors_page() -> None:
             if st.button("Generate Coverage Themes", type="primary", key=f"authors_generate_theme_summaries_{key_suffix}", use_container_width=True):
                 st.session_state.authors_section = "Insights"
                 summaries = dict(summary_store)
+                fingerprints = dict(st.session_state.get("author_insights_summary_fingerprints", {}))
                 client_name = str(st.session_state.get("client_name", "")).strip()
                 analysis_context = build_analysis_context_text(st.session_state)
+                prominence = get_analysis_context_payload(st.session_state).get("selected_prominence_column", "")
                 with st.spinner("Generating author theme summaries..."):
                     for author_name in selected_authors:
                         author_row = shortlist_df.loc[shortlist_df["Author"] == author_name].iloc[0]
@@ -1271,7 +1275,7 @@ def render_authors_page() -> None:
                             author_story_rows,
                             author_name,
                             limit=60,
-                            selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
+                            selected_prominence_column=prominence,
                         )
                         try:
                             summary_text, _, _ = generate_author_summary(
@@ -1282,12 +1286,18 @@ def render_authors_page() -> None:
                                 api_key=st.secrets["key"],
                                 model=DEFAULT_AUTHOR_SUMMARY_MODEL,
                                 analysis_context=analysis_context,
-                                selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
+                                selected_prominence_column=prominence,
                             )
+                            fingerprints[author_name] = content_fingerprint(build_author_prompt(
+                                author_name, client_name, author_row, headline_df,
+                                analysis_context=analysis_context, selected_prominence_column=prominence,
+                            ))
                             summaries[author_name] = summary_text
                         except Exception as e:
+                            fingerprints.pop(author_name, None)
                             summaries[author_name] = f"Could not generate summary: {e}"
                 st.session_state.author_insights_summaries = summaries
+                st.session_state.author_insights_summary_fingerprints = fingerprints
                 st.rerun()
 
         def build_report_html(

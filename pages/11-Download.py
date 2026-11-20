@@ -2,245 +2,251 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import warnings
 
+import pandas as pd
 import streamlit as st
 from ui.page_help import set_page_help_context
 from utils.deployment import rapid_labeling_enabled
 from utils.time_display import format_local_timestamp
-from utils.workbook_download import invalidate_clean_workbook
+from utils.download_freshness import content_fingerprint, frame_fingerprint, workbook_fingerprint
 
 from processing.download_exports import (
     build_clean_workbook_bytes,
     build_report_copy_docx_bytes,
     build_scoped_traditional_export_bundle,
+    iter_clean_workbook_sheets,
     labeling_audit_available,
+    prepare_report_copy_content,
     rapid_analysis_context_matches,
     rapid_report_regeneration_needed,
+    stale_regions_export_observations,
 )
-from processing.notebooklm_exports import build_notebooklm_zip
-from processing.rapid_sampling import rapid_sample_matches_scope, rapid_scope_signature
-from processing.rapid_resolution import rapid_report_sentiment_scale, rapid_tag_view_mode
+from processing.notebooklm_exports import (
+    compile_notebooklm_bundle, notebooklm_client_short, prepare_notebooklm_rows,
+)
+from processing.rapid_sampling import rapid_sample_matches_scope
+from processing.report_observation_freshness import established_report_regeneration_needed, stale_coverage_themes
 
 warnings.filterwarnings("ignore")
 
 st.title("Download")
-st.caption("Build and download the cleaned workbook and NotebookLM-ready bundle from the current session state.")
+st.caption("Build and download the cleaned workbook, Word report, and NotebookLM bundle.")
 set_page_help_context(st.session_state, "Download")
 
 if not st.session_state.get("standard_step", False):
     st.error("Please complete Basic Cleaning before trying this step.")
     st.stop()
 
+def render_download(asset, title, filename, *, fingerprint, button_key, prerequisite=False, summary=None):
+    data = st.session_state.get(f"{asset}_bytes")
+    if data is None:
+        return
+    earlier = prerequisite or fingerprint is None or st.session_state.get(f"_{asset}_fingerprint") != fingerprint
+    if earlier and not prerequisite:
+        st.warning(f"The downloadable {title} is an earlier version. Rebuild it before using it.")
+    label = f"Download earlier {title}" if earlier else f"Download {title}"
+    st.download_button(label, data, file_name=filename, type="primary", key=button_key)
+    if built_at := st.session_state.get(f"{asset.removesuffix('_docx').removesuffix('_zip')}_built_at"):
+        prefix = "Earlier version built" if earlier else "Built"
+        st.caption(f"{prefix}: {built_at}")
+    if summary:
+        st.caption(summary)
+
+
+def save_download(asset, data, fingerprint, title):
+    rebuilt = f"{asset}_bytes" in st.session_state
+    st.session_state[f"{asset}_bytes"] = data
+    st.session_state[f"_{asset}_fingerprint"] = fingerprint
+    timestamp = format_local_timestamp()
+    st.session_state[f"{asset.removesuffix('_docx').removesuffix('_zip')}_built_at"] = timestamp
+    st.success(f"{title} {'rebuilt' if rebuilt else 'built'} at {timestamp}")
+
+
 st.divider()
 st.subheader("Clean data workbook")
 
 rapid_enabled = rapid_labeling_enabled()
 rapid_scope_matches = not rapid_enabled or rapid_sample_matches_scope(st.session_state)
+rapid_context_matches = not rapid_enabled or rapid_analysis_context_matches(st.session_state)
 if not rapid_scope_matches:
     st.warning(
         "The saved Rapid Labeling sample does not match the current dataset scope. "
-        "The cleaned workbook will omit its Rapid results. To include Rapid results, restore a compatible scope "
-        "or prepare a new sample in Rapid Labeling. The saved sample and analyst decisions are still in the session."
+        "A new workbook will omit its Rapid results. An earlier workbook may still contain them. "
+        "To include Rapid results in a new workbook, restore a compatible scope "
+        "or prepare a new sample and rerun labeling in Rapid Labeling. Your saved work is still in the session."
+    )
+elif not rapid_context_matches:
+    st.warning(
+        "A new workbook will omit Rapid results prepared with a different Analysis Context. "
+        "Restore that Analysis Context or prepare a new Rapid sample and rerun labeling to include Rapid results."
+    )
+
+if stale_regions := stale_regions_export_observations(st.session_state):
+    st.warning(
+        f"Regenerate {', '.join(stale_regions)} observations in Regions to include them in a new workbook or Word report. "
+        "Rebuilding alone will omit those observations."
     )
 
 if labeling_audit_available(st.session_state):
-    st.checkbox(
-        "Include labeling audit columns",
-        value=False,
-        key="include_labeling_audit_columns",
-    )
+    st.checkbox("Include labeling audit columns", value=False, key="include_labeling_audit_columns")
 else:
     st.session_state.include_labeling_audit_columns = False
 
-report_choices = (
-    rapid_report_sentiment_scale(st.session_state),
-    rapid_tag_view_mode(st.session_state.get("jev_tagging_mode")),
-) if rapid_enabled and rapid_scope_matches else None
-scope_key = (
-    rapid_scope_signature(st.session_state), rapid_enabled, rapid_scope_matches,
-    report_choices, st.session_state.include_labeling_audit_columns,
-)
-if "clean_excel_bytes" in st.session_state and st.session_state.get("_clean_excel_scope_key") != scope_key:
-    invalidate_clean_workbook(st.session_state)
-
-needs_rebuild = st.session_state.get("_rapid_clean_workbook_needs_rebuild", False)
-had_clean_workbook = needs_rebuild or "clean_excel_bytes" in st.session_state
-
 build_xlsx = st.button("Build cleaned data workbook", key="build_clean_workbook")
-if build_xlsx:
+if build_xlsx or "clean_excel_bytes" in st.session_state:
+    workbook_key = None
     try:
-        with st.spinner("Building workbook now..."):
-            st.session_state.clean_excel_bytes = build_clean_workbook_bytes(
-                st.session_state,
-                include_labeling_audit_columns=bool(st.session_state.get("include_labeling_audit_columns", False)),
-            )
-            st.session_state.clean_excel_built_at = format_local_timestamp()
-            st.session_state["_clean_excel_scope_key"] = scope_key
-            st.session_state.pop("_rapid_clean_workbook_needs_rebuild", None)
-            action_word = "rebuilt" if had_clean_workbook else "built"
-            st.success(f"Cleaned workbook {action_word} at {st.session_state.clean_excel_built_at}")
-    except Exception as e:
-        st.error(f"Error building Excel workbook: {e}")
-
-if "clean_excel_bytes" in st.session_state:
-    export_name = f"{st.session_state.export_name} - clean_data.xlsx"
-    st.download_button(
-        "Download cleaned data workbook",
-        st.session_state.clean_excel_bytes,
-        file_name=export_name,
-        type="primary",
-        key="download_clean_workbook",
+        with st.spinner("Checking workbook inputs..." if not build_xlsx else "Building workbook now..."):
+            sheets = iter_clean_workbook_sheets(st.session_state)
+            if build_xlsx:
+                sheets = list(sheets)
+            workbook_key = workbook_fingerprint(sheets, st.session_state.get("original_ave_col") or "AVE")
+            if build_xlsx:
+                data = build_clean_workbook_bytes(st.session_state, sheets=sheets)
+                save_download("clean_excel", data, workbook_key, "Cleaned workbook")
+    except Exception as exc:
+        st.error(f"Error preparing Excel workbook: {exc}")
+    render_download(
+        "clean_excel", "cleaned data workbook", f"{st.session_state.export_name} - clean_data.xlsx",
+        fingerprint=workbook_key, button_key="download_clean_workbook",
     )
-
-    if "clean_excel_built_at" in st.session_state:
-        st.caption(f"Current workbook built: {st.session_state.clean_excel_built_at}")
-elif st.session_state.get("_rapid_clean_workbook_needs_rebuild", False):
-    st.warning("Build the cleaned data workbook again to download current results.")
 
 st.divider()
 st.subheader("Report copy document")
 
-had_report_copy = "report_copy_docx_bytes" in st.session_state
-rapid_observations = {
-    family: output
-    for family in ("sentiment", "tag")
-    if rapid_enabled and (output := st.session_state.get(f"rapid_{family}_observation_output"))
-}
-report_blocked = False
+rapid_observations = tuple(
+    family for family in ("sentiment", "tag")
+    if rapid_enabled and st.session_state.get(f"rapid_{family}_observation_output")
+)
+report_actions = []
 if rapid_observations:
     if not rapid_scope_matches:
-        st.warning(
-            "Before rebuilding the Word report with Rapid observations, restore a compatible scope or "
-            "prepare a new Rapid sample and regenerate its observations. Your saved work is still in the session."
+        report_actions.append(
+            "Restore a compatible scope or prepare a new Rapid sample, rerun labeling, "
+            "and regenerate its observations in Rapid Labeling → Insights."
         )
-        report_blocked = True
-    elif not rapid_analysis_context_matches(st.session_state):
-        st.warning(
-            "Resolve the Analysis Context warning in Rapid Labeling, then regenerate the Rapid observations "
-            "in Insights before rebuilding the Word report."
+    elif not rapid_context_matches:
+        report_actions.append(
+            "Resolve the Analysis Context warning in Rapid Labeling, then regenerate the Rapid observations in Insights."
         )
-        report_blocked = True
-    else:
-        regenerate = rapid_report_regeneration_needed(st.session_state, tuple(rapid_observations))
-        if regenerate:
-            observations = " and ".join(regenerate)
-            st.warning(
-                f"Regenerate Rapid {observations} observations in Rapid Labeling → Insights "
-                "before rebuilding the Word report."
-            )
-            report_blocked = True
+    elif regenerate := rapid_report_regeneration_needed(st.session_state, rapid_observations):
+        report_actions.append(f"Regenerate Rapid {' and '.join(regenerate)} observations in Rapid Labeling → Insights.")
 
-# Keep the cached document until the build succeeds, and check its Rapid content before offering it.
-rapid_report_key = (
-    rapid_enabled,
-    tuple(
-        (family, st.session_state.get(f"rapid_{family}_observation_fingerprint"),
-         hashlib.sha256(json.dumps(output, sort_keys=True, default=str).encode()).hexdigest())
-        for family, output in rapid_observations.items()
-    ),
-)
-cached_report_key = st.session_state.get("_report_copy_rapid_key")
-if had_report_copy and rapid_enabled and not report_blocked and cached_report_key:
-    removed = {family for family, _, _ in cached_report_key[1]} - rapid_observations.keys()
-    if removed:
-        st.warning(
-            "The previous Word report included Rapid observations that are no longer generated in this session. "
-            "Generate them in Rapid Labeling → Insights before rebuilding if you want to include them."
-        )
+for observation in established_report_regeneration_needed(st.session_state):
+    report_actions.append(f"Regenerate {observation}.")
+
+report_content = None
+if not report_actions and (
+    "report_copy_docx_bytes" in st.session_state
+    or st.session_state.get("author_insights_summaries")
+    or st.session_state.get("outlet_insights_summaries")
+):
+    try:
+        report_content = prepare_report_copy_content(st.session_state)
+        for theme in stale_coverage_themes(
+            st.session_state, author_blocks=report_content["author_blocks"], outlet_blocks=report_content["outlet_blocks"],
+        ):
+            report_actions.append(f"Update the shortlist if needed and regenerate {theme}.")
+    except Exception as exc:
+        st.error(f"Error checking Word report inputs: {exc}")
+        report_actions.append("Check the saved Insights and try again.")
+
+if report_actions:
+    earlier_notice = (
+        "The downloadable report copy document is an earlier version. "
+        if "report_copy_docx_bytes" in st.session_state else ""
+    )
+    st.warning(f"{earlier_notice}Before rebuilding the Word report: {' '.join(report_actions)}")
 
 build_report_copy = st.button(
     "Build report copy document",
     key="build_report_copy_document",
-    help="Creates a lightly formatted Word document with the current narrative insights and representative linked examples.",
-    disabled=report_blocked,
+    help="Creates a Word document with narrative insights and representative linked examples.",
+    disabled=bool(report_actions),
 )
-if build_report_copy and not report_blocked:
-    try:
-        with st.spinner("Building report copy document..."):
-            st.session_state.report_copy_docx_bytes = build_report_copy_docx_bytes(st.session_state)
-            st.session_state.report_copy_built_at = format_local_timestamp()
-            st.session_state["_report_copy_rapid_key"] = rapid_report_key
-            action_word = "rebuilt" if had_report_copy else "built"
-            st.success(f"Report copy document {action_word} at {st.session_state.report_copy_built_at}")
-    except Exception as e:
-        st.error(f"Error building report copy document: {e}")
-
-if had_report_copy and not report_blocked and st.session_state.get("_report_copy_rapid_key") != rapid_report_key:
-    st.warning("Build the report copy document again to download current observations.")
-elif "report_copy_docx_bytes" in st.session_state and not report_blocked:
-    export_name = f"{st.session_state.export_name} - report_copy.docx"
-    st.download_button(
-        "Download report copy document",
-        st.session_state.report_copy_docx_bytes,
-        file_name=export_name,
-        type="primary",
-        key="download_report_copy_document",
+if build_report_copy or "report_copy_docx_bytes" in st.session_state:
+    report_key = None
+    if not report_actions:
+        try:
+            content = report_content if report_content is not None else prepare_report_copy_content(st.session_state)
+            report_key = content_fingerprint(content)
+            previous_sections = st.session_state.get("_report_copy_sections", set())
+            narrative_sections = {
+                "sentiment": "Sentiment → Insights",
+                "tags": "Tagging → Insights",
+                "top_stories": "Top Stories → Top Story Insights",
+                "rapid_sentiment": "Rapid Labeling → Insights (sentiment)",
+                "rapid_tags": "Rapid Labeling → Insights (tags)",
+                "regions_sections": "Regions",
+            }
+            sections = {key for key in narrative_sections if key != "top_stories" and any(content[key])}
+            if content["top_stories"][0]:
+                sections.add("top_stories")
+            removed = previous_sections - sections
+            missing = [name for key, name in narrative_sections.items()
+                       if key in removed and (rapid_enabled or not key.startswith("rapid_"))]
+            if missing:
+                st.info(
+                    f"A new Word report will omit observations no longer available from {', '.join(missing)}. "
+                    "Generate them again before rebuilding if you want to include them."
+                )
+            if build_report_copy:
+                with st.spinner("Building report copy document..."):
+                    data = build_report_copy_docx_bytes(st.session_state, content=content)
+                    save_download("report_copy_docx", data, report_key, "Report copy document")
+                    st.session_state["_report_copy_sections"] = sections
+        except Exception as exc:
+            st.error(f"Error preparing Word report: {exc}")
+    render_download(
+        "report_copy_docx", "report copy document", f"{st.session_state.export_name} - report_copy.docx",
+        fingerprint=report_key, button_key="download_report_copy_document", prerequisite=bool(report_actions),
     )
-
-    if "report_copy_built_at" in st.session_state:
-        st.caption(f"Current report copy document built: {st.session_state.report_copy_built_at}")
 
 st.divider()
 st.subheader("NotebookLM bundle")
-
-had_notebooklm_bundle = "notebooklm_zip_bytes" in st.session_state
 
 build_nlm = st.button(
     "Build NotebookLM bundle (zip)",
     key="build_notebooklm_bundle",
     help=(
         "Creates a zip of JSON-formatted text files for NotebookLM. "
-        "If the dataset exceeds ~50 files worth of content, "
-        "a random sample is taken to stay within upload limits."
+        "If the dataset exceeds ~50 files worth of content, a random sample is taken to stay within upload limits."
     ),
 )
-
-if build_nlm:
+if build_nlm or "notebooklm_zip_bytes" in st.session_state:
+    notebook_key = None
     try:
-        with st.spinner("Building NotebookLM bundle..."):
-            scoped_traditional, _excluded_rows, _excluded_counts = build_scoped_traditional_export_bundle(st.session_state)
-            nlm_zip_io, nlm_info = build_notebooklm_zip(
-                scoped_traditional,
-                st.session_state.df_social,
-                client_name=st.session_state.client_name,
-            )
-        st.session_state.notebooklm_zip_bytes = nlm_zip_io.getvalue()
-        st.session_state.notebooklm_info = nlm_info
-        st.session_state.notebooklm_built_at = format_local_timestamp()
-        action_word = "rebuilt" if had_notebooklm_bundle else "built"
-        st.success(f"NotebookLM bundle {action_word} at {st.session_state.notebooklm_built_at}")
-    except ValueError as e:
-        st.error(str(e))
-    except Exception as e:
-        st.error(f"Error building NotebookLM bundle: {e}")
+        with st.spinner("Building NotebookLM bundle..." if build_nlm else "Checking NotebookLM inputs..."):
+            scoped_traditional, _, _ = build_scoped_traditional_export_bundle(st.session_state)
+            rows = prepare_notebooklm_rows(scoped_traditional, st.session_state.get("df_social", pd.DataFrame()))
+            client_short = notebooklm_client_short(st.session_state.client_name)
+            input_key = content_fingerprint((client_short, frame_fingerprint(rows)))
+            checked_input, checked_bundle = st.session_state.get("_notebooklm_checked_input", (None, None))
+            if build_nlm or input_key != checked_input:
+                zip_io, info, notebook_key = compile_notebooklm_bundle(rows, client_short, write_archive=build_nlm)
+                st.session_state["_notebooklm_checked_input"] = (input_key, notebook_key)
+            else:
+                notebook_key = checked_bundle
+            if build_nlm:
+                save_download("notebooklm_zip", zip_io.getvalue(), notebook_key, "NotebookLM bundle")
+                st.session_state.notebooklm_info = info
+    except Exception as exc:
+        st.error(f"Error preparing NotebookLM bundle: {exc}")
 
-if "notebooklm_zip_bytes" in st.session_state:
     info = st.session_state.get("notebooklm_info", {})
-    client_short = info.get("client_short", "Client")
-    zip_filename = f"NLM_prepared_data-{client_short}.zip"
-
-    st.download_button(
-        "Download NotebookLM bundle",
-        data=st.session_state.notebooklm_zip_bytes,
-        file_name=zip_filename,
-        type="primary",
+    summary = (
+        f"Rows in cleaned dataset at build: {info.get('total_rows', 0):,} · "
+        f"Rows in bundle: {info.get('rows_included', 0):,} · "
+        f"Files: {info.get('files_created', 0)} (max {info.get('max_files', 0)}), "
+        f"Rows/file cap: {info.get('max_rows_per_file', 0)}, "
+        f"Word limit/file: {info.get('max_words_per_file', 0):,}, "
+        f"Size limit/file: {info.get('max_bytes_per_file', 0) // (1024 * 1024)} MB."
+    ) if info else None
+    render_download(
+        "notebooklm_zip", "NotebookLM bundle", f"NLM_prepared_data-{info.get('client_short', 'Client')}.zip",
+        fingerprint=notebook_key, button_key="download_notebooklm_bundle", summary=summary,
     )
-
-    if "notebooklm_built_at" in st.session_state:
-        st.caption(f"Current NotebookLM bundle built: {st.session_state.notebooklm_built_at}")
-
-    if info:
-        st.caption(
-            f"Rows in cleaned dataset: {info.get('total_rows', 0):,} · "
-            f"Rows included in bundle: {info.get('rows_included', 0):,} · "
-            f"Files: {info.get('files_created', 0)} (max {info.get('max_files', 0)}), "
-            f"Rows/file cap: {info.get('max_rows_per_file', 0)}, "
-            f"Word limit/file: {info.get('max_words_per_file', 0):,}, "
-            f"Size limit/file: {info.get('max_bytes_per_file', 0) // (1024 * 1024)} MB."
-        )
 
 st.divider()
 client_name = st.session_state.client_name

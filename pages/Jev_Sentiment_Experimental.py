@@ -141,7 +141,6 @@ from ui.page_help import set_page_help_context
 from ui.insight_blocks import build_linked_example_blocks_html
 from utils.api_meter import apply_usage_to_session
 from utils.deployment import rapid_labeling_enabled
-from utils.workbook_download import invalidate_clean_workbook
 
 warnings.filterwarnings("ignore")
 
@@ -244,7 +243,6 @@ def reset_jev_results() -> None:
             unique[column] = pd.NA
     st.session_state.df_jev_sentiment_unique = unique
     clear_rapid_run_outputs()
-    invalidate_clean_workbook(st.session_state)
 
 
 def format_sample_mode(mode: str) -> str:
@@ -760,7 +758,6 @@ def _clear_rapid_tag_review(
 
 def save_rapid_human_review(updated: pd.DataFrame) -> None:
     st.session_state.df_jev_sentiment_unique = updated
-    invalidate_clean_workbook(st.session_state)
 
 
 if not rapid_labeling_enabled():
@@ -1087,7 +1084,6 @@ if st.session_state.jev_sentiment_section == "Prepare Sample":
 
     if selected_scale != primary_scale:
         st.session_state.rapid_primary_sentiment_scale = selected_scale
-        invalidate_clean_workbook(st.session_state)
 
     st.write("**Optional Rapid Tags**")
     st.caption(
@@ -1140,7 +1136,6 @@ if st.session_state.jev_sentiment_section == "Prepare Sample":
                     tag_definitions=saved_tag_definitions,
                     tagging_mode=tagging_mode,
                 )
-            invalidate_clean_workbook(st.session_state)
 
     if preview_rows == 0:
         st.info("No eligible articles are available for this sample.")
@@ -1208,7 +1203,6 @@ if st.session_state.jev_sentiment_section == "Prepare Sample":
         st.session_state.jev_sentiment_elapsed_time = time.time() - start
         st.session_state.jev_sentiment_config_step = True
         clear_rapid_run_outputs()
-        invalidate_clean_workbook(st.session_state)
         if previous_fingerprint and previous_fingerprint != next_fingerprint:
             st.toast("Rapid Tag configuration changed; previous Rapid results were reset.")
         st.session_state.jev_sentiment_section = "Run Jev Analysis"
@@ -2073,7 +2067,6 @@ if st.session_state.jev_sentiment_section == "AI Second Opinion":
         progress_status.empty()
         summary["elapsed"] = time.time() - start
         st.session_state.df_jev_sentiment_unique = updated
-        invalidate_clean_workbook(st.session_state)
         st.session_state["__last_rapid_review_batch_summary__"] = summary
         apply_usage_to_session(summary.get("input_tokens", 0), summary.get("output_tokens", 0), RAPID_REVIEW_MODEL)
         st.rerun()
@@ -2274,7 +2267,6 @@ if run_clicked:
     summary["elapsed"] = time.time() - start
     summary["method"] = "Rapid Labeling"
     st.session_state.df_jev_sentiment_unique = updated
-    invalidate_clean_workbook(st.session_state)
     st.session_state["__last_jev_sentiment_batch_summary__"] = summary
     apply_usage_to_session(
         summary.get("input_tokens", 0),

@@ -864,7 +864,7 @@ def test_rapid_xlsx_selects_report_columns_in_both_sheets(monkeypatch, scale, ta
     ("_rapid_primary_sentiment_scale_input", "5-way", "Final Rapid Sentiment 3-Way", "Final Rapid Sentiment 5-Way"),
     ("_rapid_report_tagging_mode_input", "Multiple applicable tags", "Final Rapid Best Tag", "Final Rapid Tags"),
 ])
-def test_rapid_xlsx_preference_change_requires_rebuild(monkeypatch, control, choice, old_header, new_header):
+def test_rapid_xlsx_preference_change_marks_previous_workbook(monkeypatch, control, choice, old_header, new_header):
     state = rapid_xlsx_layout_state(monkeypatch, scale="3-way", tag_mode="Single best tag")
     download = AppTest.from_file("pages/11-Download.py", default_timeout=15)
     for key, value in state.items():
@@ -878,20 +878,18 @@ def test_rapid_xlsx_preference_change_requires_rebuild(monkeypatch, control, cho
         **state,
         "jev_sentiment_section": "Prepare Sample",
         "clean_excel_bytes": original,
-        "_clean_excel_scope_key": download.session_state["_clean_excel_scope_key"],
     })
     setup.radio(key=control).set_value(choice).run()
     assert not setup.exception
-    assert "clean_excel_bytes" not in setup.session_state
-    assert setup.session_state["_rapid_clean_workbook_needs_rebuild"]
+    assert setup.session_state["clean_excel_bytes"] == original
 
     # Simulate opening Download with the old cache still in memory after the preference changed.
     for key in ("rapid_primary_sentiment_scale", "jev_tagging_mode", "df_jev_sentiment_unique"):
         download.session_state[key] = setup.session_state[key]
     download.run()
-    assert "clean_excel_bytes" not in download.session_state
-    assert not download.get("download_button")
-    assert any("Build the cleaned data workbook again" in item.value for item in download.warning)
+    assert download.session_state["clean_excel_bytes"] == original
+    assert any(b.label == "Download earlier cleaned data workbook" for b in download.get("download_button"))
+    assert any("Rebuild it before using it" in item.value for item in download.warning)
     download.button(key="build_clean_workbook").click().run()
     assert not download.exception and not download.error
     assert not download.warning
@@ -901,7 +899,7 @@ def test_rapid_xlsx_preference_change_requires_rebuild(monkeypatch, control, cho
             assert new_header in columns and old_header not in columns
 
 
-def test_rapid_review_invalidates_workbook_and_rebuilds_clean_audit(monkeypatch):
+def test_rapid_review_marks_previous_workbook_and_rebuilds_clean_audit(monkeypatch):
     frame, summary = run_scripted_second_opinion(
         monkeypatch,
         jev={"Jev Sentiment": "NEUTRAL", "Jev 5-Way Sentiment": "NEUTRAL"},
@@ -938,19 +936,15 @@ def test_rapid_review_invalidates_workbook_and_rebuilds_clean_audit(monkeypatch)
     })
     review.button(key="rapid_assign_sentiment_10_3-way_NEGATIVE").click().run()
     assert not review.exception
-    assert "clean_excel_bytes" not in review.session_state
-    assert "clean_excel_built_at" not in review.session_state
-    del download.session_state["clean_excel_bytes"]
-    del download.session_state["clean_excel_built_at"]
-    for key in ("df_jev_sentiment_unique", "_rapid_clean_workbook_needs_rebuild"):
-        download.session_state[key] = review.session_state[key]
+    assert review.session_state["clean_excel_bytes"] == before
+    download.session_state["df_jev_sentiment_unique"] = review.session_state["df_jev_sentiment_unique"]
     download.run()
-    assert not download.get("download_button")
-    assert any("Build the cleaned data workbook again" in item.value for item in download.warning)
+    assert any(b.label == "Download earlier cleaned data workbook" for b in download.get("download_button"))
+    assert any("Rebuild it before using it" in item.value for item in download.warning)
     download.button(key="build_clean_workbook").click().run()
     assert not download.error and not download.exception
     assert any(button.label == "Download cleaned data workbook" for button in download.get("download_button"))
-    assert "_rapid_clean_workbook_needs_rebuild" not in download.session_state
+    assert not download.warning
     after = download.session_state["clean_excel_bytes"]
 
     for data, final in ((before, "NEUTRAL"), (after, "NEGATIVE")):
@@ -975,16 +969,14 @@ def test_rapid_review_invalidates_workbook_and_rebuilds_clean_audit(monkeypatch)
     review.run()
     next(b for b in review.button if b.label == "Reset Rapid Results").click().run()
     assert not review.exception
-    assert "clean_excel_bytes" not in review.session_state
-    del download.session_state["clean_excel_bytes"]
-    download.session_state["_rapid_clean_workbook_needs_rebuild"] = review.session_state["_rapid_clean_workbook_needs_rebuild"]
+    assert review.session_state["clean_excel_bytes"] == after
     download.session_state["df_jev_sentiment_unique"] = review.session_state["df_jev_sentiment_unique"]
     download.run()
-    assert not download.get("download_button")
-    assert any("Build the cleaned data workbook again" in item.value for item in download.warning)
+    assert any(b.label == "Download earlier cleaned data workbook" for b in download.get("download_button"))
+    assert any("Rebuild it before using it" in item.value for item in download.warning)
     download.button(key="build_clean_workbook").click().run()
     assert not download.error and not download.exception
-    assert not any("Build the cleaned data workbook again" in item.value for item in download.warning)
+    assert not download.warning
     with pd.ExcelFile(io.BytesIO(download.session_state["clean_excel_bytes"])) as rebuilt:
         assert "RAPID LABELING SAMPLE" not in rebuilt.sheet_names
         assert "Final Rapid Sentiment 3-Way" not in rebuilt.parse("CLEAN TRAD")
@@ -1176,8 +1168,7 @@ def test_rapid_batch_controls_run_500_stories_and_retain_individual_errors(monke
         assert not app.exception
         summary = app.session_state["__last_jev_sentiment_batch_summary__"]
         assert (summary["done"], summary["successful"], len(summary["errors"])) == (500, 499, 1)
-        assert "clean_excel_bytes" not in app.session_state
-        assert app.session_state["_rapid_clean_workbook_needs_rebuild"]
+        assert app.session_state["clean_excel_bytes"] == b"pre-Jev workbook"
         assert app.number_input(key="jev_sentiment_batch_size").max == 3
         results = app.session_state["df_jev_sentiment_unique"].set_index("Group ID")
         assert results.loc[jev_error_id, "Jev Error"] == "Mocked Jev failure"
@@ -1204,8 +1195,7 @@ def test_rapid_batch_controls_run_500_stories_and_retain_individual_errors(monke
     assert not app.exception
     summary = app.session_state["__last_rapid_review_batch_summary__"]
     assert (summary["done"], summary["successful"], len(summary["errors"])) == (500, 499, 1)
-    assert "clean_excel_bytes" not in app.session_state
-    assert app.session_state["_rapid_clean_workbook_needs_rebuild"]
+    assert app.session_state["clean_excel_bytes"] == b"pre-Luna workbook"
     results = app.session_state["df_jev_sentiment_unique"].set_index("Group ID")
     assert results.loc[luna_error_id, "Rapid Review Status"] == "Error"
     assert results.loc[luna_error_id, "Rapid Review Error"] == "Mocked Luna failure"
@@ -1375,8 +1365,8 @@ def test_rapid_workbook_scope_omits_legacy_results_and_invalidates_cached_downlo
     assert not download.exception
     assert any("workbook will omit its Rapid results" in msg.value for msg in download.warning)
     assert any("restore a compatible scope or prepare a new sample" in msg.value for msg in download.warning)
-    assert not download.get("download_button")
-    assert "clean_excel_bytes" not in download.session_state
+    assert any(b.label == "Download earlier cleaned data workbook" for b in download.get("download_button"))
+    assert any("Rebuild it before using it" in msg.value for msg in download.warning)
     download.button(key="build_clean_workbook").click().run()
     assert not download.exception and not download.error
     assert any(b.label == "Download cleaned data workbook" for b in download.get("download_button"))
@@ -1396,14 +1386,11 @@ def test_rapid_workbook_scope_omits_legacy_results_and_invalidates_cached_downlo
         "jev_sentiment_section": "Prepare Sample",
         "clean_excel_bytes": download.session_state["clean_excel_bytes"],
         "clean_excel_built_at": download.session_state["clean_excel_built_at"],
-        "_clean_excel_scope_key": download.session_state["_clean_excel_scope_key"],
     })
     review.checkbox(key="rapid_confirm_scope_replacement").check().run()
     next(b for b in review.button if b.label == "Prepare Rapid Labeling Sample").click().run()
     assert not review.exception
-    assert "clean_excel_bytes" not in review.session_state
-    assert "_clean_excel_scope_key" not in review.session_state
-    assert review.session_state["_rapid_clean_workbook_needs_rebuild"]
+    assert review.session_state["clean_excel_bytes"] == download.session_state["clean_excel_bytes"]
     fresh = review.session_state["df_jev_sentiment_unique"]
     assert fresh["Type"].tolist() == ["ONLINE", "ONLINE"]
     assert fresh["Rapid Human Sentiment"].isna().all()
@@ -1423,7 +1410,6 @@ def test_download_word_guidance_changes_from_regenerate_to_rebuild(monkeypatch, 
         "standard_step": True, "client_name": "Example", "export_name": "Word freshness",
         "df_traditional": scope_stories, "df_jev_sentiment_unique": frame,
         "rapid_sentiment_observation_output": {"overall_observation": "Original Rapid observations"},
-        "sentiment_observation_output": {"overall_observation": "Established observations"},
     }
 
     def fingerprint(rows):
@@ -1446,7 +1432,7 @@ def test_download_word_guidance_changes_from_regenerate_to_rebuild(monkeypatch, 
     app.run()
     assert app.button(key=build).disabled
     assert any("Regenerate Rapid sentiment observations" in warning.value for warning in app.warning)
-    assert not any(b.label == "Download report copy document" for b in app.get("download_button"))
+    assert any(b.label == "Download earlier report copy document" for b in app.get("download_button"))
     assert app.session_state["report_copy_docx_bytes"] == original
 
     app.session_state["rapid_sentiment_observation_output"] = {"overall_observation": "Regenerated Rapid observations"}
@@ -1454,20 +1440,20 @@ def test_download_word_guidance_changes_from_regenerate_to_rebuild(monkeypatch, 
     app.run()
     assert not app.button(key=build).disabled
     assert not any("Regenerate Rapid sentiment observations" in warning.value for warning in app.warning)
-    assert any("Build the report copy document again" in warning.value for warning in app.warning)
+    assert any("Rebuild it before using it" in warning.value for warning in app.warning)
     app.button(key=build).click().run()
     assert not app.warning and not app.error and not app.exception
     assert any(b.label == "Download report copy document" for b in app.get("download_button"))
     with zipfile.ZipFile(io.BytesIO(app.session_state["report_copy_docx_bytes"])) as document:
         xml = document.read("word/document.xml").decode()
-        assert "Regenerated Rapid observations" in xml and "Established observations" in xml
+        assert "Regenerated Rapid observations" in xml
 
     app.session_state["analysis_dataset_media_types"] = ["ONLINE"]
     app.run()
     assert app.button(key=build).disabled
-    assert any("Before rebuilding the Word report" in warning.value and "restore a compatible scope" in warning.value
+    assert any("Before rebuilding the Word report" in warning.value and "Restore a compatible scope" in warning.value
                for warning in app.warning)
-    assert not any(b.label == "Download report copy document" for b in app.get("download_button"))
+    assert any(b.label == "Download earlier report copy document" for b in app.get("download_button"))
     pd.testing.assert_frame_equal(app.session_state["df_jev_sentiment_unique"], revised)
     del app.session_state["analysis_dataset_media_types"]
     app.run()

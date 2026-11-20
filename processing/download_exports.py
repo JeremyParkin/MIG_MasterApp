@@ -442,26 +442,48 @@ def _build_regions_signature_for_export(session_state, filtered_df: pd.DataFrame
     )
 
 
-def build_regions_export_table(session_state) -> pd.DataFrame:
-    if not bool(session_state.get("regions_prepared", False)):
-        return pd.DataFrame()
-
-    df_traditional = session_state.get("df_traditional", pd.DataFrame()).copy()
-    if df_traditional.empty:
+def _regions_export_source(session_state) -> pd.DataFrame:
+    traditional = session_state.get("df_traditional", pd.DataFrame())
+    if traditional.empty:
         return pd.DataFrame()
 
     prepared = build_regions_source_df(
-        df_traditional,
+        traditional,
         outlet_rollup_map=session_state.get("outlet_rollup_map", {}),
     )
     qualitative_flags = tuple(get_qualitative_coverage_flag_exclusions(session_state))
     prepared = apply_session_coverage_flag_policy(prepared, session_state, list(qualitative_flags))
-    filtered_df = filter_regions_df(
+    return filter_regions_df(
         prepared,
         exclude_coverage_flags=[],
         include_countries=session_state.get("regions_include_countries", []),
         exclude_countries=session_state.get("regions_exclude_countries", []),
     )
+
+
+def stale_regions_export_observations(session_state) -> list[str]:
+    if not session_state.get("regions_prepared"):
+        return []
+    generated = session_state.get("regions_generated_output") or {}
+    selected = session_state.get("regions_analysis_levels", ["Countries", "States / Provinces", "Cities"])
+    tracked = {
+        level: generated[level]["signature"]
+        for level in selected
+        if isinstance(generated.get(level), dict)
+        and generated[level].get("content")
+        and "signature" in generated[level]
+    }
+    if not tracked:
+        return []
+    current = _build_regions_signature_for_export(session_state, _regions_export_source(session_state))
+    return [level for level, signature in tracked.items() if signature != current]
+
+
+def build_regions_export_table(session_state) -> pd.DataFrame:
+    if not bool(session_state.get("regions_prepared", False)):
+        return pd.DataFrame()
+
+    filtered_df = _regions_export_source(session_state)
     if filtered_df.empty:
         return pd.DataFrame()
 
@@ -1973,7 +1995,8 @@ def rapid_report_regeneration_needed(session_state, families: tuple[str, ...]) -
 
 
 def _current_rapid_observation_output(session_state, family: str) -> dict:
-    if not rapid_labeling_enabled() or not rapid_analysis_context_matches(session_state):
+    if (not rapid_labeling_enabled() or not rapid_sample_matches_scope(session_state)
+            or not rapid_analysis_context_matches(session_state)):
         return {}
     output = session_state.get(f"rapid_{family}_observation_output", {}) or {}
     if not output or not session_state.get(f"rapid_{family}_observation_fingerprint"):
@@ -1995,22 +2018,10 @@ def _iter_regions_report_sections(session_state) -> list[dict[str, Any]]:
     if not bool(session_state.get("regions_prepared", False)):
         return []
 
-    df_traditional = session_state.get("df_traditional", pd.DataFrame()).copy()
-    if df_traditional.empty:
+    filtered_df = _regions_export_source(session_state)
+    if filtered_df.empty and session_state.get("df_traditional", pd.DataFrame()).empty:
         return []
 
-    prepared = build_regions_source_df(
-        df_traditional,
-        outlet_rollup_map=session_state.get("outlet_rollup_map", {}),
-    )
-    qualitative_flags = tuple(get_qualitative_coverage_flag_exclusions(session_state))
-    prepared = apply_session_coverage_flag_policy(prepared, session_state, list(qualitative_flags))
-    filtered_df = filter_regions_df(
-        prepared,
-        exclude_coverage_flags=[],
-        include_countries=session_state.get("regions_include_countries", []),
-        exclude_countries=session_state.get("regions_exclude_countries", []),
-    )
     current_signature = _build_regions_signature_for_export(session_state, filtered_df)
     generated_store = session_state.get("regions_generated_output", {}) or {}
 
@@ -2123,21 +2134,37 @@ def _iter_top_story_blocks(session_state) -> tuple[str, list[dict[str, Any]]]:
     return overall, blocks
 
 
-def build_report_copy_docx_bytes(session_state) -> bytes:
+def prepare_report_copy_content(session_state) -> dict[str, Any]:
+    return {
+        "client_name": _safe_string(session_state.get("client_name", "")) or "Client",
+        "author_blocks": _iter_author_report_blocks(session_state),
+        "outlet_blocks": _iter_outlet_report_blocks(session_state),
+        "top_stories": _iter_top_story_blocks(session_state),
+        "sentiment": _iter_sentiment_report_sections(session_state),
+        "rapid_sentiment": _iter_rapid_sentiment_report_sections(session_state),
+        "tags": _iter_tag_report_sections(session_state),
+        "rapid_tags": _iter_rapid_tag_report_sections(session_state),
+        "regions_sections": _iter_regions_report_sections(session_state),
+    }
+
+
+def build_report_copy_docx_bytes(session_state, *, content=None) -> bytes:
     try:
         from docx import Document
     except ImportError as exc:
         raise RuntimeError("python-docx is required to build the report copy document.") from exc
 
+    if content is None:
+        content = prepare_report_copy_content(session_state)
     document = Document()
     document.add_heading("Report Copy", level=0)
-    client_name = _safe_string(session_state.get("client_name", "")) or "Client"
+    client_name = content["client_name"]
     document.add_paragraph(f"{client_name} report copy export")
     document.add_paragraph(format_local_timestamp())
 
     has_content = False
 
-    author_blocks = _iter_author_report_blocks(session_state)
+    author_blocks = content["author_blocks"]
     if author_blocks:
         has_content = True
         document.add_heading("Top Authors", level=1)
@@ -2155,7 +2182,7 @@ def build_report_copy_docx_bytes(session_state) -> bytes:
                 for example in block["examples"]:
                     _docx_add_example_block(document, example["headline"], example.get("url", ""), example.get("metrics", ""))
 
-    outlet_blocks = _iter_outlet_report_blocks(session_state)
+    outlet_blocks = content["outlet_blocks"]
     if outlet_blocks:
         has_content = True
         document.add_heading("Top Outlets", level=1)
@@ -2173,7 +2200,7 @@ def build_report_copy_docx_bytes(session_state) -> bytes:
                 for example in block["examples"]:
                     _docx_add_example_block(document, example["headline"], example.get("url", ""), example.get("metrics", ""))
 
-    top_story_overall, top_story_blocks = _iter_top_story_blocks(session_state)
+    top_story_overall, top_story_blocks = content["top_stories"]
     if top_story_overall or top_story_blocks:
         has_content = True
         document.add_heading("Top Stories", level=1)
@@ -2183,7 +2210,7 @@ def build_report_copy_docx_bytes(session_state) -> bytes:
         for block in top_story_blocks:
             _docx_add_top_story_block(document, block)
 
-    sentiment_overall, sentiment_sections = _iter_sentiment_report_sections(session_state)
+    sentiment_overall, sentiment_sections = content["sentiment"]
     if _docx_add_observation_sections(
         document,
         heading="Sentiment Insights",
@@ -2192,7 +2219,7 @@ def build_report_copy_docx_bytes(session_state) -> bytes:
     ):
         has_content = True
 
-    rapid_sentiment_overall, rapid_sentiment_sections = _iter_rapid_sentiment_report_sections(session_state)
+    rapid_sentiment_overall, rapid_sentiment_sections = content["rapid_sentiment"]
     if _docx_add_observation_sections(
         document,
         heading="Rapid Sentiment Insights",
@@ -2201,7 +2228,7 @@ def build_report_copy_docx_bytes(session_state) -> bytes:
     ):
         has_content = True
 
-    tag_overall, tag_sections = _iter_tag_report_sections(session_state)
+    tag_overall, tag_sections = content["tags"]
     if _docx_add_observation_sections(
         document,
         heading="Tag Insights",
@@ -2210,7 +2237,7 @@ def build_report_copy_docx_bytes(session_state) -> bytes:
     ):
         has_content = True
 
-    rapid_tag_overall, rapid_tag_sections = _iter_rapid_tag_report_sections(session_state)
+    rapid_tag_overall, rapid_tag_sections = content["rapid_tags"]
     if _docx_add_observation_sections(
         document,
         heading="Rapid Tag Insights",
@@ -2219,7 +2246,7 @@ def build_report_copy_docx_bytes(session_state) -> bytes:
     ):
         has_content = True
 
-    regions_sections = _iter_regions_report_sections(session_state)
+    regions_sections = content["regions_sections"]
     if regions_sections:
         has_content = True
         document.add_heading("Regions", level=1)
@@ -2260,7 +2287,7 @@ def _omit_legacy_translation_errors(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns: bool | None = None) -> bytes:
+def iter_clean_workbook_sheets(session_state, *, include_labeling_audit_columns: bool | None = None):
     session_state = _WorkbookExportState(session_state)
     if include_labeling_audit_columns is None:
         include_labeling_audit_columns = bool(session_state.get("include_labeling_audit_columns", False))
@@ -2287,234 +2314,198 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
 
     social = explode_tags(social)
 
+    # CLEAN TRAD
+    if len(traditional) > 0:
+        trad_export = rename_ave(traditional.copy(), original_ave_col=original_ave_col)
+        trad_export = add_mapped_outlet_column(trad_export, outlet_rollup_map=outlet_rollup_map)
+        trad_export = remove_inactive_workflow_columns(
+            trad_export,
+            session_state,
+            include_labeling_audit_columns=include_labeling_audit_columns,
+        )
+        trad_export = order_clean_trad_press_release_columns(trad_export)
+        trad_export = order_clean_trad_grouping_columns(trad_export)
+        trad_export = _order_rapid_export_columns(
+            trad_export, session_state, include_audit=include_labeling_audit_columns,
+        )
+        if "Impressions" in trad_export.columns:
+            trad_export = trad_export.sort_values(by=["Impressions"], ascending=False)
+        trad_export = _omit_legacy_translation_errors(trad_export)
+        yield "CLEAN TRAD", trad_export, False, "black"
+
+    # CLEAN SOCIAL
+    if len(social) > 0:
+        social_export = rename_ave(social.copy(), original_ave_col=original_ave_col)
+        social_export = add_mapped_outlet_column(social_export, outlet_rollup_map=outlet_rollup_map)
+        social_export = remove_inactive_workflow_columns(
+            social_export,
+            session_state,
+            include_labeling_audit_columns=include_labeling_audit_columns,
+        )
+        if "Impressions" in social_export.columns:
+            social_export = social_export.sort_values(by=["Impressions"], ascending=False)
+        social_export = _omit_legacy_translation_errors(social_export)
+        yield "CLEAN SOCIAL", social_export, False, "black"
+
+    shared_sample_export = rename_ave(
+        build_shared_sample_ai_export(session_state, include_audit=include_labeling_audit_columns),
+        original_ave_col=original_ave_col,
+    )
+    omit_rapid = not rapid_labeling_enabled() or not session_state.rapid_scope_matches
+
+    # SHARED SAMPLED AI RESULTS
+    if not shared_sample_export.empty:
+        if omit_rapid:
+            shared_sample_export = _omit_rapid_export_columns(shared_sample_export)
+        shared_sample_export = _omit_legacy_translation_errors(shared_sample_export)
+        yield "SAMPLED AI RESULTS", shared_sample_export, True, "#7f8c8d"
+
+    # TAGGING SAMPLE
+    if tagging_uses_sample_export(session_state) and shared_sample_export.empty:
+        tagging_export = rename_ave(
+            build_tagging_sample_export(session_state, include_audit=include_labeling_audit_columns),
+            original_ave_col=original_ave_col,
+        )
+        if not tagging_export.empty:
+            if omit_rapid:
+                tagging_export = _omit_rapid_export_columns(tagging_export)
+            tagging_export = _omit_legacy_translation_errors(tagging_export)
+            yield "TAGGING SAMPLE", tagging_export, True, "#7f8c8d"
+
+    # SENTIMENT SAMPLE
+    if sentiment_uses_sample_export(session_state) and shared_sample_export.empty:
+        sentiment_export = rename_ave(
+            build_sentiment_sample_export(session_state, include_audit=include_labeling_audit_columns),
+            original_ave_col=original_ave_col,
+        )
+        if not sentiment_export.empty:
+            if omit_rapid:
+                sentiment_export = _omit_rapid_export_columns(sentiment_export)
+            sentiment_export = _omit_legacy_translation_errors(sentiment_export)
+            yield "SENTIMENT SAMPLE", sentiment_export, True, "#7f8c8d"
+
+    # RAPID LABELING SAMPLE: sampled article rows with story-level Rapid labels.
+    rapid_sample_export = rename_ave(
+        build_rapid_labeling_sample_export(session_state, include_audit=include_labeling_audit_columns),
+        original_ave_col=original_ave_col,
+    )
+    if not rapid_sample_export.empty:
+        rapid_sample_export = _omit_legacy_translation_errors(rapid_sample_export)
+        yield RAPID_LABELING_SAMPLE_SHEET_NAME, rapid_sample_export, True, "#9b59b6"
+
+    # AUTHORS
+    authors = build_author_insights_export_table(session_state, df_traditional=traditional)
+    if authors.empty:
+        authors = build_authors_export_table(
+            traditional.copy(),
+            existing_assignments=session_state.get("auth_outlet_table", pd.DataFrame()).copy()
+            if len(session_state.get("auth_outlet_table", pd.DataFrame())) > 0 else None,
+        )
+    if len(authors) > 0:
+        selected_authors = [
+            str(author).strip()
+            for author in session_state.get("author_insights_selected_authors", [])
+            if str(author).strip()
+        ]
+        if not selected_authors:
+            authors = authors.sort_values(by=["Mentions", "Impressions"], ascending=False).copy()
+        yield "Authors", authors, True, "green"
+
+    # OUTLETS
+    outlets = build_outlets_export_table(session_state, df_traditional=traditional)
+    if len(outlets) > 0:
+        yield "Outlets", outlets, True, "green"
+
+    # REGIONS
+    regions_export = build_regions_export_table(session_state)
+    if len(regions_export) > 0:
+        yield "Regions", regions_export, True, "green"
+
+    # TOP STORIES
+    if len(top_stories) > 0:
+        top_stories_export = top_stories.copy()
+        if all(c in top_stories_export.columns for c in ["Mentions", "Impressions"]):
+            top_stories_export = top_stories_export.sort_values(by=["Mentions", "Impressions"], ascending=False)
+
+        desired_top_story_columns = [
+            "Headline",
+            "Date",
+            "Mentions",
+            "Impressions",
+            "Example Outlet",
+            "Example URL",
+            "Chart Callout",
+            "Top Story Summary",
+            "Entity Sentiment",
+        ]
+        existing_top_story_columns = [c for c in desired_top_story_columns if c in top_stories_export.columns]
+        top_stories_export = top_stories_export[existing_top_story_columns].copy()
+
+        yield "Top Stories", top_stories_export, True, "green"
+
+    # DLTD DUPES
+    if len(dupes) > 0:
+        dupes_export = rename_ave(dupes.copy(), original_ave_col=original_ave_col)
+        dupes_export = add_mapped_outlet_column(dupes_export, outlet_rollup_map=outlet_rollup_map)
+        dupes_export = remove_inactive_workflow_columns(
+            dupes_export,
+            session_state,
+            include_labeling_audit_columns=include_labeling_audit_columns,
+        )
+        dupes_export = _omit_legacy_translation_errors(dupes_export)
+        yield "DLTD DUPES", dupes_export, True, "#c26f4f"
+
+    # EXCLUDED ROWS
+    if len(excluded_rows) > 0:
+        excluded_export = rename_ave(excluded_rows.copy(), original_ave_col=original_ave_col)
+        excluded_export = add_mapped_outlet_column(excluded_export, outlet_rollup_map=outlet_rollup_map)
+        excluded_export = remove_inactive_workflow_columns(
+            excluded_export,
+            session_state,
+            include_labeling_audit_columns=include_labeling_audit_columns,
+        )
+        if "Impressions" in excluded_export.columns:
+            excluded_export = excluded_export.sort_values(by=["Impressions"], ascending=False)
+        excluded_export = _omit_legacy_translation_errors(excluded_export)
+        yield "EXCLUDED ROWS", excluded_export, True, "#c26f4f"
+
+    # RAW
+    raw_export = rename_ave(raw.copy(), original_ave_col=original_ave_col)
+    raw_export = add_mapped_outlet_column(raw_export, outlet_rollup_map=outlet_rollup_map)
+    raw_export = remove_inactive_workflow_columns(
+        raw_export,
+        session_state,
+        include_labeling_audit_columns=include_labeling_audit_columns,
+    )
+    raw_export.drop(["Mentions"], axis=1, inplace=True, errors="ignore")
+    raw_export = _omit_legacy_translation_errors(raw_export)
+    yield "RAW", raw_export, True, "#c26f4f"
+
+    # EXPORT METADATA
+    metadata_export = build_export_metadata_sheet(
+        session_state,
+        scoped_traditional_rows=len(traditional),
+        excluded_rows_df=excluded_rows,
+        excluded_counts_df=excluded_counts,
+    )
+    yield "EXPORT METADATA", metadata_export, True, "#4f81bd"
+
+
+def build_clean_workbook_bytes(
+    session_state, *, include_labeling_audit_columns: bool | None = None, sheets=None,
+) -> bytes:
+    if sheets is None:
+        sheets = iter_clean_workbook_sheets(
+            session_state, include_labeling_audit_columns=include_labeling_audit_columns,
+        )
+    original_ave_col = session_state.get("original_ave_col") or "AVE"
     output = io.BytesIO()
 
     with pd.ExcelWriter(output, engine="xlsxwriter", datetime_format="yyyy-mm-dd") as writer:
         workbook = writer.book
-        cleaned_exports: list[tuple[str, pd.DataFrame, Any]] = []
-
         number_format = workbook.add_format({"num_format": "#,##0"})
         currency_symbol = get_currency_symbol(original_ave_col)
         currency_format = workbook.add_format({"num_format": f"{currency_symbol}#,##0.00"})
-
-        # CLEAN TRAD
-        if len(traditional) > 0:
-            trad_export = rename_ave(traditional.copy(), original_ave_col=original_ave_col)
-            trad_export = add_mapped_outlet_column(trad_export, outlet_rollup_map=outlet_rollup_map)
-            trad_export = remove_inactive_workflow_columns(
-                trad_export,
-                session_state,
-                include_labeling_audit_columns=include_labeling_audit_columns,
-            )
-            trad_export = order_clean_trad_press_release_columns(trad_export)
-            trad_export = order_clean_trad_grouping_columns(trad_export)
-            trad_export = _order_rapid_export_columns(
-                trad_export, session_state, include_audit=include_labeling_audit_columns,
-            )
-            if "Impressions" in trad_export.columns:
-                trad_export = trad_export.sort_values(by=["Impressions"], ascending=False)
-            trad_export = _omit_legacy_translation_errors(trad_export)
-            trad_export.to_excel(writer, sheet_name="CLEAN TRAD", startrow=1, header=False, index=False)
-            ws = writer.sheets["CLEAN TRAD"]
-            ws.set_tab_color("black")
-            cleaned_exports.append(("CLEAN TRAD", trad_export, ws))
-
-        # CLEAN SOCIAL
-        if len(social) > 0:
-            social_export = rename_ave(social.copy(), original_ave_col=original_ave_col)
-            social_export = add_mapped_outlet_column(social_export, outlet_rollup_map=outlet_rollup_map)
-            social_export = remove_inactive_workflow_columns(
-                social_export,
-                session_state,
-                include_labeling_audit_columns=include_labeling_audit_columns,
-            )
-            if "Impressions" in social_export.columns:
-                social_export = social_export.sort_values(by=["Impressions"], ascending=False)
-            social_export = _omit_legacy_translation_errors(social_export)
-            social_export.to_excel(writer, sheet_name="CLEAN SOCIAL", startrow=1, header=False, index=False)
-            ws = writer.sheets["CLEAN SOCIAL"]
-            ws.set_tab_color("black")
-            cleaned_exports.append(("CLEAN SOCIAL", social_export, ws))
-
-        shared_sample_export = rename_ave(
-            build_shared_sample_ai_export(session_state, include_audit=include_labeling_audit_columns),
-            original_ave_col=original_ave_col,
-        )
-        omit_rapid = not rapid_labeling_enabled() or not session_state.rapid_scope_matches
-
-        # SHARED SAMPLED AI RESULTS
-        if not shared_sample_export.empty:
-            if omit_rapid:
-                shared_sample_export = _omit_rapid_export_columns(shared_sample_export)
-            shared_sample_export = _omit_legacy_translation_errors(shared_sample_export)
-            shared_sample_export.to_excel(writer, sheet_name="SAMPLED AI RESULTS", header=True, index=False)
-            ws = writer.sheets["SAMPLED AI RESULTS"]
-            ws.set_tab_color("#7f8c8d")
-            cleaned_exports.append(("SAMPLED AI RESULTS", shared_sample_export, ws))
-
-        # TAGGING SAMPLE
-        if tagging_uses_sample_export(session_state) and shared_sample_export.empty:
-            tagging_export = rename_ave(
-                build_tagging_sample_export(session_state, include_audit=include_labeling_audit_columns),
-                original_ave_col=original_ave_col,
-            )
-            if not tagging_export.empty:
-                if omit_rapid:
-                    tagging_export = _omit_rapid_export_columns(tagging_export)
-                tagging_export = _omit_legacy_translation_errors(tagging_export)
-                tagging_export.to_excel(writer, sheet_name="TAGGING SAMPLE", header=True, index=False)
-                ws = writer.sheets["TAGGING SAMPLE"]
-                ws.set_tab_color("#7f8c8d")
-                cleaned_exports.append(("TAGGING SAMPLE", tagging_export, ws))
-
-        # SENTIMENT SAMPLE
-        if sentiment_uses_sample_export(session_state) and shared_sample_export.empty:
-            sentiment_export = rename_ave(
-                build_sentiment_sample_export(session_state, include_audit=include_labeling_audit_columns),
-                original_ave_col=original_ave_col,
-            )
-            if not sentiment_export.empty:
-                if omit_rapid:
-                    sentiment_export = _omit_rapid_export_columns(sentiment_export)
-                sentiment_export = _omit_legacy_translation_errors(sentiment_export)
-                sentiment_export.to_excel(writer, sheet_name="SENTIMENT SAMPLE", header=True, index=False)
-                ws = writer.sheets["SENTIMENT SAMPLE"]
-                ws.set_tab_color("#7f8c8d")
-                cleaned_exports.append(("SENTIMENT SAMPLE", sentiment_export, ws))
-
-        # RAPID LABELING SAMPLE: sampled article rows with story-level Rapid labels.
-        rapid_sample_export = rename_ave(
-            build_rapid_labeling_sample_export(session_state, include_audit=include_labeling_audit_columns),
-            original_ave_col=original_ave_col,
-        )
-        if not rapid_sample_export.empty:
-            rapid_sample_export = _omit_legacy_translation_errors(rapid_sample_export)
-            rapid_sample_export.to_excel(writer, sheet_name=RAPID_LABELING_SAMPLE_SHEET_NAME, header=True, index=False)
-            ws = writer.sheets[RAPID_LABELING_SAMPLE_SHEET_NAME]
-            ws.set_tab_color("#9b59b6")
-            cleaned_exports.append((RAPID_LABELING_SAMPLE_SHEET_NAME, rapid_sample_export, ws))
-
-        # AUTHORS
-        authors = build_author_insights_export_table(session_state, df_traditional=traditional)
-        if authors.empty:
-            authors = build_authors_export_table(
-                traditional.copy(),
-                existing_assignments=session_state.get("auth_outlet_table", pd.DataFrame()).copy()
-                if len(session_state.get("auth_outlet_table", pd.DataFrame())) > 0 else None,
-            )
-        if len(authors) > 0:
-            selected_authors = [
-                str(author).strip()
-                for author in session_state.get("author_insights_selected_authors", [])
-                if str(author).strip()
-            ]
-            if not selected_authors:
-                authors = authors.sort_values(by=["Mentions", "Impressions"], ascending=False).copy()
-            authors.to_excel(writer, sheet_name="Authors", header=True, index=False)
-            ws = writer.sheets["Authors"]
-            ws.set_tab_color("green")
-            cleaned_exports.append(("Authors", authors, ws))
-
-        # OUTLETS
-        outlets = build_outlets_export_table(session_state, df_traditional=traditional)
-        if len(outlets) > 0:
-            outlets.to_excel(writer, sheet_name="Outlets", header=True, index=False)
-            ws = writer.sheets["Outlets"]
-            ws.set_tab_color("green")
-            cleaned_exports.append(("Outlets", outlets, ws))
-
-        # REGIONS
-        regions_export = build_regions_export_table(session_state)
-        if len(regions_export) > 0:
-            regions_export.to_excel(writer, sheet_name="Regions", header=True, index=False)
-            ws = writer.sheets["Regions"]
-            ws.set_tab_color("green")
-            cleaned_exports.append(("Regions", regions_export, ws))
-
-        # TOP STORIES
-        if len(top_stories) > 0:
-            top_stories_export = top_stories.copy()
-            if all(c in top_stories_export.columns for c in ["Mentions", "Impressions"]):
-                top_stories_export = top_stories_export.sort_values(by=["Mentions", "Impressions"], ascending=False)
-
-            desired_top_story_columns = [
-                "Headline",
-                "Date",
-                "Mentions",
-                "Impressions",
-                "Example Outlet",
-                "Example URL",
-                "Chart Callout",
-                "Top Story Summary",
-                "Entity Sentiment",
-            ]
-            existing_top_story_columns = [c for c in desired_top_story_columns if c in top_stories_export.columns]
-            top_stories_export = top_stories_export[existing_top_story_columns].copy()
-
-            top_stories_export.to_excel(writer, sheet_name="Top Stories", header=True, index=False)
-            ws = writer.sheets["Top Stories"]
-            ws.set_tab_color("green")
-            cleaned_exports.append(("Top Stories", top_stories_export, ws))
-
-        # DLTD DUPES
-        if len(dupes) > 0:
-            dupes_export = rename_ave(dupes.copy(), original_ave_col=original_ave_col)
-            dupes_export = add_mapped_outlet_column(dupes_export, outlet_rollup_map=outlet_rollup_map)
-            dupes_export = remove_inactive_workflow_columns(
-                dupes_export,
-                session_state,
-                include_labeling_audit_columns=include_labeling_audit_columns,
-            )
-            dupes_export = _omit_legacy_translation_errors(dupes_export)
-            dupes_export.to_excel(writer, sheet_name="DLTD DUPES", header=True, index=False)
-            ws = writer.sheets["DLTD DUPES"]
-            ws.set_tab_color("#c26f4f")
-            cleaned_exports.append(("DLTD DUPES", dupes_export, ws))
-
-        # EXCLUDED ROWS
-        if len(excluded_rows) > 0:
-            excluded_export = rename_ave(excluded_rows.copy(), original_ave_col=original_ave_col)
-            excluded_export = add_mapped_outlet_column(excluded_export, outlet_rollup_map=outlet_rollup_map)
-            excluded_export = remove_inactive_workflow_columns(
-                excluded_export,
-                session_state,
-                include_labeling_audit_columns=include_labeling_audit_columns,
-            )
-            if "Impressions" in excluded_export.columns:
-                excluded_export = excluded_export.sort_values(by=["Impressions"], ascending=False)
-            excluded_export = _omit_legacy_translation_errors(excluded_export)
-            excluded_export.to_excel(writer, sheet_name="EXCLUDED ROWS", header=True, index=False)
-            ws = writer.sheets["EXCLUDED ROWS"]
-            ws.set_tab_color("#c26f4f")
-            cleaned_exports.append(("EXCLUDED ROWS", excluded_export, ws))
-
-        # RAW
-        raw_export = rename_ave(raw.copy(), original_ave_col=original_ave_col)
-        raw_export = add_mapped_outlet_column(raw_export, outlet_rollup_map=outlet_rollup_map)
-        raw_export = remove_inactive_workflow_columns(
-            raw_export,
-            session_state,
-            include_labeling_audit_columns=include_labeling_audit_columns,
-        )
-        raw_export.drop(["Mentions"], axis=1, inplace=True, errors="ignore")
-        raw_export = _omit_legacy_translation_errors(raw_export)
-        raw_export.to_excel(writer, sheet_name="RAW", header=True, index=False)
-        ws = writer.sheets["RAW"]
-        ws.set_tab_color("#c26f4f")
-        cleaned_exports.append(("RAW", raw_export, ws))
-
-        # EXPORT METADATA
-        metadata_export = build_export_metadata_sheet(
-            session_state,
-            scoped_traditional_rows=len(traditional),
-            excluded_rows_df=excluded_rows,
-            excluded_counts_df=excluded_counts,
-        )
-        metadata_export.to_excel(writer, sheet_name="EXPORT METADATA", header=True, index=False)
-        ws = writer.sheets["EXPORT METADATA"]
-        ws.set_tab_color("#4f81bd")
-        cleaned_exports.append(("EXPORT METADATA", metadata_export, ws))
-
         # Apply Excel table structures + formatting
         row_level_sheets = {
             "CLEAN TRAD",
@@ -2526,7 +2517,10 @@ def build_clean_workbook_bytes(session_state, *, include_labeling_audit_columns:
             "DLTD DUPES",
         }
 
-        for sheet_name, clean_df, ws in cleaned_exports:
+        for sheet_name, clean_df, header, tab_color in sheets:
+            clean_df.to_excel(writer, sheet_name=sheet_name, startrow=0 if header else 1, header=header, index=False)
+            ws = writer.sheets[sheet_name]
+            ws.set_tab_color(tab_color)
             if clean_df.empty:
                 continue
 

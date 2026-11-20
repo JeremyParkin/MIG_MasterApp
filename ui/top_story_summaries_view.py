@@ -24,6 +24,7 @@ def render_top_story_summaries() -> None:
         generate_top_story_observation,
         DEFAULT_MODEL,
     )
+    from processing.report_observation_freshness import top_story_observation_fingerprint
     import processing.top_stories as top_stories_module
     
     from utils.api_meter import apply_usage_to_session
@@ -150,6 +151,8 @@ def render_top_story_summaries() -> None:
 
         st.session_state.added_df = updated_df.copy()
         st.session_state.top_story_observation_output = observation_output
+        if observation_output and not observation_output.get("_error"):
+            st.session_state.top_story_observation_fingerprint = top_story_observation_fingerprint(st.session_state)
         df = updated_df.copy()
     
         apply_usage_to_session(total_in, total_out, DEFAULT_MODEL)

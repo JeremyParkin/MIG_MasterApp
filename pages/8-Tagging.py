@@ -55,6 +55,7 @@ from utils.api_meter import (
     get_api_cost_usd,
     init_api_meter,
 )
+from processing.report_observation_freshness import tagging_observation_fingerprint
 from utils.ai_checkpoints import record_checkpoint_progress, render_checkpoint_save_reminder, reset_workflow_checkpoints
 from ui.page_help import set_page_help_context
 from ui.tagging_review_view import render_tagging_review_page
@@ -759,6 +760,7 @@ with obs_header_col:
 with obs_button_col:
     if st.button("Generate tag observations", type="primary", key="generate_tag_observations", use_container_width=True):
         try:
+            fingerprint = tagging_observation_fingerprint(st.session_state, include_other=include_other)
             observation_output, _, _ = generate_tag_observations(
                 df_tagging_unique=st.session_state.df_tagging_unique,
                 client_name=client_name,
@@ -769,6 +771,7 @@ with obs_button_col:
             )
             st.session_state.tagging_observation_output = observation_output
             st.session_state.tagging_observation_include_other = include_other
+            st.session_state.tagging_observation_fingerprint = fingerprint
         except Exception as e:
             st.session_state.tagging_observation_output = {"_error": str(e)}
         st.rerun()

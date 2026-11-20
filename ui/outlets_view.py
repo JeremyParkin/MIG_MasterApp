@@ -23,6 +23,7 @@ from processing.analysis_context import (
 import processing.outlet_insights as outlet_insights
 from ui.charts import format_compact_number, get_adaptive_axis_expr
 from ui.insight_blocks import build_linked_example_blocks_html
+from utils.download_freshness import content_fingerprint
 from utils.formatting import NUMERIC_FORMAT_DICT
 
 warnings.filterwarnings("ignore")
@@ -32,6 +33,7 @@ DEFAULT_OUTLET_SUMMARY_MODEL = outlet_insights.DEFAULT_OUTLET_SUMMARY_MODEL
 apply_outlet_rollup_map = outlet_insights.apply_outlet_rollup_map
 build_outlet_headline_table = outlet_insights.build_outlet_headline_table
 build_outlet_metrics = outlet_insights.build_outlet_metrics
+build_outlet_prompt = outlet_insights.build_outlet_prompt
 build_outlet_rollup_preview = outlet_insights.build_outlet_rollup_preview
 build_outlet_cleanup_clusters = outlet_insights.build_outlet_cleanup_clusters
 build_rollup_suggestions = outlet_insights.build_rollup_suggestions
@@ -1270,8 +1272,10 @@ def render_outlets_page() -> None:
         with report_button_col:
             if st.button("Generate outlet coverage themes", type="primary", key="generate_outlet_summaries", use_container_width=True):
                 summaries = dict(st.session_state.get("outlet_insights_summaries", {}))
+                fingerprints = dict(st.session_state.get("outlet_insights_summary_fingerprints", {}))
                 client_name = str(st.session_state.get("client_name", "")).strip()
                 analysis_context = build_analysis_context_text(st.session_state)
+                prominence = get_analysis_context_payload(st.session_state).get("selected_prominence_column", "")
                 with st.spinner("Generating outlet theme summaries..."):
                     for outlet_name in selected_outlets:
                         outlet_row = shortlist_df.loc[shortlist_df["Outlet"] == outlet_name].iloc[0]
@@ -1279,7 +1283,7 @@ def render_outlets_page() -> None:
                             get_story_rows(),
                             outlet_name,
                             limit=60,
-                            selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
+                            selected_prominence_column=prominence,
                         )
                         author_df = build_outlet_top_authors(
                             st.session_state.df_traditional,
@@ -1297,12 +1301,18 @@ def render_outlets_page() -> None:
                                 api_key=st.secrets["key"],
                                 model=DEFAULT_OUTLET_SUMMARY_MODEL,
                                 analysis_context=analysis_context,
-                                selected_prominence_column=get_analysis_context_payload(st.session_state).get("selected_prominence_column", ""),
+                                selected_prominence_column=prominence,
                             )
+                            fingerprints[outlet_name] = content_fingerprint(build_outlet_prompt(
+                                outlet_name, client_name, outlet_row, headline_df, author_df,
+                                analysis_context=analysis_context, selected_prominence_column=prominence,
+                            ))
                             summaries[outlet_name] = summary_text
                         except Exception as e:
+                            fingerprints.pop(outlet_name, None)
                             summaries[outlet_name] = f"Could not generate summary: {e}"
                 st.session_state.outlet_insights_summaries = summaries
+                st.session_state.outlet_insights_summary_fingerprints = fingerprints
                 st.rerun()
 
         field_options = ["Author", "Date", "Media type", "Mentions", "Impressions", "Effective reach", "Examples"]
